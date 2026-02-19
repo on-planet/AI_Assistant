@@ -1,0 +1,17 @@
+{
+  "window": {
+    "width": 800,
+    "height": 600,
+    "opacity": 0.5,
+    "clickThrough": false,
+    "visible": true
+  },
+  "startup": {
+    "defaultModel": "assets/model_01/model.json",
+    "manualParamMode": false
+  },
+  "debug": {
+    "showStats": true,
+    "hotReload": true
+  }
+}

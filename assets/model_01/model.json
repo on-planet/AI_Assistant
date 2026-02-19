@@ -1,0 +1,514 @@
+{
+  "format": "kilo2d-model",
+  "version": 1,
+  "meta": {
+    "name": "model_01",
+    "author": "kilo"
+  },
+  "parameters": [
+    {
+      "id": "HeadYaw",
+      "name": "头部左右",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0
+    },
+    {
+      "id": "Breath",
+      "name": "呼吸",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0
+    },
+    {
+      "id": "HeadSway",
+      "name": "头部轻摆",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0
+    },
+    {
+      "id": "EyeBlinkL",
+      "name": "左眼眨眼",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0
+    },
+    {
+      "id": "EyeBlinkR",
+      "name": "右眼眨眼",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0
+    },
+    {
+      "id": "EyeLookX",
+      "name": "眼球左右",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0
+    },
+    {
+      "id": "EyeLookY",
+      "name": "眼球上下",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0
+    },
+    {
+      "id": "BrowY",
+      "name": "眉毛抬降",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0
+    },
+    {
+      "id": "MouthOpen",
+      "name": "嘴巴开合",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0
+    },
+    {
+      "id": "MouthWidth",
+      "name": "嘴型宽窄",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0
+    },
+    {
+      "id": "MouthOffsetX",
+      "name": "嘴型偏移",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0
+    },
+    {
+      "id": "TestExtreme",
+      "name": "极值回归",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0
+    }
+  ],
+  "animationChannels": [
+    {
+      "id": "chan_breath",
+      "type": "Breath",
+      "blend": "Override",
+      "param": "Breath",
+      "enabled": true,
+      "weight": 1.0,
+      "frequency": 0.28,
+      "amplitude": 1.0,
+      "bias": 0.0,
+      "phase": 0.0
+    },
+    {
+      "id": "chan_head_sway",
+      "type": "HeadSway",
+      "blend": "Override",
+      "param": "HeadSway",
+      "enabled": true,
+      "weight": 1.0,
+      "frequency": 0.16,
+      "amplitude": 1.0,
+      "bias": 0.0,
+      "phase": 0.25
+    },
+    {
+      "id": "chan_blink_l",
+      "type": "Blink",
+      "blend": "Override",
+      "param": "EyeBlinkL",
+      "enabled": true,
+      "weight": 1.0,
+      "frequency": 0.9,
+      "amplitude": 1.0,
+      "bias": 0.0,
+      "phase": 0.0
+    },
+    {
+      "id": "chan_blink_r",
+      "type": "Blink",
+      "blend": "Override",
+      "param": "EyeBlinkR",
+      "enabled": true,
+      "weight": 1.0,
+      "frequency": 0.93,
+      "amplitude": 1.0,
+      "bias": 0.0,
+      "phase": 0.27
+    }
+  ],
+  "parts": [
+    {
+      "id": "Body",
+      "name": "身体",
+      "parent": null,
+      "texture": "body.png",
+      "size": [360, 360],
+      "pivot": [180, 180],
+      "drawOrder": 0,
+      "transform": {
+        "pos": [400, 360],
+        "rotDeg": 0,
+        "scale": [1, 1],
+        "opacity": 1.0
+      },
+      "bindings": [
+        {
+          "param": "Breath",
+          "type": "scaleY",
+          "input": [-1, 1],
+          "output": [-0.04, 0.04]
+        },
+        {
+          "param": "TestExtreme",
+          "type": "opacity",
+          "input": [-1, 1],
+          "output": [-0.25, 0.03]
+        }
+      ]
+    },
+    {
+      "id": "HeadBase",
+      "name": "头底",
+      "parent": "Body",
+      "texture": "head.png",
+      "size": [220, 220],
+      "pivot": [110, 110],
+      "drawOrder": 10,
+      "transform": {
+        "pos": [0, -130],
+        "rotDeg": 0,
+        "scale": [1, 1],
+        "opacity": 0.95
+      },
+      "bindings": [
+        {
+          "param": "HeadYaw",
+          "type": "rotDeg",
+          "input": [-1, 1],
+          "output": [-15, 15]
+        },
+        {
+          "param": "HeadYaw",
+          "type": "posX",
+          "input": [-1, 1],
+          "output": [-16, 16]
+        },
+        {
+          "param": "HeadSway",
+          "type": "rotDeg",
+          "input": [-1, 1],
+          "output": [-6, 6]
+        },
+        {
+          "param": "HeadSway",
+          "type": "posY",
+          "input": [-1, 1],
+          "output": [-4, 4]
+        },
+        {
+          "param": "TestExtreme",
+          "type": "scaleX",
+          "input": [-1, 1],
+          "output": [-0.85, 0.35]
+        },
+        {
+          "param": "TestExtreme",
+          "type": "scaleY",
+          "input": [-1, 1],
+          "output": [-0.80, 0.30]
+        },
+        {
+          "param": "TestExtreme",
+          "type": "opacity",
+          "input": [-1, 1],
+          "output": [-0.80, 0.05]
+        }
+      ]
+    },
+    {
+      "id": "FaceBase",
+      "name": "脸底",
+      "parent": "HeadBase",
+      "texture": "head.png",
+      "size": [220, 220],
+      "pivot": [110, 110],
+      "drawOrder": 12,
+      "transform": {
+        "pos": [0, 0],
+        "rotDeg": 0,
+        "scale": [0.95, 0.92],
+        "opacity": 0.65
+      },
+      "bindings": [
+        {
+          "param": "EyeBlinkL",
+          "type": "scaleY",
+          "input": [0, 1],
+          "output": [0.0, -0.04]
+        },
+        {
+          "param": "EyeBlinkR",
+          "type": "scaleY",
+          "input": [0, 1],
+          "output": [0.0, -0.04]
+        }
+      ]
+    },
+    {
+      "id": "EarL",
+      "name": "左耳",
+      "parent": "HeadBase",
+      "texture": "head.png",
+      "size": [76, 110],
+      "pivot": [38, 90],
+      "drawOrder": 9,
+      "transform": {
+        "pos": [-96, -70],
+        "rotDeg": -12,
+        "scale": [0.48, 0.55],
+        "opacity": 0.9
+      },
+      "bindings": [
+        {
+          "param": "HeadYaw",
+          "type": "rotDeg",
+          "input": [-1, 1],
+          "output": [-8, 4]
+        }
+      ]
+    },
+    {
+      "id": "EarR",
+      "name": "右耳",
+      "parent": "HeadBase",
+      "texture": "head.png",
+      "size": [76, 110],
+      "pivot": [38, 90],
+      "drawOrder": 9,
+      "transform": {
+        "pos": [96, -70],
+        "rotDeg": 12,
+        "scale": [0.48, 0.55],
+        "opacity": 0.9
+      },
+      "bindings": [
+        {
+          "param": "HeadYaw",
+          "type": "rotDeg",
+          "input": [-1, 1],
+          "output": [-4, 8]
+        }
+      ]
+    },
+    {
+      "id": "BrowL",
+      "name": "左眉",
+      "parent": "FaceBase",
+      "size": [64, 20],
+      "pivot": [32, 10],
+      "drawOrder": 20,
+      "color": [30, 20, 20, 230],
+      "transform": {
+        "pos": [-46, -36],
+        "rotDeg": -4,
+        "scale": [1, 1],
+        "opacity": 0.95
+      },
+      "bindings": [
+        {
+          "param": "BrowY",
+          "type": "posY",
+          "input": [-1, 1],
+          "output": [8, -10]
+        },
+        {
+          "param": "BrowY",
+          "type": "rotDeg",
+          "input": [-1, 1],
+          "output": [8, -6]
+        },
+        {
+          "param": "HeadYaw",
+          "type": "rotDeg",
+          "input": [-1, 1],
+          "output": [3, -5]
+        }
+      ]
+    },
+    {
+      "id": "BrowR",
+      "name": "右眉",
+      "parent": "FaceBase",
+      "size": [64, 20],
+      "pivot": [32, 10],
+      "drawOrder": 20,
+      "color": [30, 20, 20, 230],
+      "transform": {
+        "pos": [46, -36],
+        "rotDeg": 4,
+        "scale": [1, 1],
+        "opacity": 0.95
+      },
+      "bindings": [
+        {
+          "param": "BrowY",
+          "type": "posY",
+          "input": [-1, 1],
+          "output": [8, -10]
+        },
+        {
+          "param": "BrowY",
+          "type": "rotDeg",
+          "input": [-1, 1],
+          "output": [-8, 6]
+        },
+        {
+          "param": "HeadYaw",
+          "type": "rotDeg",
+          "input": [-1, 1],
+          "output": [-3, 5]
+        }
+      ]
+    },
+    {
+      "id": "EyeL",
+      "name": "左眼",
+      "parent": "FaceBase",
+      "size": [44, 20],
+      "pivot": [22, 10],
+      "drawOrder": 22,
+      "color": [20, 20, 24, 255],
+      "transform": {
+        "pos": [-42, -6],
+        "rotDeg": 0,
+        "scale": [1, 1],
+        "opacity": 1.0
+      },
+      "bindings": [
+        {
+          "param": "EyeBlinkL",
+          "type": "scaleY",
+          "input": [0, 1],
+          "output": [0.0, -0.92]
+        },
+        {
+          "param": "EyeLookX",
+          "type": "posX",
+          "input": [-1, 1],
+          "output": [-6, 6]
+        },
+        {
+          "param": "EyeLookY",
+          "type": "posY",
+          "input": [-1, 1],
+          "output": [-5, 5]
+        },
+        {
+          "param": "HeadYaw",
+          "type": "posX",
+          "input": [-1, 1],
+          "output": [-3, 2]
+        }
+      ]
+    },
+    {
+      "id": "EyeR",
+      "name": "右眼",
+      "parent": "FaceBase",
+      "size": [44, 20],
+      "pivot": [22, 10],
+      "drawOrder": 22,
+      "color": [20, 20, 24, 255],
+      "transform": {
+        "pos": [42, -6],
+        "rotDeg": 0,
+        "scale": [1, 1],
+        "opacity": 1.0
+      },
+      "bindings": [
+        {
+          "param": "EyeBlinkR",
+          "type": "scaleY",
+          "input": [0, 1],
+          "output": [0.0, -0.92]
+        },
+        {
+          "param": "EyeLookX",
+          "type": "posX",
+          "input": [-1, 1],
+          "output": [-6, 6]
+        },
+        {
+          "param": "EyeLookY",
+          "type": "posY",
+          "input": [-1, 1],
+          "output": [-5, 5]
+        },
+        {
+          "param": "HeadYaw",
+          "type": "posX",
+          "input": [-1, 1],
+          "output": [-2, 3]
+        }
+      ]
+    },
+    {
+      "id": "Mouth",
+      "name": "嘴",
+      "parent": "FaceBase",
+      "size": [62, 22],
+      "pivot": [31, 11],
+      "drawOrder": 24,
+      "color": [120, 45, 55, 230],
+      "transform": {
+        "pos": [0, 42],
+        "rotDeg": 0,
+        "scale": [1, 0.35],
+        "opacity": 0.85
+      },
+      "bindings": [
+        {
+          "param": "MouthOpen",
+          "type": "scaleY",
+          "input": [0, 1],
+          "output": [0.0, 1.55]
+        },
+        {
+          "param": "MouthOpen",
+          "type": "posY",
+          "input": [0, 1],
+          "output": [0.0, 6.0]
+        },
+        {
+          "param": "MouthWidth",
+          "type": "scaleX",
+          "input": [-1, 1],
+          "output": [-0.22, 0.35]
+        },
+        {
+          "param": "MouthOffsetX",
+          "type": "posX",
+          "input": [-1, 1],
+          "output": [-10, 10]
+        },
+        {
+          "param": "MouthOpen",
+          "type": "opacity",
+          "input": [0, 1],
+          "output": [0.0, 0.2]
+        },
+        {
+          "param": "HeadSway",
+          "type": "rotDeg",
+          "input": [-1, 1],
+          "output": [-2, 2]
+        }
+      ]
+    }
+  ]
+}

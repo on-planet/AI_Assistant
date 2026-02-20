@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.31)
 project(AI_assistant)
 
+enable_testing()
+
 set(CMAKE_CXX_STANDARD 20)
 
 # Put runtime artifacts next to the executable for local runs.
@@ -48,5 +50,21 @@ target_include_directories(AI_assistant PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
 )
+
+add_executable(plugin_lifecycle_tests
+    tests/plugin_lifecycle_tests.cpp
+    src/k2d/lifecycle/plugin_lifecycle.cpp
+)
+
+target_link_libraries(plugin_lifecycle_tests PRIVATE SDL3::SDL3)
+
+target_include_directories(plugin_lifecycle_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/external
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
+)
+
+add_test(NAME plugin_lifecycle_tests COMMAND plugin_lifecycle_tests)
 
 

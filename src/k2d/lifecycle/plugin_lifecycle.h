@@ -19,17 +19,68 @@ struct PluginHostCallbacks {
     void *user_data = nullptr;
 };
 
+struct AudioFeaturePacket {
+    // 协议版本，便于后续扩展。
+    int schema_version = 1;
+    // 归一化短时能量 [0,1]。
+    float level = 0.0f;
+    // 主频/音高置信值（Hz, <=0 表示不可用）。
+    float pitch_hz = 0.0f;
+    // 语音活动检测 [0,1]。
+    float vad_prob = 0.0f;
+};
+
+struct VisionFeaturePacket {
+    int schema_version = 1;
+    // 用户在镜头中的存在置信度 [0,1]。
+    float user_presence = 0.0f;
+    // 注视中心点（归一化坐标，[-1,1]，0 表示中心）。
+    float gaze_x = 0.0f;
+    float gaze_y = 0.0f;
+    // 头部姿态（角度制）。
+    float head_yaw_deg = 0.0f;
+    float head_pitch_deg = 0.0f;
+    float head_roll_deg = 0.0f;
+};
+
+struct RuntimeStateFeaturePacket {
+    int schema_version = 1;
+    bool window_visible = true;
+    bool click_through = false;
+    bool manual_param_mode = false;
+    bool show_debug_stats = true;
+    float dt_sec = 0.0f;
+};
+
 struct PerceptionInput {
+    int schema_version = 1;
     double time_sec = 0.0;
+
+    // 兼容旧字段（建议新实现走 feature_packets）。
     float audio_level = 0.0f;
     float user_presence = 0.0f;
+
+    AudioFeaturePacket audio;
+    VisionFeaturePacket vision;
+    RuntimeStateFeaturePacket state;
 };
 
 struct BehaviorOutput {
+    int schema_version = 1;
+
+    // 行为输出 schema：
+    // - key: 参数/控制 id（如 "ParamAngleX"、"window.opacity"）
+    // - value: 目标值（target）
+    // - weight: 融合权重（weight, 建议 [0,1]）
     std::unordered_map<std::string, float> param_targets;
     std::unordered_map<std::string, float> param_weights;
+
+    // 事件触发（一次性脉冲语义）。
     bool trigger_blink = false;
     bool trigger_idle_shift = false;
+
+    // 扩展事件/标签输出（可选，供上层订阅）。
+    std::unordered_map<std::string, float> event_scores;
 };
 
 enum class PluginStatus {

@@ -40,6 +40,61 @@ float ResolveWeight(const std::unordered_map<std::string, float> &weights,
 
 }  // namespace
 
+bool MixBehaviorOutputs(const std::vector<BehaviorMixSource> &sources, BehaviorMixResult *out_result) {
+    if (!out_result) return false;
+
+    out_result->mixed = BehaviorOutput{};
+    out_result->dominant_source_by_param.clear();
+
+    std::unordered_map<std::string, float> sum_weight_by_param;
+    std::unordered_map<std::string, float> sum_weighted_target_by_param;
+    std::unordered_map<std::string, float> dominant_weight_by_param;
+
+    for (const auto &src : sources) {
+        if (!src.output || src.global_weight <= 0.0f) continue;
+
+        for (const auto &kv : src.output->param_targets) {
+            bool has_weight = false;
+            bool weight_clamped = false;
+            bool weight_non_positive = false;
+            const float local_w = ResolveWeight(src.output->param_weights,
+                                                kv.first,
+                                                &has_weight,
+                                                &weight_clamped,
+                                                &weight_non_positive);
+            (void)weight_clamped;
+            if (!has_weight || weight_non_positive) continue;
+            if (!IsFinite(kv.second)) continue;
+
+            const float effective_w = std::clamp(local_w * src.global_weight, 0.0f, 1.0f);
+            if (effective_w <= 0.0f) continue;
+
+            sum_weight_by_param[kv.first] += effective_w;
+            sum_weighted_target_by_param[kv.first] += kv.second * effective_w;
+
+            auto it = dominant_weight_by_param.find(kv.first);
+            if (it == dominant_weight_by_param.end() || effective_w > it->second) {
+                dominant_weight_by_param[kv.first] = effective_w;
+                out_result->dominant_source_by_param[kv.first] = (src.name ? std::string(src.name) : std::string("unknown"));
+            }
+        }
+
+        out_result->mixed.trigger_blink = out_result->mixed.trigger_blink || src.output->trigger_blink;
+        out_result->mixed.trigger_idle_shift = out_result->mixed.trigger_idle_shift || src.output->trigger_idle_shift;
+    }
+
+    for (const auto &kv : sum_weight_by_param) {
+        const std::string &pid = kv.first;
+        const float w_sum = kv.second;
+        if (w_sum <= 1e-6f) continue;
+
+        out_result->mixed.param_targets[pid] = sum_weighted_target_by_param[pid] / w_sum;
+        out_result->mixed.param_weights[pid] = std::clamp(w_sum, 0.0f, 1.0f);
+    }
+
+    return !out_result->mixed.param_targets.empty();
+}
+
 void ApplyBehaviorOutput(const BehaviorOutput &out, const BehaviorApplyContext &ctx) {
     static std::unordered_map<std::string, Uint64> s_last_log_ms;
     const Uint64 now_ms = SDL_GetTicks();

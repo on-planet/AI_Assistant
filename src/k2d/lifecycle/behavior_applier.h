@@ -6,6 +6,10 @@
 #include "k2d/core/model.h"
 #include "k2d/lifecycle/plugin_lifecycle.h"
 
+#include <string>
+#include <unordered_map>
+#include <vector>
+
 namespace k2d {
 
 struct BehaviorApplyContext {
@@ -24,6 +28,19 @@ struct BehaviorApplyContext {
     void (*sync_animation_channel_state)(void *user_data) = nullptr;
     void *sync_animation_channel_state_user_data = nullptr;
 };
+
+struct BehaviorMixSource {
+    const char *name = "unknown";
+    const BehaviorOutput *output = nullptr;
+    float global_weight = 1.0f;
+};
+
+struct BehaviorMixResult {
+    BehaviorOutput mixed;
+    std::unordered_map<std::string, std::string> dominant_source_by_param;
+};
+
+bool MixBehaviorOutputs(const std::vector<BehaviorMixSource> &sources, BehaviorMixResult *out_result);
 
 void ApplyBehaviorOutput(const BehaviorOutput &out, const BehaviorApplyContext &ctx);
 

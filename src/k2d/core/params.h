@@ -21,7 +21,7 @@ public:
     void SetTarget(float v);
     void SetValueImmediate(float v);
 
-    // Exponential interpolation toward target. interp_speed is in 1/sec.
+    // 二阶阻尼弹簧更新：interp_speed 作为弹簧角频率(约 1/sec 量级)。
     void Update(float dt_seconds, float interp_speed);
 
     float value() const { return value_; }
@@ -32,6 +32,7 @@ private:
     FloatParamSpec spec_{};
     float value_ = 0.0f;
     float target_ = 0.0f;
+    float velocity_ = 0.0f;
 };
 
 }  // namespace k2d

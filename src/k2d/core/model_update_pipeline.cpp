@@ -56,6 +56,31 @@ static float EvalAnimationChannel(const AnimationChannel &channel, float time_se
     return channel.bias + channel.amplitude * signal;
 }
 
+float ResolveParamInterpSpeed(const std::string &param_id) {
+    // 分组阻尼：眼睛快、头部中、身体慢。
+    // 这里返回二阶弹簧的角频率（与 FloatParam::Update 的 interp_speed 对齐）。
+    std::string lower;
+    lower.reserve(param_id.size());
+    for (char c : param_id) {
+        lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+
+    const auto has = [&](const char *s) { return lower.find(s) != std::string::npos; };
+
+    // 眼睛相关（眨眼/眼球）响应更快。
+    if (has("eye") || has("blink") || has("pupil")) {
+        return 9.0f;
+    }
+
+    // 头部相关中等速度。
+    if (has("head") || has("neck") || has("yaw") || has("pitch")) {
+        return 5.5f;
+    }
+
+    // 其余默认偏慢，减少全身参数抖动。
+    return 3.2f;
+}
+
 }  // namespace
 
 void ApplyAnimationChannelTargets(ModelRuntime *model, float time_sec) {
@@ -93,7 +118,8 @@ void ApplyAnimationChannelTargets(ModelRuntime *model, float time_sec) {
 void UpdateParameterValues(ModelRuntime *model, float dt_sec) {
     if (!model) return;
     for (ModelParameter &parameter : model->parameters) {
-        parameter.param.Update(dt_sec, 4.0f);
+        const float interp_speed = ResolveParamInterpSpeed(parameter.id);
+        parameter.param.Update(dt_sec, interp_speed);
     }
 }
 

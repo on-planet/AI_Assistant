@@ -25,16 +25,17 @@
 #include "k2d/lifecycle/behavior_applier.h"
 #include "k2d/lifecycle/model_reload_service.h"
 #include "k2d/lifecycle/reminder_service.h"
-#include "k2d/capture/screen_capture.h"
-#include "k2d/lifecycle/scene_classifier.h"
+#include "k2d/lifecycle/perception_pipeline.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
 #include <limits>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -47,6 +48,24 @@ enum class AxisConstraint {
     None,
     XOnly,
     YOnly,
+};
+
+enum class TaskPrimaryCategory {
+    Unknown,
+    Work,
+    Game,
+};
+
+enum class TaskSecondaryCategory {
+    Unknown,
+    WorkCoding,
+    WorkDebugging,
+    WorkReadingDocs,
+    WorkMeetingNotes,
+    GameLobby,
+    GameMatch,
+    GameSettlement,
+    GameMenu,
 };
 
 enum class EditorProp {
@@ -158,15 +177,11 @@ struct AppRuntime {
     std::vector<ReminderItem> reminder_upcoming;
     std::string reminder_last_error;
 
-    ScreenCapture screen_capture;
-    bool screen_capture_ready = false;
-    float screen_capture_poll_accum_sec = 0.0f;
-    std::string screen_capture_last_error;
+    PerceptionPipeline perception_pipeline;
+    PerceptionPipelineState perception_state;
 
-    SceneClassifier scene_classifier;
-    bool scene_classifier_ready = false;
-    std::string scene_classifier_last_error;
-    SceneClassificationResult scene_result;
+    TaskPrimaryCategory task_primary = TaskPrimaryCategory::Unknown;
+    TaskSecondaryCategory task_secondary = TaskSecondaryCategory::Unknown;
 };
 
 AppRuntime g_runtime;
@@ -314,6 +329,86 @@ const char *AxisConstraintName(AxisConstraint c) {
         case AxisConstraint::XOnly: return "X";
         case AxisConstraint::YOnly: return "Y";
         default: return "None";
+    }
+}
+
+const char *TaskPrimaryCategoryName(TaskPrimaryCategory c) {
+    switch (c) {
+        case TaskPrimaryCategory::Work: return "work";
+        case TaskPrimaryCategory::Game: return "game";
+        default: return "unknown";
+    }
+}
+
+const char *TaskSecondaryCategoryName(TaskSecondaryCategory c) {
+    switch (c) {
+        case TaskSecondaryCategory::WorkCoding: return "coding";
+        case TaskSecondaryCategory::WorkDebugging: return "debugging";
+        case TaskSecondaryCategory::WorkReadingDocs: return "reading_docs";
+        case TaskSecondaryCategory::WorkMeetingNotes: return "meeting_notes";
+        case TaskSecondaryCategory::GameLobby: return "lobby";
+        case TaskSecondaryCategory::GameMatch: return "match";
+        case TaskSecondaryCategory::GameSettlement: return "settlement";
+        case TaskSecondaryCategory::GameMenu: return "menu";
+        default: return "unknown";
+    }
+}
+
+void InferTaskCategory(const SystemContextSnapshot &ctx,
+                       const OcrResult &ocr,
+                       const SceneClassificationResult &scene,
+                       TaskPrimaryCategory &out_primary,
+                       TaskSecondaryCategory &out_secondary) {
+    auto to_lower = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+        return s;
+    };
+
+    std::string text = ctx.process_name + "\n" + ctx.window_title + "\n" + ctx.url_hint + "\n" + ocr.summary + "\n" + scene.label;
+    text = to_lower(text);
+
+    out_primary = TaskPrimaryCategory::Unknown;
+    out_secondary = TaskSecondaryCategory::Unknown;
+
+    const bool has_game_hint =
+        text.find("game") != std::string::npos ||
+        text.find("steam") != std::string::npos ||
+        text.find("unity") != std::string::npos ||
+        text.find("ue4") != std::string::npos ||
+        text.find("unreal") != std::string::npos ||
+        text.find("lobby") != std::string::npos ||
+        text.find("match") != std::string::npos ||
+        text.find("battle") != std::string::npos ||
+        text.find("menu") != std::string::npos ||
+        text.find("settlement") != std::string::npos ||
+        text.find("lobby") != std::string::npos ||
+        text.find("match") != std::string::npos;
+
+    if (has_game_hint) {
+        out_primary = TaskPrimaryCategory::Game;
+        if (text.find("result") != std::string::npos || text.find("settlement") != std::string::npos) {
+            out_secondary = TaskSecondaryCategory::GameSettlement;
+        } else if (text.find("lobby") != std::string::npos) {
+            out_secondary = TaskSecondaryCategory::GameLobby;
+        } else if (text.find("menu") != std::string::npos) {
+            out_secondary = TaskSecondaryCategory::GameMenu;
+        } else {
+            out_secondary = TaskSecondaryCategory::GameMatch;
+        }
+        return;
+    }
+
+    out_primary = TaskPrimaryCategory::Work;
+    if (text.find("debug") != std::string::npos || text.find("gdb") != std::string::npos) {
+        out_secondary = TaskSecondaryCategory::WorkDebugging;
+    } else if (text.find("readme") != std::string::npos || text.find("docs") != std::string::npos || text.find("wiki") != std::string::npos) {
+        out_secondary = TaskSecondaryCategory::WorkReadingDocs;
+    } else if (text.find("meeting") != std::string::npos || text.find("minutes") != std::string::npos) {
+        out_secondary = TaskSecondaryCategory::WorkMeetingNotes;
+    } else {
+        out_secondary = TaskSecondaryCategory::WorkCoding;
     }
 }
 
@@ -941,17 +1036,42 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 UpdateModelRuntime(&g_runtime.model, g_runtime.model_time, dt);
             }
 
-            if (g_runtime.plugin_ready) {
-                PerceptionInput in{};
-                in.time_sec = static_cast<double>(g_runtime.model_time);
-                in.audio_level = 0.0f;
-                in.user_presence = g_runtime.window_visible ? 1.0f : 0.0f;
-                g_runtime.inference_adapter->SubmitInput(in);
+            if (g_runtime.model_loaded) {
+                // 本地状态机输出
+                BehaviorOutput local_out{};
+                BuildInteractionBehaviorOutput(
+                    g_runtime.interaction_state,
+                    InteractionControllerContext{
+                        .model_loaded = g_runtime.model_loaded,
+                        .model = &g_runtime.model,
+                        .pick_top_part_at = [](float x, float y) { return PickTopPartAt(x, y); },
+                        .has_model_params = []() { return HasModelParams(); },
+                    },
+                    dt,
+                    local_out);
 
-                BehaviorOutput out{};
-                if (g_runtime.inference_adapter->TryConsumeLatestOutput(out, nullptr)) {
+                BehaviorOutput plugin_out{};
+                bool has_plugin_out = false;
+                if (g_runtime.plugin_ready) {
+                    PerceptionInput in{};
+                    in.time_sec = static_cast<double>(g_runtime.model_time);
+                    in.audio_level = 0.0f;
+                    in.user_presence = g_runtime.window_visible ? 1.0f : 0.0f;
+                    g_runtime.inference_adapter->SubmitInput(in);
+                    has_plugin_out = g_runtime.inference_adapter->TryConsumeLatestOutput(plugin_out, nullptr);
+                }
+
+                // 统一 mixer：本地行为 + 插件行为同入口融合后再应用
+                BehaviorMixResult mix_result{};
+                std::vector<BehaviorMixSource> mix_sources;
+                mix_sources.push_back(BehaviorMixSource{.name = "local_fsm", .output = &local_out, .global_weight = 1.0f});
+                if (has_plugin_out) {
+                    mix_sources.push_back(BehaviorMixSource{.name = "plugin", .output = &plugin_out, .global_weight = 1.0f});
+                }
+
+                if (MixBehaviorOutputs(mix_sources, &mix_result)) {
                     auto apply_ctx = BuildBehaviorApplyContext();
-                    ApplyBehaviorOutput(out, apply_ctx);
+                    ApplyBehaviorOutput(mix_result.mixed, apply_ctx);
                 }
             }
 
@@ -979,27 +1099,12 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 }
             }
 
-            if (g_runtime.screen_capture_ready) {
-                g_runtime.screen_capture_poll_accum_sec += std::max(0.0f, dt);
-                // 降低感知频率以压低 CPU 占用：每 3 秒检测一次。
-                if (g_runtime.screen_capture_poll_accum_sec >= 3.0f) {
-                    g_runtime.screen_capture_poll_accum_sec = 0.0f;
-                    ScreenCaptureFrame frame{};
-                    std::string cap_err;
-                    if (!g_runtime.screen_capture.Capture(frame, &cap_err) && !cap_err.empty()) {
-                        g_runtime.screen_capture_last_error = cap_err;
-                    } else if (g_runtime.scene_classifier_ready) {
-                        std::string scene_err;
-                        SceneClassificationResult scene_out{};
-                        if (g_runtime.scene_classifier.Classify(frame, scene_out, &scene_err)) {
-                            g_runtime.scene_result = std::move(scene_out);
-                            g_runtime.scene_classifier_last_error.clear();
-                        } else if (!scene_err.empty()) {
-                            g_runtime.scene_classifier_last_error = scene_err;
-                        }
-                    }
-                }
-            }
+            g_runtime.perception_pipeline.Tick(dt, g_runtime.perception_state);
+            InferTaskCategory(g_runtime.perception_state.system_context_snapshot,
+                              g_runtime.perception_state.ocr_result,
+                              g_runtime.perception_state.scene_result,
+                              g_runtime.task_primary,
+                              g_runtime.task_secondary);
         },
         .on_render = []() {
             ImGui_ImplSDLRenderer3_NewFrame();
@@ -1049,17 +1154,44 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 ImGui::ProgressBar(pat_ratio, ImVec2(-1.0f, 0.0f), "Pat React");
 
                 ImGui::Separator();
-                ImGui::Text("Capture: %s", g_runtime.screen_capture_ready ? "ready" : "not ready");
-                if (!g_runtime.screen_capture_last_error.empty()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Capture Error: %s", g_runtime.screen_capture_last_error.c_str());
+                ImGui::Text("Capture: %s", g_runtime.perception_state.screen_capture_ready ? "ready" : "not ready");
+                if (!g_runtime.perception_state.screen_capture_last_error.empty()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Capture Error: %s", g_runtime.perception_state.screen_capture_last_error.c_str());
                 }
-                ImGui::Text("Scene Classifier: %s", g_runtime.scene_classifier_ready ? "ready" : "not ready");
-                if (g_runtime.scene_classifier_ready && !g_runtime.scene_result.label.empty()) {
-                    ImGui::Text("Scene: %s (%.3f)", g_runtime.scene_result.label.c_str(), g_runtime.scene_result.score);
+                ImGui::Text("Scene Classifier: %s", g_runtime.perception_state.scene_classifier_ready ? "ready" : "not ready");
+                if (g_runtime.perception_state.scene_classifier_ready && !g_runtime.perception_state.scene_result.label.empty()) {
+                    ImGui::Text("Scene: %s (%.3f)", g_runtime.perception_state.scene_result.label.c_str(), g_runtime.perception_state.scene_result.score);
                 }
-                if (!g_runtime.scene_classifier_last_error.empty()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Scene Error: %s", g_runtime.scene_classifier_last_error.c_str());
+                if (!g_runtime.perception_state.scene_classifier_last_error.empty()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Scene Error: %s", g_runtime.perception_state.scene_classifier_last_error.c_str());
                 }
+
+                ImGui::Text("OCR: %s", g_runtime.perception_state.ocr_ready ? "ready" : "not ready");
+                ImGui::SeparatorText("System Context");
+                ImGui::Text("Process: %s", g_runtime.perception_state.system_context_snapshot.process_name.empty() ? "(empty)" : g_runtime.perception_state.system_context_snapshot.process_name.c_str());
+                ImGui::TextWrapped("Title: %s", g_runtime.perception_state.system_context_snapshot.window_title.empty() ? "(empty)" : g_runtime.perception_state.system_context_snapshot.window_title.c_str());
+                ImGui::TextWrapped("URL: %s", g_runtime.perception_state.system_context_snapshot.url_hint.empty() ? "(empty)" : g_runtime.perception_state.system_context_snapshot.url_hint.c_str());
+                if (!g_runtime.perception_state.system_context_last_error.empty()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "System Context Error: %s", g_runtime.perception_state.system_context_last_error.c_str());
+                }
+
+                ImGui::SeparatorText("OCR");
+                if (g_runtime.perception_state.ocr_ready && !g_runtime.perception_state.ocr_result.summary.empty()) {
+                    ImGui::TextWrapped("OCR Summary: %s", g_runtime.perception_state.ocr_result.summary.c_str());
+                    if (!g_runtime.perception_state.ocr_result.lines.empty()) {
+                        ImGui::Text("OCR Top1: %s (%.3f)",
+                                    g_runtime.perception_state.ocr_result.lines.front().text.c_str(),
+                                    g_runtime.perception_state.ocr_result.lines.front().score);
+                    }
+                }
+                if (!g_runtime.perception_state.ocr_last_error.empty()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "OCR Error: %s", g_runtime.perception_state.ocr_last_error.c_str());
+                }
+
+                ImGui::SeparatorText("任务分类");
+                ImGui::Text("一级: %s", TaskPrimaryCategoryName(g_runtime.task_primary));
+                ImGui::Text("二级: %s", TaskSecondaryCategoryName(g_runtime.task_secondary));
+
                 if (ImGui::Button("Close Program")) {
                     g_runtime.running = false;
                 }
@@ -1307,76 +1439,8 @@ bool AppLifecycleBootstrap(AppLifecycleContext &ctx) {
     }
 
     {
-        std::string capture_err;
-        g_runtime.screen_capture_ready = g_runtime.screen_capture.Init(&capture_err);
-        if (!g_runtime.screen_capture_ready) {
-            g_runtime.screen_capture_last_error = capture_err;
-            SDL_Log("Screen capture init failed: %s", capture_err.c_str());
-        } else {
-            g_runtime.screen_capture_last_error.clear();
-            SDL_Log("Screen capture init ok: DXGI Desktop Duplication");
-        }
-    }
-
-    {
-        std::string sc_err;
-        g_runtime.scene_classifier_ready = false;
-
-        std::vector<std::pair<std::string, std::string>> scene_model_candidates;
-        scene_model_candidates.reserve(24);
-
-#ifdef K2D_PROJECT_DIR
-        {
-            const std::filesystem::path root = std::filesystem::path(K2D_PROJECT_DIR);
-            scene_model_candidates.emplace_back((root / "assets" / "mobileclip_image.onnx").generic_string(),
-                                                (root / "assets" / "mobileclip_labels.json").generic_string());
-        }
-#endif
-
-        {
-            std::error_code ec;
-            const auto cwd = std::filesystem::current_path(ec);
-            if (!ec) {
-                scene_model_candidates.emplace_back((cwd / "assets" / "mobileclip_image.onnx").lexically_normal().generic_string(),
-                                                    (cwd / "assets" / "mobileclip_labels.json").lexically_normal().generic_string());
-            }
-        }
-
-        std::string prefix;
-        for (int i = 0; i <= 12; ++i) {
-            scene_model_candidates.emplace_back(prefix + "assets/mobileclip_image.onnx",
-                                                prefix + "assets/mobileclip_labels.json");
-            prefix += "../";
-        }
-
-        for (const auto &pair : scene_model_candidates) {
-            std::error_code ec1;
-            std::error_code ec2;
-            const bool model_exists = std::filesystem::exists(pair.first, ec1);
-            const bool labels_exists = std::filesystem::exists(pair.second, ec2);
-            if (!model_exists || !labels_exists) {
-                continue;
-            }
-
-            std::string try_err;
-            if (g_runtime.scene_classifier.Init(pair.first, pair.second, &try_err)) {
-                g_runtime.scene_classifier_ready = true;
-                g_runtime.scene_classifier_last_error.clear();
-                SDL_Log("Scene classifier init ok: model=%s labels=%s", pair.first.c_str(), pair.second.c_str());
-                break;
-            }
-            if (sc_err.empty() && !try_err.empty()) {
-                sc_err = try_err;
-            }
-        }
-
-        if (!g_runtime.scene_classifier_ready) {
-            if (sc_err.empty()) {
-                sc_err = "mobileclip model/labels not found in candidate paths";
-            }
-            g_runtime.scene_classifier_last_error = sc_err;
-            SDL_Log("Scene classifier init failed: %s", sc_err.c_str());
-        }
+        std::string perception_err;
+        g_runtime.perception_pipeline.Init(g_runtime.perception_state, &perception_err);
     }
 
     g_runtime.demo_texture = bootstrap.demo_texture;
@@ -1442,11 +1506,7 @@ void AppLifecycleTeardown(AppLifecycleContext &ctx) {
     }
     g_runtime.plugin_ready = false;
 
-    g_runtime.screen_capture.Shutdown();
-    g_runtime.screen_capture_ready = false;
-
-    g_runtime.scene_classifier.Shutdown();
-    g_runtime.scene_classifier_ready = false;
+    g_runtime.perception_pipeline.Shutdown(g_runtime.perception_state);
 
     if (g_runtime.tray) {
         SDL_DestroyTray(g_runtime.tray);

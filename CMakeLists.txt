@@ -22,6 +22,8 @@ add_executable(AI_assistant WIN32
     src/k2d/lifecycle/inference_adapter.cpp
     src/k2d/lifecycle/behavior_applier.cpp
     src/k2d/lifecycle/model_reload_service.cpp
+    src/k2d/lifecycle/reminder_service.cpp
+    external/sqlite/sqlite3.c
     external/imgui/imgui.cpp
     external/imgui/imgui_draw.cpp
     external/imgui/imgui_tables.cpp

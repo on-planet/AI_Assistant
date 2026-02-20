@@ -24,10 +24,12 @@
 #include "k2d/lifecycle/plugin_lifecycle.h"
 #include "k2d/lifecycle/behavior_applier.h"
 #include "k2d/lifecycle/model_reload_service.h"
+#include "k2d/lifecycle/reminder_service.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <ctime>
 #include <filesystem>
 #include <limits>
 #include <string>
@@ -141,6 +143,14 @@ struct AppRuntime {
     std::unique_ptr<IInferenceAdapter> inference_adapter;
     bool plugin_ready = false;
     PluginParamBlendMode plugin_param_blend_mode = PluginParamBlendMode::Override;
+
+    ReminderService reminder_service;
+    bool reminder_ready = false;
+    float reminder_poll_accum_sec = 0.0f;
+    char reminder_title_input[128] = "喝水";
+    int reminder_after_min = 10;
+    std::vector<ReminderItem> reminder_upcoming;
+    std::string reminder_last_error;
 };
 
 AppRuntime g_runtime;
@@ -896,6 +906,30 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                     ApplyBehaviorOutput(out, apply_ctx);
                 }
             }
+
+            if (g_runtime.reminder_ready) {
+                g_runtime.reminder_poll_accum_sec += std::max(0.0f, dt);
+                if (g_runtime.reminder_poll_accum_sec >= 1.0f) {
+                    g_runtime.reminder_poll_accum_sec = 0.0f;
+                    const std::int64_t now_sec = static_cast<std::int64_t>(std::time(nullptr));
+
+                    std::string due_err;
+                    auto due_items = g_runtime.reminder_service.PollDueAndMarkNotified(now_sec, 8, &due_err);
+                    if (!due_err.empty()) {
+                        g_runtime.reminder_last_error = due_err;
+                    }
+                    for (const auto &item : due_items) {
+                        SetEditorStatus(std::string("提醒: ") + item.title, 3.0f);
+                        SDL_Log("[Reminder] due id=%lld title=%s", static_cast<long long>(item.id), item.title.c_str());
+                    }
+
+                    std::string list_err;
+                    g_runtime.reminder_upcoming = g_runtime.reminder_service.ListUpcoming(now_sec, 8, &list_err);
+                    if (!list_err.empty()) {
+                        g_runtime.reminder_last_error = list_err;
+                    }
+                }
+            }
         },
         .on_render = []() {
             ImGui_ImplSDLRenderer3_NewFrame();
@@ -924,6 +958,41 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 }
                 ImGui::SameLine();
                 ImGui::TextDisabled("(Esc)");
+
+                ImGui::SeparatorText("Schedule Reminder (SQLite)");
+                ImGui::InputText("Title", g_runtime.reminder_title_input, static_cast<int>(sizeof(g_runtime.reminder_title_input)));
+                ImGui::InputInt("After Minutes", &g_runtime.reminder_after_min, 1, 10);
+                g_runtime.reminder_after_min = std::max(1, g_runtime.reminder_after_min);
+                if (ImGui::Button("Add Reminder")) {
+                    if (!g_runtime.reminder_ready) {
+                        g_runtime.reminder_last_error = "reminder service not ready";
+                    } else {
+                        const std::int64_t now_sec = static_cast<std::int64_t>(std::time(nullptr));
+                        const std::int64_t due_sec = now_sec + static_cast<std::int64_t>(g_runtime.reminder_after_min) * 60;
+                        std::string add_err;
+                        if (g_runtime.reminder_service.AddReminder(g_runtime.reminder_title_input, due_sec, &add_err)) {
+                            SetEditorStatus("reminder added", 1.5f);
+                            g_runtime.reminder_last_error.clear();
+                            g_runtime.reminder_upcoming = g_runtime.reminder_service.ListUpcoming(now_sec, 8, nullptr);
+                        } else {
+                            g_runtime.reminder_last_error = add_err;
+                        }
+                    }
+                }
+
+                if (!g_runtime.reminder_last_error.empty()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Reminder Error: %s", g_runtime.reminder_last_error.c_str());
+                }
+
+                ImGui::Text("Upcoming:");
+                for (const auto &item : g_runtime.reminder_upcoming) {
+                    const long long remain_sec = static_cast<long long>(item.due_unix_sec - static_cast<std::int64_t>(std::time(nullptr)));
+                    ImGui::BulletText("[%lld] %s (in %llds)",
+                                      static_cast<long long>(item.id),
+                                      item.title.c_str(),
+                                      remain_sec);
+                }
+
                 ImGui::End();
             }
 
@@ -1063,6 +1132,18 @@ bool AppLifecycleBootstrap(AppLifecycleContext &ctx) {
         }
     }
 
+    {
+        std::string reminder_err;
+        g_runtime.reminder_ready = g_runtime.reminder_service.Init("assets/reminders.db", &reminder_err);
+        if (!g_runtime.reminder_ready) {
+            g_runtime.reminder_last_error = reminder_err;
+            SDL_Log("Reminder service init failed: %s", reminder_err.c_str());
+        } else {
+            const std::int64_t now_sec = static_cast<std::int64_t>(std::time(nullptr));
+            g_runtime.reminder_upcoming = g_runtime.reminder_service.ListUpcoming(now_sec, 8, nullptr);
+        }
+    }
+
     g_runtime.demo_texture = bootstrap.demo_texture;
     g_runtime.demo_texture_w = bootstrap.demo_texture_w;
     g_runtime.demo_texture_h = bootstrap.demo_texture_h;
@@ -1116,6 +1197,9 @@ void AppLifecycleTeardown(AppLifecycleContext &ctx) {
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
+
+    g_runtime.reminder_service.Shutdown();
+    g_runtime.reminder_ready = false;
 
     if (g_runtime.inference_adapter) {
         g_runtime.inference_adapter->Shutdown();

@@ -10,6 +10,16 @@
 
 namespace k2d {
 
+struct OcrBlackboardData {
+    std::vector<OcrTextLine> lines;
+    std::string summary;
+    std::vector<std::string> domain_tags;
+};
+
+struct PerceptionBlackboard {
+    OcrBlackboardData ocr;
+};
+
 struct PerceptionPipelineState {
     bool screen_capture_ready = false;
     float screen_capture_poll_accum_sec = 0.0f;
@@ -22,9 +32,14 @@ struct PerceptionPipelineState {
     bool ocr_ready = false;
     std::string ocr_last_error;
     OcrResult ocr_result;
+    OcrResult ocr_last_stable_result;
+    bool ocr_skipped_due_timeout = false;
+    int ocr_timeout_ms = 120;
 
     SystemContextSnapshot system_context_snapshot;
     std::string system_context_last_error;
+
+    PerceptionBlackboard blackboard;
 };
 
 class PerceptionPipeline {

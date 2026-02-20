@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <fstream>
 #include <memory>
 #include <numeric>
@@ -38,6 +39,95 @@ std::vector<std::string> ReadKeys(const std::string &path, std::string *out_erro
     }
     if (keys.empty() && out_error) *out_error = "ocr keys is empty";
     return keys;
+}
+
+struct DetBox {
+    int x = 0;
+    int y = 0;
+    int w = 0;
+    int h = 0;
+};
+
+std::string DecodeCtc(const float *logits,
+                      std::size_t t,
+                      std::size_t c,
+                      const std::vector<std::string> &keys,
+                      float &out_score) {
+    out_score = 0.0f;
+    if (!logits || t == 0 || c == 0) return {};
+
+    std::string text;
+    int prev = -1;
+    int valid = 0;
+    float score_sum = 0.0f;
+
+    for (std::size_t ti = 0; ti < t; ++ti) {
+        const float *row = logits + ti * c;
+        std::size_t best = 0;
+        float best_v = row[0];
+        for (std::size_t ci = 1; ci < c; ++ci) {
+            if (row[ci] > best_v) {
+                best_v = row[ci];
+                best = ci;
+            }
+        }
+        const int cls = static_cast<int>(best);
+        if (cls == 0) {
+            prev = cls;
+            continue;
+        }
+        if (cls == prev) continue;
+
+        const int key_idx = cls - 1;
+        if (key_idx >= 0 && key_idx < static_cast<int>(keys.size())) {
+            text += keys[static_cast<std::size_t>(key_idx)];
+            score_sum += best_v;
+            ++valid;
+        }
+        prev = cls;
+    }
+
+    out_score = valid > 0 ? (score_sum / static_cast<float>(valid)) : 0.0f;
+    return text;
+}
+
+DetBox MakeBoxFromDetPeak(const float *det,
+                          std::size_t h,
+                          std::size_t w,
+                          int src_w,
+                          int src_h) {
+    if (!det || h == 0 || w == 0 || src_w <= 0 || src_h <= 0) {
+        return {0, 0, std::max(1, src_w), std::max(1, src_h)};
+    }
+
+    std::size_t best_i = 0;
+    float best_v = det[0];
+    for (std::size_t i = 1; i < h * w; ++i) {
+        if (det[i] > best_v) {
+            best_v = det[i];
+            best_i = i;
+        }
+    }
+
+    const int py = static_cast<int>(best_i / w);
+    const int px = static_cast<int>(best_i % w);
+
+    const float cx = (static_cast<float>(px) + 0.5f) * static_cast<float>(src_w) / static_cast<float>(w);
+    const float cy = (static_cast<float>(py) + 0.5f) * static_cast<float>(src_h) / static_cast<float>(h);
+
+    const int bw = std::max(24, src_w / 2);
+    const int bh = std::max(24, src_h / 8);
+    int x = static_cast<int>(std::round(cx - bw * 0.5f));
+    int y = static_cast<int>(std::round(cy - bh * 0.5f));
+
+    x = std::clamp(x, 0, std::max(0, src_w - 1));
+    y = std::clamp(y, 0, std::max(0, src_h - 1));
+
+    int rw = std::min(bw, src_w - x);
+    int rh = std::min(bh, src_h - y);
+    rw = std::max(1, rw);
+    rh = std::max(1, rh);
+    return {x, y, rw, rh};
 }
 
 }  // namespace
@@ -189,20 +279,97 @@ bool OcrService::Recognize(const ScreenCaptureFrame &frame,
             return false;
         }
 
-        // V1: 输出占位摘要，确认 det+rec 模型均已加载可用于后续升级。
-        out.summary = "OCR pipeline ready (det+rec loaded, det inference ok)";
-        if (context) {
-            if (!context->process_name.empty()) {
-                out.summary += " | process=" + context->process_name;
-            }
-            if (!context->window_title.empty()) {
-                out.summary += " | title=" + context->window_title;
-            }
-            if (!context->url.empty()) {
-                out.summary += " | url=" + context->url;
+        auto det_info = det_out[0].GetTensorTypeAndShapeInfo();
+        const auto det_shape_out = det_info.GetShape();
+        const float *det_ptr = det_out[0].GetTensorData<float>();
+        if (!det_ptr || det_shape_out.size() < 2) {
+            if (out_error) *out_error = "ocr det tensor invalid";
+            return false;
+        }
+
+        std::size_t map_h = static_cast<std::size_t>(det_shape_out[det_shape_out.size() - 2]);
+        std::size_t map_w = static_cast<std::size_t>(det_shape_out[det_shape_out.size() - 1]);
+        if (map_h == 0 || map_w == 0) {
+            map_h = static_cast<std::size_t>(det_h);
+            map_w = static_cast<std::size_t>(det_w);
+        }
+
+        DetBox box = MakeBoxFromDetPeak(det_ptr, map_h, map_w, frame.width, frame.height);
+
+        std::vector<float> rec_input(1ull * 3ull * static_cast<std::size_t>(impl_->rec_h) * static_cast<std::size_t>(impl_->rec_w), 0.0f);
+        const std::size_t rec_plane = static_cast<std::size_t>(impl_->rec_h) * static_cast<std::size_t>(impl_->rec_w);
+        for (int y = 0; y < impl_->rec_h; ++y) {
+            const float syf = static_cast<float>(box.y) +
+                              (static_cast<float>(y) + 0.5f) * static_cast<float>(box.h) / static_cast<float>(impl_->rec_h) -
+                              0.5f;
+            const int sy = static_cast<int>(std::round(syf));
+            for (int x = 0; x < impl_->rec_w; ++x) {
+                const float sxf = static_cast<float>(box.x) +
+                                  (static_cast<float>(x) + 0.5f) * static_cast<float>(box.w) / static_cast<float>(impl_->rec_w) -
+                                  0.5f;
+                const int sx = static_cast<int>(std::round(sxf));
+                const std::size_t o = static_cast<std::size_t>(y) * static_cast<std::size_t>(impl_->rec_w) + static_cast<std::size_t>(x);
+                rec_input[o] = sample_rgb01(sx, sy, 0);
+                rec_input[rec_plane + o] = sample_rgb01(sx, sy, 1);
+                rec_input[rec_plane * 2 + o] = sample_rgb01(sx, sy, 2);
             }
         }
-        out.lines.push_back(OcrTextLine{.text = out.summary, .score = 0.01f});
+
+        std::vector<int64_t> rec_shape = {1, 3, impl_->rec_h, impl_->rec_w};
+        Ort::Value rec_tensor = Ort::Value::CreateTensor<float>(mem,
+                                                                 rec_input.data(),
+                                                                 rec_input.size(),
+                                                                 rec_shape.data(),
+                                                                 rec_shape.size());
+        const char *rec_in_names[] = {impl_->rec_input_name.c_str()};
+        const char *rec_out_names[] = {impl_->rec_output_name.c_str()};
+        auto rec_out = impl_->rec_session->Run(Ort::RunOptions{nullptr}, rec_in_names, &rec_tensor, 1, rec_out_names, 1);
+        if (rec_out.empty() || !rec_out[0].IsTensor()) {
+            if (out_error) *out_error = "ocr rec output invalid";
+            return false;
+        }
+
+        auto rec_info = rec_out[0].GetTensorTypeAndShapeInfo();
+        const auto rec_out_shape = rec_info.GetShape();
+        const float *rec_ptr = rec_out[0].GetTensorData<float>();
+        if (!rec_ptr || rec_out_shape.size() < 2) {
+            if (out_error) *out_error = "ocr rec tensor invalid";
+            return false;
+        }
+
+        std::size_t t = 0;
+        std::size_t c = 0;
+        if (rec_out_shape.size() == 3) {
+            t = static_cast<std::size_t>(rec_out_shape[1]);
+            c = static_cast<std::size_t>(rec_out_shape[2]);
+        } else {
+            t = static_cast<std::size_t>(rec_out_shape[0]);
+            c = static_cast<std::size_t>(rec_out_shape[1]);
+        }
+        if (t == 0 || c == 0) {
+            if (out_error) *out_error = "ocr rec shape invalid";
+            return false;
+        }
+
+        float rec_score = 0.0f;
+        std::string rec_text = DecodeCtc(rec_ptr, t, c, impl_->rec_keys, rec_score);
+        if (rec_text.empty()) rec_text = "(empty)";
+
+        out.lines.push_back(OcrTextLine{
+            .text = rec_text,
+            .score = rec_score,
+            .bbox_x = static_cast<float>(box.x) / static_cast<float>(std::max(1, frame.width)),
+            .bbox_y = static_cast<float>(box.y) / static_cast<float>(std::max(1, frame.height)),
+            .bbox_w = static_cast<float>(box.w) / static_cast<float>(std::max(1, frame.width)),
+            .bbox_h = static_cast<float>(box.h) / static_cast<float>(std::max(1, frame.height)),
+        });
+
+        out.summary = "OCR det+rec ok";
+        if (context) {
+            if (!context->process_name.empty()) out.summary += " | process=" + context->process_name;
+            if (!context->window_title.empty()) out.summary += " | title=" + context->window_title;
+            if (!context->url.empty()) out.summary += " | url=" + context->url;
+        }
     } catch (const std::exception &e) {
         if (out_error) *out_error = std::string("ocr recognize exception: ") + e.what();
         return false;

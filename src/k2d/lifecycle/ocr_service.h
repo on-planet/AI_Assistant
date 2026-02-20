@@ -10,6 +10,10 @@ namespace k2d {
 struct OcrTextLine {
     std::string text;
     float score = 0.0f;
+    float bbox_x = 0.0f;
+    float bbox_y = 0.0f;
+    float bbox_w = 0.0f;
+    float bbox_h = 0.0f;
 };
 
 struct OcrSystemContext {
@@ -21,6 +25,7 @@ struct OcrSystemContext {
 struct OcrResult {
     std::vector<OcrTextLine> lines;
     std::string summary;
+    std::vector<std::string> domain_tags;
 };
 
 // PP-OCR(ONNX) det + rec 两模型拆分部署的最小可用服务。

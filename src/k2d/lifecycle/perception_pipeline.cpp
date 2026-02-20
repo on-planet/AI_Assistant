@@ -1,6 +1,7 @@
 #include "k2d/lifecycle/perception_pipeline.h"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <tuple>
 #include <utility>
@@ -180,17 +181,78 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
     }
 
     if (state.ocr_ready) {
+        state.ocr_skipped_due_timeout = false;
+
         std::string ocr_err;
         OcrResult ocr_out{};
         OcrSystemContext ocr_context{};
         ocr_context.process_name = state.system_context_snapshot.process_name;
         ocr_context.window_title = state.system_context_snapshot.window_title;
         ocr_context.url = state.system_context_snapshot.url_hint;
-        if (ocr_service_.Recognize(frame, &ocr_context, ocr_out, &ocr_err)) {
+
+        const auto t0 = std::chrono::steady_clock::now();
+        const bool ocr_ok = ocr_service_.Recognize(frame, &ocr_context, ocr_out, &ocr_err);
+        const auto t1 = std::chrono::steady_clock::now();
+        const int elapsed_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
+
+        if (!ocr_ok) {
+            if (!ocr_err.empty()) {
+                state.ocr_last_error = ocr_err;
+            }
+        } else if (elapsed_ms > state.ocr_timeout_ms) {
+            state.ocr_skipped_due_timeout = true;
+            state.ocr_last_error = "ocr timeout degrade, keep last stable result";
+            if (!state.ocr_last_stable_result.summary.empty() || !state.ocr_last_stable_result.lines.empty()) {
+                state.ocr_result = state.ocr_last_stable_result;
+            }
+        } else {
             state.ocr_result = std::move(ocr_out);
+            state.ocr_last_stable_result = state.ocr_result;
             state.ocr_last_error.clear();
-        } else if (!ocr_err.empty()) {
-            state.ocr_last_error = ocr_err;
+        }
+
+        state.blackboard.ocr.lines = state.ocr_result.lines;
+        state.blackboard.ocr.summary = state.ocr_result.summary;
+        state.blackboard.ocr.domain_tags = state.ocr_result.domain_tags;
+
+        std::vector<std::string> inferred_tags;
+        auto push_unique = [&](const std::string &tag) {
+            if (std::find(inferred_tags.begin(), inferred_tags.end(), tag) == inferred_tags.end()) {
+                inferred_tags.push_back(tag);
+            }
+        };
+
+        std::string text = state.system_context_snapshot.process_name + "\n" +
+                           state.system_context_snapshot.window_title + "\n" +
+                           state.system_context_snapshot.url_hint + "\n" +
+                           state.ocr_result.summary;
+        std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+        if (text.find("http") != std::string::npos || text.find("www.") != std::string::npos ||
+            text.find("chrome") != std::string::npos || text.find("edge") != std::string::npos ||
+            text.find("firefox") != std::string::npos) {
+            push_unique("browser");
+        }
+        if (text.find("chat") != std::string::npos || text.find("discord") != std::string::npos ||
+            text.find("slack") != std::string::npos || text.find("wechat") != std::string::npos ||
+            text.find("qq") != std::string::npos) {
+            push_unique("chat");
+        }
+        if (text.find("readme") != std::string::npos || text.find("docs") != std::string::npos ||
+            text.find("manual") != std::string::npos || text.find("wiki") != std::string::npos) {
+            push_unique("doc");
+        }
+        if (text.find("cpp") != std::string::npos || text.find("cmake") != std::string::npos ||
+            text.find("visual studio") != std::string::npos || text.find("clion") != std::string::npos ||
+            text.find("vscode") != std::string::npos || text.find("github") != std::string::npos) {
+            push_unique("code");
+        }
+
+        for (const auto &tag : inferred_tags) {
+            if (std::find(state.blackboard.ocr.domain_tags.begin(), state.blackboard.ocr.domain_tags.end(), tag) ==
+                state.blackboard.ocr.domain_tags.end()) {
+                state.blackboard.ocr.domain_tags.push_back(tag);
+            }
         }
     }
 }

@@ -35,6 +35,13 @@ public:
                                            int limit,
                                            std::string *out_error) const;
 
+    std::vector<ReminderItem> ListActive(int limit,
+                                         std::string *out_error) const;
+
+    bool MarkCompleted(std::int64_t id, bool completed, std::string *out_error);
+
+    bool DeleteReminder(std::int64_t id, std::string *out_error);
+
     std::vector<ReminderItem> PollDueAndMarkNotified(std::int64_t now_unix_sec,
                                                      int limit,
                                                      std::string *out_error);

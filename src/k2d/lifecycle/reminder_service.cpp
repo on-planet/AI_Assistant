@@ -164,6 +164,108 @@ std::vector<ReminderItem> ReminderService::ListUpcoming(std::int64_t now_unix_se
     return rows;
 }
 
+std::vector<ReminderItem> ReminderService::ListActive(int limit,
+                                                      std::string *out_error) const {
+    std::vector<ReminderItem> rows;
+    if (!db_) {
+        SetError(out_error, "reminder db not initialized");
+        return rows;
+    }
+
+    limit = std::clamp(limit, 1, 500);
+
+    const char *sql =
+        "SELECT id, title, due_unix_sec, completed, notified "
+        "FROM reminders "
+        "WHERE completed = 0 "
+        "ORDER BY due_unix_sec ASC LIMIT ?1;";
+
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        SetSqliteError(db_, out_error, "prepare list active failed");
+        return rows;
+    }
+
+    sqlite3_bind_int(stmt, 1, limit);
+
+    for (;;) {
+        const int rc = sqlite3_step(stmt);
+        if (rc == SQLITE_ROW) {
+            ReminderItem item{};
+            item.id = static_cast<std::int64_t>(sqlite3_column_int64(stmt, 0));
+            const unsigned char *title_text = sqlite3_column_text(stmt, 1);
+            item.title = title_text ? reinterpret_cast<const char *>(title_text) : "";
+            item.due_unix_sec = static_cast<std::int64_t>(sqlite3_column_int64(stmt, 2));
+            item.completed = sqlite3_column_int(stmt, 3) != 0;
+            item.notified = sqlite3_column_int(stmt, 4) != 0;
+            rows.push_back(std::move(item));
+            continue;
+        }
+        if (rc == SQLITE_DONE) {
+            break;
+        }
+        SetSqliteError(db_, out_error, "step list active failed");
+        rows.clear();
+        break;
+    }
+
+    sqlite3_finalize(stmt);
+    return rows;
+}
+
+bool ReminderService::MarkCompleted(std::int64_t id, bool completed, std::string *out_error) {
+    if (!db_) {
+        return SetError(out_error, "reminder db not initialized");
+    }
+
+    const char *sql = "UPDATE reminders SET completed = ?1 WHERE id = ?2;";
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return SetSqliteError(db_, out_error, "prepare mark completed failed");
+    }
+
+    sqlite3_bind_int(stmt, 1, completed ? 1 : 0);
+    sqlite3_bind_int64(stmt, 2, static_cast<sqlite3_int64>(id));
+
+    const int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        return SetSqliteError(db_, out_error, "execute mark completed failed");
+    }
+
+    if (sqlite3_changes(db_) <= 0) {
+        return SetError(out_error, "reminder not found");
+    }
+
+    return true;
+}
+
+bool ReminderService::DeleteReminder(std::int64_t id, std::string *out_error) {
+    if (!db_) {
+        return SetError(out_error, "reminder db not initialized");
+    }
+
+    const char *sql = "DELETE FROM reminders WHERE id = ?1;";
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return SetSqliteError(db_, out_error, "prepare delete reminder failed");
+    }
+
+    sqlite3_bind_int64(stmt, 1, static_cast<sqlite3_int64>(id));
+
+    const int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        return SetSqliteError(db_, out_error, "execute delete reminder failed");
+    }
+
+    if (sqlite3_changes(db_) <= 0) {
+        return SetError(out_error, "reminder not found");
+    }
+
+    return true;
+}
+
 std::vector<ReminderItem> ReminderService::PollDueAndMarkNotified(std::int64_t now_unix_sec,
                                                                   int limit,
                                                                   std::string *out_error) {

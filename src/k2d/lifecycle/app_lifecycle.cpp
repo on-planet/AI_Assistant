@@ -988,6 +988,7 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 ImGui::InputText("Title", g_runtime.reminder_title_input, static_cast<int>(sizeof(g_runtime.reminder_title_input)));
                 ImGui::InputInt("After Minutes", &g_runtime.reminder_after_min, 1, 10);
                 g_runtime.reminder_after_min = std::max(1, g_runtime.reminder_after_min);
+
                 if (ImGui::Button("Add Reminder")) {
                     if (!g_runtime.reminder_ready) {
                         g_runtime.reminder_last_error = "reminder service not ready";
@@ -998,9 +999,19 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                         if (g_runtime.reminder_service.AddReminder(g_runtime.reminder_title_input, due_sec, &add_err)) {
                             SetEditorStatus("reminder added", 1.5f);
                             g_runtime.reminder_last_error.clear();
-                            g_runtime.reminder_upcoming = g_runtime.reminder_service.ListUpcoming(now_sec, 8, nullptr);
+                            g_runtime.reminder_upcoming = g_runtime.reminder_service.ListActive(32, nullptr);
                         } else {
                             g_runtime.reminder_last_error = add_err;
+                        }
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Refresh")) {
+                    if (g_runtime.reminder_ready) {
+                        std::string list_err;
+                        g_runtime.reminder_upcoming = g_runtime.reminder_service.ListActive(32, &list_err);
+                        if (!list_err.empty()) {
+                            g_runtime.reminder_last_error = list_err;
                         }
                     }
                 }
@@ -1009,13 +1020,40 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                     ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Reminder Error: %s", g_runtime.reminder_last_error.c_str());
                 }
 
-                ImGui::Text("Upcoming:");
+                ImGui::Text("Active Reminders:");
+                const std::int64_t now_sec_ui = static_cast<std::int64_t>(std::time(nullptr));
                 for (const auto &item : g_runtime.reminder_upcoming) {
-                    const long long remain_sec = static_cast<long long>(item.due_unix_sec - static_cast<std::int64_t>(std::time(nullptr)));
-                    ImGui::BulletText("[%lld] %s (in %llds)",
-                                      static_cast<long long>(item.id),
-                                      item.title.c_str(),
-                                      remain_sec);
+                    ImGui::PushID(static_cast<int>(item.id));
+                    const long long remain_sec = static_cast<long long>(item.due_unix_sec - now_sec_ui);
+                    ImGui::Text("[%lld] %s", static_cast<long long>(item.id), item.title.c_str());
+                    ImGui::SameLine();
+                    if (remain_sec >= 0) {
+                        ImGui::TextDisabled("in %llds", remain_sec);
+                    } else {
+                        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "overdue %llds", -remain_sec);
+                    }
+
+                    if (ImGui::Button("Complete")) {
+                        std::string op_err;
+                        if (g_runtime.reminder_service.MarkCompleted(item.id, true, &op_err)) {
+                            g_runtime.reminder_upcoming = g_runtime.reminder_service.ListActive(32, nullptr);
+                            g_runtime.reminder_last_error.clear();
+                        } else {
+                            g_runtime.reminder_last_error = op_err;
+                        }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Delete")) {
+                        std::string op_err;
+                        if (g_runtime.reminder_service.DeleteReminder(item.id, &op_err)) {
+                            g_runtime.reminder_upcoming = g_runtime.reminder_service.ListActive(32, nullptr);
+                            g_runtime.reminder_last_error.clear();
+                        } else {
+                            g_runtime.reminder_last_error = op_err;
+                        }
+                    }
+                    ImGui::Separator();
+                    ImGui::PopID();
                 }
 
                 ImGui::End();
@@ -1160,13 +1198,29 @@ bool AppLifecycleBootstrap(AppLifecycleContext &ctx) {
 
     {
         std::string reminder_err;
-        g_runtime.reminder_ready = g_runtime.reminder_service.Init("assets/reminders.db", &reminder_err);
+        const std::vector<std::string> reminder_db_candidates = {
+            "assets/reminders.db",
+            "../assets/reminders.db",
+            "../../assets/reminders.db",
+        };
+
+        g_runtime.reminder_ready = false;
+        for (const auto &db_path : reminder_db_candidates) {
+            std::string try_err;
+            if (g_runtime.reminder_service.Init(db_path, &try_err)) {
+                g_runtime.reminder_ready = true;
+                g_runtime.reminder_last_error.clear();
+                SDL_Log("Reminder service init ok: %s", db_path.c_str());
+                break;
+            }
+            reminder_err = try_err;
+        }
+
         if (!g_runtime.reminder_ready) {
             g_runtime.reminder_last_error = reminder_err;
             SDL_Log("Reminder service init failed: %s", reminder_err.c_str());
         } else {
-            const std::int64_t now_sec = static_cast<std::int64_t>(std::time(nullptr));
-            g_runtime.reminder_upcoming = g_runtime.reminder_service.ListUpcoming(now_sec, 8, nullptr);
+            g_runtime.reminder_upcoming = g_runtime.reminder_service.ListActive(32, nullptr);
         }
     }
 

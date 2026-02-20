@@ -870,22 +870,29 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 g_runtime.running = false;
             } else {
                 if (!g_runtime.edit_mode) {
+                    const bool imgui_wants_mouse = ImGui::GetIO().WantCaptureMouse;
                     if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
-                        g_runtime.dragging_model_whole = true;
-                        g_runtime.dragging_model_last_x = event.button.x;
-                        g_runtime.dragging_model_last_y = event.button.y;
+                        if (!imgui_wants_mouse) {
+                            g_runtime.dragging_model_whole = true;
+                            g_runtime.dragging_model_last_x = event.button.x;
+                            g_runtime.dragging_model_last_y = event.button.y;
+                        }
                     } else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT) {
                         g_runtime.dragging_model_whole = false;
                     } else if (event.type == SDL_EVENT_MOUSE_MOTION && g_runtime.dragging_model_whole && g_runtime.model_loaded) {
-                        const float dx = event.motion.x - g_runtime.dragging_model_last_x;
-                        const float dy = event.motion.y - g_runtime.dragging_model_last_y;
-                        g_runtime.dragging_model_last_x = event.motion.x;
-                        g_runtime.dragging_model_last_y = event.motion.y;
+                        if (imgui_wants_mouse) {
+                            g_runtime.dragging_model_whole = false;
+                        } else {
+                            const float dx = event.motion.x - g_runtime.dragging_model_last_x;
+                            const float dy = event.motion.y - g_runtime.dragging_model_last_y;
+                            g_runtime.dragging_model_last_x = event.motion.x;
+                            g_runtime.dragging_model_last_y = event.motion.y;
 
-                        for (auto &part : g_runtime.model.parts) {
-                            if (part.parent_index < 0) {
-                                part.base_pos_x += dx;
-                                part.base_pos_y += dy;
+                            for (auto &part : g_runtime.model.parts) {
+                                if (part.parent_index < 0) {
+                                    part.base_pos_x += dx;
+                                    part.base_pos_y += dy;
+                                }
                             }
                         }
                     }

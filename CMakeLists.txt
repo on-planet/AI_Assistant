@@ -15,6 +15,7 @@ add_executable(AI_assistant WIN32
     main.cpp
     src/k2d/core/json.cpp
     src/k2d/core/png_texture.cpp
+    src/k2d/core/async_logger.cpp
     src/k2d/lifecycle/app.cpp
     src/k2d/lifecycle/app_lifecycle.cpp
     src/k2d/lifecycle/plugin_lifecycle.cpp
@@ -54,6 +55,7 @@ target_include_directories(AI_assistant PRIVATE
 
 add_executable(plugin_lifecycle_tests
     tests/plugin_lifecycle_tests.cpp
+    src/k2d/core/async_logger.cpp
     src/k2d/lifecycle/plugin_lifecycle.cpp
     src/k2d/lifecycle/inference_adapter.cpp
 )

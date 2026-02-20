@@ -874,6 +874,11 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 g_runtime.window_h = event.window.data2;
                 g_runtime.interactive_rect = k2d::ComputeInteractiveRect(g_runtime.window_w, g_runtime.window_h);
                 k2d::ApplyWindowShape(g_runtime.window, g_runtime.window_w, g_runtime.window_h, g_runtime.interactive_rect, g_runtime.click_through);
+            } else if (event.type == SDL_EVENT_KEY_DOWN) {
+                if (event.key.key == SDLK_ESCAPE) {
+                    g_runtime.running = false;
+                    return;
+                }
             } else {
                 const auto non_edit_ctx = k2d::AppInputControllerContext{
                     .running = &g_runtime.running,
@@ -1057,6 +1062,12 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 ImGui::Checkbox("Show Debug Stats", &g_runtime.show_debug_stats);
                 ImGui::Checkbox("Manual Param Mode", &g_runtime.manual_param_mode);
                 ImGui::Checkbox("GUI Enabled", &g_runtime.gui_enabled);
+                ImGui::Separator();
+                if (ImGui::Button("Close Program")) {
+                    g_runtime.running = false;
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("(Esc)");
                 ImGui::End();
             }
 

@@ -15,6 +15,7 @@
 #include "k2d/controllers/param_controller.h"
 #include "k2d/controllers/app_loop.h"
 #include "k2d/controllers/app_input_controller.h"
+#include "k2d/lifecycle/plugin_lifecycle.h"
 
 #include <algorithm>
 #include <cmath>
@@ -122,6 +123,9 @@ struct AppRuntime {
     float debug_frame_ms = 0.0f;
     float debug_fps_accum_sec = 0.0f;
     int debug_fps_accum_frames = 0;
+
+    PluginManager plugin_manager;
+    bool plugin_ready = false;
 };
 
 AppRuntime g_runtime;
@@ -854,6 +858,39 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 TryHotReloadModel(dt);
                 UpdateModelRuntime(&g_runtime.model, g_runtime.model_time, dt);
             }
+
+            if (g_runtime.plugin_ready) {
+                PerceptionInput in{};
+                in.time_sec = static_cast<double>(g_runtime.model_time);
+                in.delta_time_sec = dt;
+                in.has_user_focus = true;
+                in.has_pointer_inside_window = false;
+                in.audio_level = 0.0f;
+
+                BehaviorOutput out{};
+                std::string plugin_err;
+                const PluginStatus st = g_runtime.plugin_manager.Update(in, out, &plugin_err);
+                if (st == PluginStatus::Ok) {
+                    if (out.has_request_show_debug_stats) {
+                        g_runtime.show_debug_stats = out.request_show_debug_stats;
+                    }
+                    if (out.has_request_manual_param_mode) {
+                        g_runtime.manual_param_mode = out.request_manual_param_mode;
+                        SyncAnimationChannelState();
+                    }
+                    if (out.has_request_click_through) {
+                        SetClickThrough(out.request_click_through);
+                    }
+                    if (out.has_target_opacity && g_runtime.window) {
+                        const float opacity = std::clamp(out.target_opacity, 0.05f, 1.0f);
+                        if (!SDL_SetWindowOpacity(g_runtime.window, opacity)) {
+                            SDL_Log("Plugin SetWindowOpacity failed: %s", SDL_GetError());
+                        }
+                    }
+                } else {
+                    SDL_Log("Plugin update failed: %s", plugin_err.c_str());
+                }
+            }
         },
         .on_render = []() {
             RenderFrame();
@@ -950,6 +987,34 @@ bool AppLifecycleBootstrap(AppLifecycleContext &ctx) {
         SDL_Log("%s", bootstrap.model_load_log.c_str());
     }
 
+    g_runtime.plugin_manager.SetPlugin(CreateDefaultBehaviorPlugin());
+    {
+        PluginRuntimeConfig plugin_cfg{};
+        plugin_cfg.show_debug_stats = g_runtime.show_debug_stats;
+        plugin_cfg.manual_param_mode = g_runtime.manual_param_mode;
+        plugin_cfg.click_through = g_runtime.click_through;
+        plugin_cfg.window_opacity = bootstrap.runtime_config.window_opacity;
+
+        PluginHostCallbacks host{};
+        host.log = [](void *, const char *msg) {
+            SDL_Log("[PluginHost] %s", msg ? msg : "");
+        };
+        host.user_data = nullptr;
+
+        std::string plugin_err;
+        const PluginStatus st = g_runtime.plugin_manager.Init(plugin_cfg, host, &plugin_err);
+        g_runtime.plugin_ready = (st == PluginStatus::Ok);
+        if (!g_runtime.plugin_ready) {
+            SDL_Log("Plugin init failed: %s", plugin_err.c_str());
+        } else {
+            const auto &desc = g_runtime.plugin_manager.Descriptor();
+            SDL_Log("Plugin initialized: name=%s version=%s capabilities=%s",
+                    desc.name ? desc.name : "unknown",
+                    desc.version ? desc.version : "unknown",
+                    desc.capabilities ? desc.capabilities : "");
+        }
+    }
+
     g_runtime.demo_texture = bootstrap.demo_texture;
     g_runtime.demo_texture_w = bootstrap.demo_texture_w;
     g_runtime.demo_texture_h = bootstrap.demo_texture_h;
@@ -1000,6 +1065,9 @@ bool AppLifecycleBootstrap(AppLifecycleContext &ctx) {
 }
 
 void AppLifecycleTeardown(AppLifecycleContext &ctx) {
+    g_runtime.plugin_manager.Destroy();
+    g_runtime.plugin_ready = false;
+
     if (g_runtime.tray) {
         SDL_DestroyTray(g_runtime.tray);
         g_runtime.tray = nullptr;

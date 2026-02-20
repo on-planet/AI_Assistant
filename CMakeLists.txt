@@ -15,6 +15,7 @@ add_executable(AI_assistant WIN32
     src/k2d/core/png_texture.cpp
     src/k2d/lifecycle/app.cpp
     src/k2d/lifecycle/app_lifecycle.cpp
+    src/k2d/lifecycle/plugin_lifecycle.cpp
     src/k2d/core/mesh_generator.cpp
     src/k2d/core/params.cpp
     src/k2d/core/deform.cpp

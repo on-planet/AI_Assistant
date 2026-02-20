@@ -9,26 +9,6 @@
 
 namespace k2d {
 
-// 预留：感知输入（后续接 AI/外部状态）
-struct PerceptionInput {
-    bool has_user_focus = false;
-    bool has_pointer_inside_window = false;
-    float pointer_x = 0.0f;
-    float pointer_y = 0.0f;
-    float audio_level = 0.0f;
-    float delta_time_sec = 0.0f;
-};
-
-// 预留：行为输出（后续驱动动画/窗口/参数）
-struct BehaviorOutput {
-    bool request_click_through = false;
-    bool request_window_visible = true;
-    float target_opacity = 0.5f;
-    bool request_manual_param_mode = false;
-    bool request_show_debug_stats = false;
-    std::string requested_model_path;
-};
-
 struct AppRuntimeConfig {
     // window
     int window_width = 800;

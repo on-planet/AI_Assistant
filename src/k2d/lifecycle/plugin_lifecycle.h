@@ -90,6 +90,12 @@ struct PluginWorkerConfig {
     int frame_budget_ms = 1;
 };
 
+struct PluginWorkerStats {
+    std::uint64_t timeout_count = 0;
+    std::uint64_t exception_count = 0;
+    std::string last_error;
+};
+
 class PluginWorker {
 public:
     PluginWorker();
@@ -105,6 +111,7 @@ public:
 
     void SubmitInput(const PerceptionInput &in);
     bool TryConsumeLatestOutput(BehaviorOutput &out, std::uint64_t *out_seq = nullptr);
+    PluginWorkerStats GetStats() const;
 
 private:
     struct Impl;

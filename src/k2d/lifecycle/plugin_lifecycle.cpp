@@ -175,6 +175,10 @@ struct PluginWorker::Impl {
     BehaviorOutput latest_out{};
     std::uint64_t out_seq = 0;
     std::uint64_t consumed_seq = 0;
+
+    std::uint64_t timeout_count = 0;
+    std::uint64_t exception_count = 0;
+    std::string last_error;
 };
 
 PluginWorker::PluginWorker() = default;
@@ -231,20 +235,36 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
             BehaviorOutput out{};
             std::string err;
             PluginStatus st = PluginStatus::InternalError;
+            bool caught_exception = false;
             try {
                 st = impl_->manager->Update(in, out, &err);
             } catch (const std::exception &e) {
                 err = std::string("PluginWorker Update exception: ") + e.what();
                 st = PluginStatus::InternalError;
+                caught_exception = true;
             } catch (...) {
                 err = "PluginWorker Update exception: unknown";
                 st = PluginStatus::InternalError;
+                caught_exception = true;
             }
 
-            if (st == PluginStatus::Ok) {
+            {
                 std::lock_guard<std::mutex> lock(impl_->mtx);
-                impl_->latest_out = out;
-                ++impl_->out_seq;
+                if (st == PluginStatus::Ok) {
+                    impl_->latest_out = out;
+                    ++impl_->out_seq;
+                    impl_->last_error.clear();
+                } else {
+                    if (st == PluginStatus::Timeout) {
+                        ++impl_->timeout_count;
+                    }
+                    if (caught_exception) {
+                        ++impl_->exception_count;
+                    }
+                    if (!err.empty()) {
+                        impl_->last_error = err;
+                    }
+                }
             }
 
             const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -282,6 +302,18 @@ bool PluginWorker::TryConsumeLatestOutput(BehaviorOutput &out, std::uint64_t *ou
     impl_->consumed_seq = impl_->out_seq;
     if (out_seq) *out_seq = impl_->out_seq;
     return true;
+}
+
+PluginWorkerStats PluginWorker::GetStats() const {
+    if (!impl_) {
+        return PluginWorkerStats{};
+    }
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    PluginWorkerStats s{};
+    s.timeout_count = impl_->timeout_count;
+    s.exception_count = impl_->exception_count;
+    s.last_error = impl_->last_error;
+    return s;
 }
 
 }  // namespace k2d

@@ -11,6 +11,13 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIGURATION>")
 
 add_subdirectory(external/SDL-release-3.4.0 EXCLUDE_FROM_ALL)
 
+# ONNX Runtime (prebuilt Windows x64 package under external/)
+set(ONNXRUNTIME_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/external/onnxruntime-win-x64-1.24.2")
+set(ONNXRUNTIME_INCLUDE_DIR "${ONNXRUNTIME_ROOT}/include")
+set(ONNXRUNTIME_LIB_DIR "${ONNXRUNTIME_ROOT}/lib")
+set(ONNXRUNTIME_LIB "${ONNXRUNTIME_LIB_DIR}/onnxruntime.lib")
+set(ONNXRUNTIME_DLL "${ONNXRUNTIME_LIB_DIR}/onnxruntime.dll")
+
 add_executable(AI_assistant WIN32
     main.cpp
     src/k2d/core/json.cpp
@@ -48,7 +55,7 @@ add_executable(AI_assistant WIN32
     src/k2d/controllers/interaction_controller.cpp
 )
 
-target_link_libraries(AI_assistant PRIVATE SDL3::SDL3)
+target_link_libraries(AI_assistant PRIVATE SDL3::SDL3 "${ONNXRUNTIME_LIB}")
 
 # Allow includes like "k2d/core/png_texture.h" and "stb_image.h".
 target_include_directories(AI_assistant PRIVATE
@@ -56,7 +63,16 @@ target_include_directories(AI_assistant PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/external
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
+    ${ONNXRUNTIME_INCLUDE_DIR}
 )
+
+# Copy onnxruntime.dll next to executable for local run/package.
+if (EXISTS "${ONNXRUNTIME_DLL}")
+    add_custom_command(TARGET AI_assistant POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${ONNXRUNTIME_DLL}"
+                "$<TARGET_FILE_DIR:AI_assistant>/onnxruntime.dll")
+endif()
 
 add_executable(plugin_lifecycle_tests
     tests/plugin_lifecycle_tests.cpp
@@ -65,14 +81,22 @@ add_executable(plugin_lifecycle_tests
     src/k2d/lifecycle/inference_adapter.cpp
 )
 
-target_link_libraries(plugin_lifecycle_tests PRIVATE SDL3::SDL3)
+target_link_libraries(plugin_lifecycle_tests PRIVATE SDL3::SDL3 "${ONNXRUNTIME_LIB}")
 
 target_include_directories(plugin_lifecycle_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/external
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
+    ${ONNXRUNTIME_INCLUDE_DIR}
 )
+
+if (EXISTS "${ONNXRUNTIME_DLL}")
+    add_custom_command(TARGET plugin_lifecycle_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${ONNXRUNTIME_DLL}"
+                "$<TARGET_FILE_DIR:plugin_lifecycle_tests>/onnxruntime.dll")
+endif()
 
 add_test(NAME plugin_lifecycle_tests COMMAND plugin_lifecycle_tests)
 

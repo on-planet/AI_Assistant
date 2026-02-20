@@ -15,6 +15,9 @@ void UpdateWindowVisibilityLabel(SDL_TrayEntry *entry_show_hide, bool window_vis
 
 void ToggleWindowVisibility(SDL_Window *window, bool *window_visible);
 
-SDL_HitTestResult WindowHitTest(bool click_through, const SDL_Rect &interactive_rect, const SDL_Point *area);
+SDL_HitTestResult WindowHitTest(bool click_through,
+                                bool edit_mode,
+                                const SDL_Rect &interactive_rect,
+                                const SDL_Point *area);
 
 }  // namespace k2d

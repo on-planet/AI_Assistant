@@ -114,7 +114,10 @@ void ToggleWindowVisibility(SDL_Window *window, bool *window_visible) {
     }
 }
 
-SDL_HitTestResult WindowHitTest(bool click_through, const SDL_Rect &interactive_rect, const SDL_Point *area) {
+SDL_HitTestResult WindowHitTest(bool click_through,
+                                bool edit_mode,
+                                const SDL_Rect &interactive_rect,
+                                const SDL_Point *area) {
     if (!area) {
         return SDL_HITTEST_NORMAL;
     }
@@ -143,6 +146,8 @@ SDL_HitTestResult WindowHitTest(bool click_through, const SDL_Rect &interactive_
     if (top) return SDL_HITTEST_RESIZE_TOP;
     if (bottom) return SDL_HITTEST_RESIZE_BOTTOM;
 
+    // 客户区统一交给模型/ImGui，避免窗口抢占拖拽优先级。
+    (void)edit_mode;
     return SDL_HITTEST_NORMAL;
 }
 

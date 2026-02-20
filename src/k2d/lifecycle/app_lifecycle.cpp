@@ -105,6 +105,10 @@ struct AppRuntime {
     bool snap_enabled = false;
     float snap_grid = 10.0f;
 
+    bool dragging_model_whole = false;
+    float dragging_model_last_x = 0.0f;
+    float dragging_model_last_y = 0.0f;
+
     bool property_panel_enabled = true;
     int selected_editor_prop = 0;
 
@@ -232,7 +236,7 @@ void SDLCALL TrayQuit(void *userdata, SDL_TrayEntry *entry) {
 SDL_HitTestResult SDLCALL WindowHitTest(SDL_Window *window, const SDL_Point *area, void *data) {
     (void)window;
     (void)data;
-    return k2d::WindowHitTest(g_runtime.click_through, g_runtime.interactive_rect, area);
+    return k2d::WindowHitTest(g_runtime.click_through, g_runtime.edit_mode, g_runtime.interactive_rect, area);
 }
 
 k2d::ParamControllerContext BuildParamControllerContext() {
@@ -853,6 +857,28 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
             } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE) {
                 g_runtime.running = false;
             } else {
+                if (!g_runtime.edit_mode) {
+                    if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
+                        g_runtime.dragging_model_whole = true;
+                        g_runtime.dragging_model_last_x = event.button.x;
+                        g_runtime.dragging_model_last_y = event.button.y;
+                    } else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT) {
+                        g_runtime.dragging_model_whole = false;
+                    } else if (event.type == SDL_EVENT_MOUSE_MOTION && g_runtime.dragging_model_whole && g_runtime.model_loaded) {
+                        const float dx = event.motion.x - g_runtime.dragging_model_last_x;
+                        const float dy = event.motion.y - g_runtime.dragging_model_last_y;
+                        g_runtime.dragging_model_last_x = event.motion.x;
+                        g_runtime.dragging_model_last_y = event.motion.y;
+
+                        for (auto &part : g_runtime.model.parts) {
+                            if (part.parent_index < 0) {
+                                part.base_pos_x += dx;
+                                part.base_pos_y += dy;
+                            }
+                        }
+                    }
+                }
+
                 const auto non_edit_ctx = k2d::AppInputControllerContext{
                     .running = &g_runtime.running,
                     .show_debug_stats = &g_runtime.show_debug_stats,

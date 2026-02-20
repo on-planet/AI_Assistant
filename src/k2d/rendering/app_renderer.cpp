@@ -145,8 +145,6 @@ void RenderAppFrame(const AppRenderContext &ctx) {
     RenderDebugStats(ctx);
     RenderPartEditorOverlay(ctx);
     RenderEditorStatus(ctx);
-
-    SDL_RenderPresent(ctx.renderer);
 }
 
 }  // namespace k2d

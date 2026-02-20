@@ -933,11 +933,11 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
             }
         },
         .on_render = []() {
-            RenderFrame();
-
             ImGui_ImplSDLRenderer3_NewFrame();
             ImGui_ImplSDL3_NewFrame();
             ImGui::NewFrame();
+
+            RenderFrame();
 
             if (g_runtime.gui_enabled) {
                 ImGui::Begin("Runtime Debug");
@@ -1001,6 +1001,7 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
 
             ImGui::Render();
             ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), g_runtime.renderer);
+            SDL_RenderPresent(g_runtime.renderer);
         },
         .on_editor_status_expired = []() {
             g_runtime.editor_status.clear();

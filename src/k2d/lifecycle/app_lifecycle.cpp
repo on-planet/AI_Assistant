@@ -657,6 +657,24 @@ void SaveEditedModelJsonToDisk() {
     }
 }
 
+std::string BuildStableModelBackupPath(const std::string &model_path) {
+    if (model_path.empty()) {
+        return "assets/model_01/model.last_good.json";
+    }
+    return model_path + ".last_good.json";
+}
+
+void CommitStableModelBackup(const ModelRuntime &model) {
+    if (model.model_path.empty()) {
+        return;
+    }
+    std::string save_err;
+    const std::string backup_path = BuildStableModelBackupPath(model.model_path);
+    if (!SaveModelRuntimeJson(model, backup_path.c_str(), &save_err)) {
+        SDL_Log("Stable model backup save failed: %s", save_err.c_str());
+    }
+}
+
 void TryHotReloadModel(float dt_sec) {
     if (!g_runtime.dev_hot_reload_enabled || !g_runtime.model_loaded) {
         return;
@@ -690,7 +708,26 @@ void TryHotReloadModel(float dt_sec) {
     ModelRuntime new_model;
     std::string load_err;
     if (!LoadModelRuntime(g_runtime.renderer, g_runtime.model.model_path.c_str(), &new_model, &load_err)) {
-        SetEditorStatus("hot reload failed: " + load_err, 3.0f);
+        const std::string backup_path = BuildStableModelBackupPath(g_runtime.model.model_path);
+        ModelRuntime rollback_model;
+        std::string rollback_err;
+        if (LoadModelRuntime(g_runtime.renderer, backup_path.c_str(), &rollback_model, &rollback_err)) {
+            DestroyModelRuntime(&g_runtime.model);
+            g_runtime.model = std::move(rollback_model);
+            g_runtime.model_loaded = true;
+            g_runtime.model_time = 0.0f;
+            g_runtime.selected_part_index = -1;
+            EnsureSelectedPartIndexValid();
+            EnsureSelectedParamIndexValid();
+            SyncAnimationChannelState();
+            SetEditorStatus("hot reload failed, rolled back to last stable model", 3.0f);
+            SDL_Log("Hot reload failed: %s | rollback applied from %s", load_err.c_str(), backup_path.c_str());
+        } else {
+            SetEditorStatus("hot reload failed: " + load_err, 3.0f);
+            SDL_Log("Hot reload failed and rollback unavailable: reload_err=%s rollback_err=%s",
+                    load_err.c_str(),
+                    rollback_err.c_str());
+        }
         return;
     }
 
@@ -706,6 +743,7 @@ void TryHotReloadModel(float dt_sec) {
     EnsureSelectedParamIndexValid();
     SyncAnimationChannelState();
 
+    CommitStableModelBackup(g_runtime.model);
     SetEditorStatus("model hot reloaded", 1.5f);
 }
 
@@ -1127,6 +1165,7 @@ bool AppLifecycleBootstrap(AppLifecycleContext &ctx) {
         if (!ec) {
             g_runtime.model_last_write_time = write_time;
         }
+        CommitStableModelBackup(g_runtime.model);
     } else {
         SDL_Log("%s", bootstrap.model_load_log.c_str());
     }

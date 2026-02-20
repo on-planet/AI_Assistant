@@ -5,6 +5,8 @@ enable_testing()
 
 set(CMAKE_CXX_STANDARD 20)
 
+add_compile_definitions(K2D_PROJECT_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
 # Put runtime artifacts next to the executable for local runs.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIGURATION>")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIGURATION>")

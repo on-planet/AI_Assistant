@@ -974,7 +974,8 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
 
             if (g_runtime.screen_capture_ready) {
                 g_runtime.screen_capture_poll_accum_sec += std::max(0.0f, dt);
-                if (g_runtime.screen_capture_poll_accum_sec >= 0.25f) {
+                // 降低感知频率以压低 CPU 占用：每 3 秒检测一次。
+                if (g_runtime.screen_capture_poll_accum_sec >= 3.0f) {
                     g_runtime.screen_capture_poll_accum_sec = 0.0f;
                     ScreenCaptureFrame frame{};
                     std::string cap_err;
@@ -1312,16 +1313,62 @@ bool AppLifecycleBootstrap(AppLifecycleContext &ctx) {
 
     {
         std::string sc_err;
-        g_runtime.scene_classifier_ready = g_runtime.scene_classifier.Init(
-            "assets/mobileclip_image.onnx",
-            "assets/mobileclip_labels.json",
-            &sc_err);
+        g_runtime.scene_classifier_ready = false;
+
+        std::vector<std::pair<std::string, std::string>> scene_model_candidates;
+        scene_model_candidates.reserve(24);
+
+#ifdef K2D_PROJECT_DIR
+        {
+            const std::filesystem::path root = std::filesystem::path(K2D_PROJECT_DIR);
+            scene_model_candidates.emplace_back((root / "assets" / "mobileclip_image.onnx").generic_string(),
+                                                (root / "assets" / "mobileclip_labels.json").generic_string());
+        }
+#endif
+
+        {
+            std::error_code ec;
+            const auto cwd = std::filesystem::current_path(ec);
+            if (!ec) {
+                scene_model_candidates.emplace_back((cwd / "assets" / "mobileclip_image.onnx").lexically_normal().generic_string(),
+                                                    (cwd / "assets" / "mobileclip_labels.json").lexically_normal().generic_string());
+            }
+        }
+
+        std::string prefix;
+        for (int i = 0; i <= 12; ++i) {
+            scene_model_candidates.emplace_back(prefix + "assets/mobileclip_image.onnx",
+                                                prefix + "assets/mobileclip_labels.json");
+            prefix += "../";
+        }
+
+        for (const auto &pair : scene_model_candidates) {
+            std::error_code ec1;
+            std::error_code ec2;
+            const bool model_exists = std::filesystem::exists(pair.first, ec1);
+            const bool labels_exists = std::filesystem::exists(pair.second, ec2);
+            if (!model_exists || !labels_exists) {
+                continue;
+            }
+
+            std::string try_err;
+            if (g_runtime.scene_classifier.Init(pair.first, pair.second, &try_err)) {
+                g_runtime.scene_classifier_ready = true;
+                g_runtime.scene_classifier_last_error.clear();
+                SDL_Log("Scene classifier init ok: model=%s labels=%s", pair.first.c_str(), pair.second.c_str());
+                break;
+            }
+            if (sc_err.empty() && !try_err.empty()) {
+                sc_err = try_err;
+            }
+        }
+
         if (!g_runtime.scene_classifier_ready) {
+            if (sc_err.empty()) {
+                sc_err = "mobileclip model/labels not found in candidate paths";
+            }
             g_runtime.scene_classifier_last_error = sc_err;
             SDL_Log("Scene classifier init failed: %s", sc_err.c_str());
-        } else {
-            g_runtime.scene_classifier_last_error.clear();
-            SDL_Log("Scene classifier init ok: MobileCLIP dual-tower");
         }
     }
 

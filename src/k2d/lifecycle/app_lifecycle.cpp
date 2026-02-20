@@ -132,6 +132,10 @@ struct AppRuntime {
 
     bool gui_enabled = true;
 
+    // 鼠标摸头交互状态
+    float head_pat_react_ttl = 0.0f;
+    bool head_pat_hovering = false;
+
     std::unique_ptr<IInferenceAdapter> inference_adapter;
     bool plugin_ready = false;
     PluginParamBlendMode plugin_param_blend_mode = PluginParamBlendMode::Override;
@@ -448,6 +452,44 @@ bool PartContainsPointPrecise(const ModelPart &part, float x, float y) {
     }
 
     return false;
+}
+
+bool IsHeadPartId(const std::string &id) {
+    std::string lower;
+    lower.reserve(id.size());
+    for (char c : id) {
+        lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+    return (lower.find("head") != std::string::npos);
+}
+
+void TriggerHeadPatReaction() {
+    g_runtime.head_pat_react_ttl = 0.35f;
+}
+
+void UpdateHeadPatReaction(float dt_sec) {
+    if (!g_runtime.model_loaded || !HasModelParams()) {
+        return;
+    }
+    g_runtime.head_pat_react_ttl = std::max(0.0f, g_runtime.head_pat_react_ttl - std::max(0.0f, dt_sec));
+
+    if (g_runtime.head_pat_react_ttl <= 0.0f) {
+        return;
+    }
+
+    const float t = g_runtime.head_pat_react_ttl / 0.35f;
+    const float pulse = std::sin((1.0f - t) * 3.1415926f);
+
+    auto set_param_target = [&](const char *pid, float target) {
+        const auto it = g_runtime.model.param_index.find(pid);
+        if (it == g_runtime.model.param_index.end()) return;
+        const int idx = it->second;
+        if (idx < 0 || idx >= static_cast<int>(g_runtime.model.parameters.size())) return;
+        g_runtime.model.parameters[static_cast<std::size_t>(idx)].param.SetTarget(target);
+    };
+
+    set_param_target("BrowY", 0.35f * pulse);
+    set_param_target("MouthOpen", 0.20f * pulse);
 }
 
 int PickTopPartAt(float x, float y) {
@@ -834,6 +876,21 @@ k2d::EditorInputCallbacks BuildEditorInputCallbacks() {
             EndGizmoDrag();
         },
         .on_mouse_motion = [](float mx, float my) {
+            if (g_runtime.model_loaded) {
+                const int picked = PickTopPartAt(mx, my);
+                bool hovering_head = false;
+                if (picked >= 0 && picked < static_cast<int>(g_runtime.model.parts.size())) {
+                    const ModelPart &part = g_runtime.model.parts[static_cast<std::size_t>(picked)];
+                    hovering_head = IsHeadPartId(part.id);
+                }
+                if (hovering_head && !g_runtime.head_pat_hovering) {
+                    TriggerHeadPatReaction();
+                }
+                g_runtime.head_pat_hovering = hovering_head;
+            } else {
+                g_runtime.head_pat_hovering = false;
+            }
+
             if (g_runtime.gizmo_dragging) {
                 HandleGizmoDragMotion(mx, my);
             } else {
@@ -874,11 +931,8 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 g_runtime.window_h = event.window.data2;
                 g_runtime.interactive_rect = k2d::ComputeInteractiveRect(g_runtime.window_w, g_runtime.window_h);
                 k2d::ApplyWindowShape(g_runtime.window, g_runtime.window_w, g_runtime.window_h, g_runtime.interactive_rect, g_runtime.click_through);
-            } else if (event.type == SDL_EVENT_KEY_DOWN) {
-                if (event.key.key == SDLK_ESCAPE) {
-                    g_runtime.running = false;
-                    return;
-                }
+            } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE) {
+                g_runtime.running = false;
             } else {
                 const auto non_edit_ctx = k2d::AppInputControllerContext{
                     .running = &g_runtime.running,
@@ -909,6 +963,7 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
         .on_update = [](float dt) {
             if (g_runtime.model_loaded) {
                 TryHotReloadModel(dt);
+                UpdateHeadPatReaction(dt);
                 UpdateModelRuntime(&g_runtime.model, g_runtime.model_time, dt);
             }
 
@@ -1062,6 +1117,13 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 ImGui::Checkbox("Show Debug Stats", &g_runtime.show_debug_stats);
                 ImGui::Checkbox("Manual Param Mode", &g_runtime.manual_param_mode);
                 ImGui::Checkbox("GUI Enabled", &g_runtime.gui_enabled);
+
+                ImGui::SeparatorText("Head Pat Interaction");
+                ImGui::Text("Head Hovering: %s", g_runtime.head_pat_hovering ? "Yes" : "No");
+                ImGui::Text("React TTL: %.3f s", g_runtime.head_pat_react_ttl);
+                const float pat_ratio = std::clamp(g_runtime.head_pat_react_ttl / 0.35f, 0.0f, 1.0f);
+                ImGui::ProgressBar(pat_ratio, ImVec2(-1.0f, 0.0f), "Pat React");
+
                 ImGui::Separator();
                 if (ImGui::Button("Close Program")) {
                     g_runtime.running = false;

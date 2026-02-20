@@ -18,6 +18,7 @@ add_executable(AI_assistant WIN32
     src/k2d/lifecycle/app.cpp
     src/k2d/lifecycle/app_lifecycle.cpp
     src/k2d/lifecycle/plugin_lifecycle.cpp
+    src/k2d/lifecycle/inference_adapter.cpp
     external/imgui/imgui.cpp
     external/imgui/imgui_draw.cpp
     external/imgui/imgui_tables.cpp
@@ -54,6 +55,7 @@ target_include_directories(AI_assistant PRIVATE
 add_executable(plugin_lifecycle_tests
     tests/plugin_lifecycle_tests.cpp
     src/k2d/lifecycle/plugin_lifecycle.cpp
+    src/k2d/lifecycle/inference_adapter.cpp
 )
 
 target_link_libraries(plugin_lifecycle_tests PRIVATE SDL3::SDL3)

@@ -9,6 +9,7 @@
 
 #include "k2d/core/model.h"
 #include "k2d/core/png_texture.h"
+#include "k2d/lifecycle/inference_adapter.h"
 #include "k2d/editor/editor_commands.h"
 #include "k2d/editor/editor_gizmo.h"
 #include "k2d/editor/editor_input.h"
@@ -131,8 +132,7 @@ struct AppRuntime {
 
     bool gui_enabled = true;
 
-    PluginManager plugin_manager;
-    PluginWorker plugin_worker;
+    std::unique_ptr<IInferenceAdapter> inference_adapter;
     bool plugin_ready = false;
     PluginParamBlendMode plugin_param_blend_mode = PluginParamBlendMode::Override;
 };
@@ -874,10 +874,10 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 in.time_sec = static_cast<double>(g_runtime.model_time);
                 in.audio_level = 0.0f;
                 in.user_presence = g_runtime.window_visible ? 1.0f : 0.0f;
-                g_runtime.plugin_worker.SubmitInput(in);
+                g_runtime.inference_adapter->SubmitInput(in);
 
                 BehaviorOutput out{};
-                if (g_runtime.plugin_worker.TryConsumeLatestOutput(out, nullptr)) {
+                if (g_runtime.inference_adapter->TryConsumeLatestOutput(out, nullptr)) {
                     static std::unordered_map<std::string, Uint64> s_last_log_ms;
                     const Uint64 now_ms = SDL_GetTicks();
                     auto should_log = [&](const std::string &key) {
@@ -1131,7 +1131,7 @@ bool AppLifecycleBootstrap(AppLifecycleContext &ctx) {
         SDL_Log("%s", bootstrap.model_load_log.c_str());
     }
 
-    g_runtime.plugin_manager.SetPlugin(CreateDefaultBehaviorPlugin());
+    g_runtime.inference_adapter = CreateDefaultInferenceAdapter();
     {
         PluginRuntimeConfig plugin_cfg{};
         plugin_cfg.show_debug_stats = g_runtime.show_debug_stats;
@@ -1145,25 +1145,15 @@ bool AppLifecycleBootstrap(AppLifecycleContext &ctx) {
         };
         host.user_data = nullptr;
 
-        std::string plugin_err;
-        const PluginStatus st = g_runtime.plugin_manager.Init(plugin_cfg, host, &plugin_err);
-        g_runtime.plugin_ready = (st == PluginStatus::Ok);
-        if (!g_runtime.plugin_ready) {
-            SDL_Log("Plugin init failed: %s", plugin_err.c_str());
-        } else {
-            const auto &desc = g_runtime.plugin_manager.Descriptor();
-            SDL_Log("Plugin initialized: name=%s version=%s capabilities=%s",
-                    desc.name ? desc.name : "unknown",
-                    desc.version ? desc.version : "unknown",
-                    desc.capabilities ? desc.capabilities : "");
+        PluginWorkerConfig worker_cfg{};
+        worker_cfg.update_hz = 60;
+        worker_cfg.frame_budget_ms = 1;
 
-            PluginWorkerConfig worker_cfg{};
-            worker_cfg.update_hz = 60;
-            worker_cfg.frame_budget_ms = 1;
-            if (!g_runtime.plugin_worker.Start(&g_runtime.plugin_manager, worker_cfg, &plugin_err)) {
-                SDL_Log("Plugin worker start failed: %s", plugin_err.c_str());
-                g_runtime.plugin_ready = false;
-            }
+        std::string plugin_err;
+        g_runtime.plugin_ready = g_runtime.inference_adapter &&
+                                 g_runtime.inference_adapter->Init(plugin_cfg, host, worker_cfg, &plugin_err);
+        if (!g_runtime.plugin_ready) {
+            SDL_Log("Inference adapter init failed: %s", plugin_err.c_str());
         }
     }
 
@@ -1221,8 +1211,10 @@ void AppLifecycleTeardown(AppLifecycleContext &ctx) {
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
 
-    g_runtime.plugin_worker.Stop();
-    g_runtime.plugin_manager.Destroy();
+    if (g_runtime.inference_adapter) {
+        g_runtime.inference_adapter->Shutdown();
+        g_runtime.inference_adapter.reset();
+    }
     g_runtime.plugin_ready = false;
 
     if (g_runtime.tray) {

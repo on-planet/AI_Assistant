@@ -1,0 +1,287 @@
+#include "k2d/lifecycle/plugin_lifecycle.h"
+
+#include <SDL3/SDL.h>
+
+#include <algorithm>
+#include <utility>
+#include <thread>
+#include <mutex>
+#include <chrono>
+#include <atomic>
+
+namespace k2d {
+namespace {
+
+void SafeHostLog(const PluginHostCallbacks &host, const char *msg) {
+    if (host.log) {
+        host.log(host.user_data, msg ? msg : "");
+        return;
+    }
+    SDL_Log("[Plugin] %s", msg ? msg : "");
+}
+
+class DefaultBehaviorPlugin final : public IBehaviorPlugin {
+public:
+    PluginStatus Init(const PluginRuntimeConfig &runtime_cfg,
+                      const PluginHostCallbacks &host,
+                      PluginDescriptor *out_desc,
+                      std::string *out_error) override {
+        if (!out_desc) {
+            if (out_error) *out_error = "Init failed: out_desc is null";
+            return PluginStatus::InvalidArg;
+        }
+
+        host_ = host;
+        initialized_ = true;
+        elapsed_time_sec_ = 0.0;
+
+        *out_desc = PluginDescriptor{
+            .name = "default_behavior",
+            .version = "0.1.0",
+            .capabilities = "idle_opacity_pulse",
+        };
+
+        base_show_debug_stats_ = runtime_cfg.show_debug_stats;
+        base_manual_param_mode_ = runtime_cfg.manual_param_mode;
+        base_click_through_ = runtime_cfg.click_through;
+        base_opacity_ = std::clamp(runtime_cfg.window_opacity, 0.05f, 1.0f);
+
+        SafeHostLog(host_, "DefaultBehaviorPlugin initialized");
+        return PluginStatus::Ok;
+    }
+
+    PluginStatus Update(const PerceptionInput &in,
+                        BehaviorOutput &out,
+                        std::string *out_error) override {
+        if (!initialized_) {
+            if (out_error) *out_error = "Update failed: plugin not initialized";
+            return PluginStatus::InternalError;
+        }
+
+        elapsed_time_sec_ += std::max(0.0f, 1.0f / 60.0f);
+
+        out = BehaviorOutput{};
+        const float pulse = 0.1f * SDL_sinf(static_cast<float>(elapsed_time_sec_) * 1.2f);
+        out.param_targets[0] = std::clamp(base_opacity_ + pulse, 0.05f, 1.0f);
+        out.param_weights[0] = 1.0f;
+
+        out.param_targets[1] = base_click_through_ ? 1.0f : 0.0f;
+        out.param_weights[1] = 1.0f;
+
+        out.param_targets[2] = base_show_debug_stats_ ? 1.0f : 0.0f;
+        out.param_weights[2] = 1.0f;
+
+        out.param_targets[3] = base_manual_param_mode_ ? 1.0f : 0.0f;
+        out.param_weights[3] = 1.0f;
+
+        out.trigger_idle_shift = (static_cast<int>(elapsed_time_sec_) % 4) == 0;
+        out.trigger_blink = (in.user_presence > 0.8f);
+
+        return PluginStatus::Ok;
+    }
+
+    void Destroy() noexcept override {
+        if (!initialized_) {
+            return;
+        }
+        initialized_ = false;
+        SafeHostLog(host_, "DefaultBehaviorPlugin destroyed");
+    }
+
+private:
+    PluginHostCallbacks host_{};
+    bool initialized_ = false;
+    bool base_show_debug_stats_ = true;
+    bool base_manual_param_mode_ = false;
+    bool base_click_through_ = false;
+    float base_opacity_ = 1.0f;
+    double elapsed_time_sec_ = 0.0;
+};
+
+}  // namespace
+
+void PluginManager::SetPlugin(std::unique_ptr<IBehaviorPlugin> plugin) {
+    if (initialized_) {
+        Destroy();
+    }
+    plugin_ = std::move(plugin);
+    descriptor_ = PluginDescriptor{};
+}
+
+PluginStatus PluginManager::Init(const PluginRuntimeConfig &runtime_cfg,
+                                 const PluginHostCallbacks &host,
+                                 std::string *out_error) {
+    if (!plugin_) {
+        if (out_error) *out_error = "PluginManager Init failed: no plugin registered";
+        return PluginStatus::InvalidArg;
+    }
+
+    descriptor_ = PluginDescriptor{};
+    try {
+        const PluginStatus st = plugin_->Init(runtime_cfg, host, &descriptor_, out_error);
+        initialized_ = (st == PluginStatus::Ok);
+        return st;
+    } catch (const std::exception &e) {
+        initialized_ = false;
+        if (out_error) *out_error = std::string("PluginManager Init exception: ") + e.what();
+        return PluginStatus::InternalError;
+    } catch (...) {
+        initialized_ = false;
+        if (out_error) *out_error = "PluginManager Init exception: unknown";
+        return PluginStatus::InternalError;
+    }
+}
+
+PluginStatus PluginManager::Update(const PerceptionInput &in,
+                                   BehaviorOutput &out,
+                                   std::string *out_error) {
+    if (!plugin_ || !initialized_) {
+        if (out_error) *out_error = "PluginManager Update failed: plugin not ready";
+        return PluginStatus::InternalError;
+    }
+
+    try {
+        return plugin_->Update(in, out, out_error);
+    } catch (const std::exception &e) {
+        if (out_error) *out_error = std::string("PluginManager Update exception: ") + e.what();
+        return PluginStatus::InternalError;
+    } catch (...) {
+        if (out_error) *out_error = "PluginManager Update exception: unknown";
+        return PluginStatus::InternalError;
+    }
+}
+
+void PluginManager::Destroy() noexcept {
+    if (plugin_) {
+        plugin_->Destroy();
+    }
+    initialized_ = false;
+    descriptor_ = PluginDescriptor{};
+}
+
+std::unique_ptr<IBehaviorPlugin> CreateDefaultBehaviorPlugin() {
+    return std::make_unique<DefaultBehaviorPlugin>();
+}
+
+struct PluginWorker::Impl {
+    PluginManager *manager = nullptr;
+    PluginWorkerConfig cfg{};
+
+    std::atomic<bool> running{false};
+    std::thread worker;
+
+    std::mutex mtx;
+    PerceptionInput latest_in{};
+    BehaviorOutput latest_out{};
+    std::uint64_t out_seq = 0;
+    std::uint64_t consumed_seq = 0;
+};
+
+PluginWorker::PluginWorker() = default;
+
+PluginWorker::~PluginWorker() {
+    Stop();
+}
+
+PluginWorker::PluginWorker(PluginWorker &&other) noexcept = default;
+
+PluginWorker &PluginWorker::operator=(PluginWorker &&other) noexcept {
+    if (this != &other) {
+        Stop();
+        impl_ = std::move(other.impl_);
+    }
+    return *this;
+}
+
+bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::string *out_error) {
+    if (!manager) {
+        if (out_error) *out_error = "PluginWorker Start failed: manager is null";
+        return false;
+    }
+    if (!manager->IsReady()) {
+        if (out_error) *out_error = "PluginWorker Start failed: plugin manager not initialized";
+        return false;
+    }
+    if (impl_ && impl_->running.load()) {
+        if (out_error) *out_error = "PluginWorker Start failed: already running";
+        return false;
+    }
+
+    if (!impl_) {
+        impl_ = std::make_unique<Impl>();
+    }
+
+    impl_->manager = manager;
+    impl_->cfg = cfg;
+    impl_->cfg.update_hz = std::max(1, impl_->cfg.update_hz);
+    impl_->cfg.frame_budget_ms = std::max(1, impl_->cfg.frame_budget_ms);
+    impl_->running.store(true);
+
+    impl_->worker = std::thread([this]() {
+        const auto step = std::chrono::milliseconds(1000 / impl_->cfg.update_hz);
+        while (impl_->running.load()) {
+            const auto t0 = std::chrono::steady_clock::now();
+
+            PerceptionInput in{};
+            {
+                std::lock_guard<std::mutex> lock(impl_->mtx);
+                in = impl_->latest_in;
+            }
+
+            BehaviorOutput out{};
+            std::string err;
+            PluginStatus st = PluginStatus::InternalError;
+            try {
+                st = impl_->manager->Update(in, out, &err);
+            } catch (const std::exception &e) {
+                err = std::string("PluginWorker Update exception: ") + e.what();
+                st = PluginStatus::InternalError;
+            } catch (...) {
+                err = "PluginWorker Update exception: unknown";
+                st = PluginStatus::InternalError;
+            }
+
+            if (st == PluginStatus::Ok) {
+                std::lock_guard<std::mutex> lock(impl_->mtx);
+                impl_->latest_out = out;
+                ++impl_->out_seq;
+            }
+
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - t0);
+            if (elapsed.count() < impl_->cfg.frame_budget_ms) {
+                std::this_thread::sleep_for(step - std::min(step, elapsed));
+            }
+        }
+    });
+
+    return true;
+}
+
+void PluginWorker::Stop() noexcept {
+    if (!impl_) return;
+    impl_->running.store(false);
+    if (impl_->worker.joinable()) {
+        impl_->worker.join();
+    }
+}
+
+void PluginWorker::SubmitInput(const PerceptionInput &in) {
+    if (!impl_) return;
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    impl_->latest_in = in;
+}
+
+bool PluginWorker::TryConsumeLatestOutput(BehaviorOutput &out, std::uint64_t *out_seq) {
+    if (!impl_) return false;
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    if (impl_->out_seq == impl_->consumed_seq) {
+        return false;
+    }
+    out = impl_->latest_out;
+    impl_->consumed_seq = impl_->out_seq;
+    if (out_seq) *out_seq = impl_->out_seq;
+    return true;
+}
+
+}  // namespace k2d

@@ -211,8 +211,43 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
             state.ocr_last_error.clear();
         }
 
+        std::string norm_summary = state.ocr_result.summary;
+        const std::vector<std::pair<std::string, std::string>> dict = {
+            {"visual studio code", "vscode"}, {"vs code", "vscode"}, {"clion", "clion"},
+            {"read me", "readme"}, {"help", "help"}, {"settings", "settings"},
+            {"file", "file"}, {"edit", "edit"}, {"view", "view"}, {"run", "run"},
+            {"debug", "debug"}, {"terminal", "terminal"}, {"browser", "browser"}, {"docs", "docs"}
+        };
+        std::string norm_text = state.system_context_snapshot.process_name + "\n" +
+                                state.system_context_snapshot.window_title + "\n" +
+                                state.system_context_snapshot.url_hint + "\n" +
+                                norm_summary;
+        std::transform(norm_text.begin(), norm_text.end(), norm_text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        for (const auto &kv : dict) {
+            std::size_t pos = 0;
+            while ((pos = norm_text.find(kv.first, pos)) != std::string::npos) {
+                norm_text.replace(pos, kv.first.size(), kv.second);
+                pos += kv.second.size();
+            }
+            pos = 0;
+            while ((pos = norm_summary.find(kv.first, pos)) != std::string::npos) {
+                norm_summary.replace(pos, kv.first.size(), kv.second);
+                pos += kv.second.size();
+            }
+        }
+
+        if (state.ocr_summary_candidate == norm_summary) {
+            state.ocr_summary_consistent_count += 1;
+        } else {
+            state.ocr_summary_candidate = norm_summary;
+            state.ocr_summary_consistent_count = 1;
+        }
+        if (state.ocr_summary_consistent_count >= std::max(2, state.ocr_summary_debounce_frames)) {
+            state.ocr_summary_stable = state.ocr_summary_candidate;
+        }
+
         state.blackboard.ocr.lines = state.ocr_result.lines;
-        state.blackboard.ocr.summary = state.ocr_result.summary;
+        state.blackboard.ocr.summary = state.ocr_summary_stable.empty() ? state.ocr_result.summary : state.ocr_summary_stable;
         state.blackboard.ocr.domain_tags = state.ocr_result.domain_tags;
 
         std::vector<std::string> inferred_tags;
@@ -222,29 +257,25 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
             }
         };
 
-        std::string text = state.system_context_snapshot.process_name + "\n" +
-                           state.system_context_snapshot.window_title + "\n" +
-                           state.system_context_snapshot.url_hint + "\n" +
-                           state.ocr_result.summary;
-        std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-
-        if (text.find("http") != std::string::npos || text.find("www.") != std::string::npos ||
-            text.find("chrome") != std::string::npos || text.find("edge") != std::string::npos ||
-            text.find("firefox") != std::string::npos) {
+        if (norm_text.find("http") != std::string::npos || norm_text.find("www.") != std::string::npos ||
+            norm_text.find("chrome") != std::string::npos || norm_text.find("edge") != std::string::npos ||
+            norm_text.find("firefox") != std::string::npos || norm_text.find("browser") != std::string::npos) {
             push_unique("browser");
         }
-        if (text.find("chat") != std::string::npos || text.find("discord") != std::string::npos ||
-            text.find("slack") != std::string::npos || text.find("wechat") != std::string::npos ||
-            text.find("qq") != std::string::npos) {
+        if (norm_text.find("chat") != std::string::npos || norm_text.find("discord") != std::string::npos ||
+            norm_text.find("slack") != std::string::npos || norm_text.find("wechat") != std::string::npos ||
+            norm_text.find("qq") != std::string::npos) {
             push_unique("chat");
         }
-        if (text.find("readme") != std::string::npos || text.find("docs") != std::string::npos ||
-            text.find("manual") != std::string::npos || text.find("wiki") != std::string::npos) {
+        if (norm_text.find("readme") != std::string::npos || norm_text.find("docs") != std::string::npos ||
+            norm_text.find("manual") != std::string::npos || norm_text.find("wiki") != std::string::npos ||
+            norm_text.find("help") != std::string::npos) {
             push_unique("doc");
         }
-        if (text.find("cpp") != std::string::npos || text.find("cmake") != std::string::npos ||
-            text.find("visual studio") != std::string::npos || text.find("clion") != std::string::npos ||
-            text.find("vscode") != std::string::npos || text.find("github") != std::string::npos) {
+        if (norm_text.find("cpp") != std::string::npos || norm_text.find("cmake") != std::string::npos ||
+            norm_text.find("visual studio") != std::string::npos || norm_text.find("clion") != std::string::npos ||
+            norm_text.find("vscode") != std::string::npos || norm_text.find("github") != std::string::npos ||
+            norm_text.find("debug") != std::string::npos || norm_text.find("terminal") != std::string::npos) {
             push_unique("code");
         }
 

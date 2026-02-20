@@ -36,6 +36,11 @@ struct PerceptionPipelineState {
     bool ocr_skipped_due_timeout = false;
     int ocr_timeout_ms = 120;
 
+    std::string ocr_summary_candidate;
+    std::string ocr_summary_stable;
+    int ocr_summary_consistent_count = 0;
+    int ocr_summary_debounce_frames = 2;
+
     SystemContextSnapshot system_context_snapshot;
     std::string system_context_last_error;
 

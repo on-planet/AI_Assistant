@@ -26,6 +26,7 @@
 #include "k2d/lifecycle/model_reload_service.h"
 #include "k2d/lifecycle/reminder_service.h"
 #include "k2d/capture/screen_capture.h"
+#include "k2d/lifecycle/scene_classifier.h"
 
 #include <algorithm>
 #include <cmath>
@@ -161,6 +162,11 @@ struct AppRuntime {
     bool screen_capture_ready = false;
     float screen_capture_poll_accum_sec = 0.0f;
     std::string screen_capture_last_error;
+
+    SceneClassifier scene_classifier;
+    bool scene_classifier_ready = false;
+    std::string scene_classifier_last_error;
+    SceneClassificationResult scene_result;
 };
 
 AppRuntime g_runtime;
@@ -974,6 +980,15 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                     std::string cap_err;
                     if (!g_runtime.screen_capture.Capture(frame, &cap_err) && !cap_err.empty()) {
                         g_runtime.screen_capture_last_error = cap_err;
+                    } else if (g_runtime.scene_classifier_ready) {
+                        std::string scene_err;
+                        SceneClassificationResult scene_out{};
+                        if (g_runtime.scene_classifier.Classify(frame, scene_out, &scene_err)) {
+                            g_runtime.scene_result = std::move(scene_out);
+                            g_runtime.scene_classifier_last_error.clear();
+                        } else if (!scene_err.empty()) {
+                            g_runtime.scene_classifier_last_error = scene_err;
+                        }
                     }
                 }
             }
@@ -1026,9 +1041,16 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 ImGui::ProgressBar(pat_ratio, ImVec2(-1.0f, 0.0f), "Pat React");
 
                 ImGui::Separator();
-                ImGui::Text("Capture: %s", g_runtime.screen_capture_ready ? "DXGI ready" : "not ready");
+                ImGui::Text("Capture: %s", g_runtime.screen_capture_ready ? "ready" : "not ready");
                 if (!g_runtime.screen_capture_last_error.empty()) {
                     ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Capture Error: %s", g_runtime.screen_capture_last_error.c_str());
+                }
+                ImGui::Text("Scene Classifier: %s", g_runtime.scene_classifier_ready ? "ready" : "not ready");
+                if (g_runtime.scene_classifier_ready && !g_runtime.scene_result.label.empty()) {
+                    ImGui::Text("Scene: %s (%.3f)", g_runtime.scene_result.label.c_str(), g_runtime.scene_result.score);
+                }
+                if (!g_runtime.scene_classifier_last_error.empty()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Scene Error: %s", g_runtime.scene_classifier_last_error.c_str());
                 }
                 if (ImGui::Button("Close Program")) {
                     g_runtime.running = false;
@@ -1288,6 +1310,21 @@ bool AppLifecycleBootstrap(AppLifecycleContext &ctx) {
         }
     }
 
+    {
+        std::string sc_err;
+        g_runtime.scene_classifier_ready = g_runtime.scene_classifier.Init(
+            "assets/mobileclip_image.onnx",
+            "assets/mobileclip_labels.json",
+            &sc_err);
+        if (!g_runtime.scene_classifier_ready) {
+            g_runtime.scene_classifier_last_error = sc_err;
+            SDL_Log("Scene classifier init failed: %s", sc_err.c_str());
+        } else {
+            g_runtime.scene_classifier_last_error.clear();
+            SDL_Log("Scene classifier init ok: MobileCLIP dual-tower");
+        }
+    }
+
     g_runtime.demo_texture = bootstrap.demo_texture;
     g_runtime.demo_texture_w = bootstrap.demo_texture_w;
     g_runtime.demo_texture_h = bootstrap.demo_texture_h;
@@ -1353,6 +1390,9 @@ void AppLifecycleTeardown(AppLifecycleContext &ctx) {
 
     g_runtime.screen_capture.Shutdown();
     g_runtime.screen_capture_ready = false;
+
+    g_runtime.scene_classifier.Shutdown();
+    g_runtime.scene_classifier_ready = false;
 
     if (g_runtime.tray) {
         SDL_DestroyTray(g_runtime.tray);

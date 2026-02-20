@@ -1,0 +1,9 @@
+{
+  "labels": ["Game", "Code", "Video"],
+  "embeddings": [
+    [0.50, 0.10, 0.20, 0.30],
+    [0.10, 0.70, 0.10, 0.20],
+    [0.20, 0.20, 0.60, 0.10]
+  ],
+  "note": "placeholder template, replace with real normalized text embeddings that match mobileclip_image.onnx output dim"
+}

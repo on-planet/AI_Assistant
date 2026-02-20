@@ -3,6 +3,10 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_tray.h>
 
+#include "imgui.h"
+#include "imgui_impl_sdl3.h"
+#include "imgui_impl_sdlrenderer3.h"
+
 #include "k2d/core/model.h"
 #include "k2d/core/png_texture.h"
 #include "k2d/editor/editor_commands.h"
@@ -123,6 +127,8 @@ struct AppRuntime {
     float debug_frame_ms = 0.0f;
     float debug_fps_accum_sec = 0.0f;
     int debug_fps_accum_frames = 0;
+
+    bool gui_enabled = true;
 
     PluginManager plugin_manager;
     PluginWorker plugin_worker;
@@ -818,6 +824,7 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
         .debug_fps_accum_sec = &g_runtime.debug_fps_accum_sec,
         .debug_fps_accum_frames = &g_runtime.debug_fps_accum_frames,
         .handle_event = [](const SDL_Event &event) {
+            ImGui_ImplSDL3_ProcessEvent(&event);
             if (event.type == SDL_EVENT_QUIT) {
                 g_runtime.running = false;
             } else if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
@@ -900,7 +907,26 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
             }
         },
         .on_render = []() {
+            ImGui_ImplSDLRenderer3_NewFrame();
+            ImGui_ImplSDL3_NewFrame();
+            ImGui::NewFrame();
+
+            if (g_runtime.gui_enabled) {
+                ImGui::Begin("Runtime Debug");
+                ImGui::Text("FPS: %.2f", g_runtime.debug_fps);
+                ImGui::Text("Frame: %.2f ms", g_runtime.debug_frame_ms);
+                ImGui::Text("Model Loaded: %s", g_runtime.model_loaded ? "Yes" : "No");
+                ImGui::Text("PartCount: %d", static_cast<int>(g_runtime.model.parts.size()));
+                ImGui::Checkbox("Show Debug Stats", &g_runtime.show_debug_stats);
+                ImGui::Checkbox("Manual Param Mode", &g_runtime.manual_param_mode);
+                ImGui::Checkbox("GUI Enabled", &g_runtime.gui_enabled);
+                ImGui::End();
+            }
+
             RenderFrame();
+
+            ImGui::Render();
+            ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), g_runtime.renderer);
         },
         .on_editor_status_expired = []() {
             g_runtime.editor_status.clear();
@@ -961,6 +987,17 @@ bool AppLifecycleInit(AppLifecycleContext &ctx) {
 
     if (!SDL_SetWindowHitTest(g_runtime.window, WindowHitTest, nullptr)) {
         SDL_Log("SDL_SetWindowHitTest failed: %s", SDL_GetError());
+    }
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGui::StyleColorsDark();
+
+    if (!ImGui_ImplSDL3_InitForSDLRenderer(g_runtime.window, g_runtime.renderer)) {
+        SDL_Log("ImGui_ImplSDL3_InitForSDLRenderer failed");
+    }
+    if (!ImGui_ImplSDLRenderer3_Init(g_runtime.renderer)) {
+        SDL_Log("ImGui_ImplSDLRenderer3_Init failed");
     }
 
     ctx.exit_code = 0;
@@ -1080,6 +1117,10 @@ bool AppLifecycleBootstrap(AppLifecycleContext &ctx) {
 }
 
 void AppLifecycleTeardown(AppLifecycleContext &ctx) {
+    ImGui_ImplSDLRenderer3_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
+    ImGui::DestroyContext();
+
     g_runtime.plugin_worker.Stop();
     g_runtime.plugin_manager.Destroy();
     g_runtime.plugin_ready = false;

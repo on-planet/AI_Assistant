@@ -88,11 +88,13 @@ std::unique_ptr<IBehaviorPlugin> CreateDefaultBehaviorPlugin();
 struct PluginWorkerConfig {
     int update_hz = 60;
     int frame_budget_ms = 1;
+    int timeout_degrade_threshold = 8;
 };
 
 struct PluginWorkerStats {
     std::uint64_t timeout_count = 0;
     std::uint64_t exception_count = 0;
+    int current_update_hz = 60;
     std::string last_error;
 };
 

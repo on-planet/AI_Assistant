@@ -178,6 +178,8 @@ struct PluginWorker::Impl {
 
     std::uint64_t timeout_count = 0;
     std::uint64_t exception_count = 0;
+    int current_update_hz = 60;
+    int consecutive_timeout_count = 0;
     std::string last_error;
 };
 
@@ -219,11 +221,15 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
     impl_->cfg = cfg;
     impl_->cfg.update_hz = std::max(1, impl_->cfg.update_hz);
     impl_->cfg.frame_budget_ms = std::max(1, impl_->cfg.frame_budget_ms);
+    impl_->cfg.timeout_degrade_threshold = std::max(1, impl_->cfg.timeout_degrade_threshold);
+    impl_->current_update_hz = impl_->cfg.update_hz;
+    impl_->consecutive_timeout_count = 0;
     impl_->running.store(true);
 
     impl_->worker = std::thread([this]() {
-        const auto step = std::chrono::milliseconds(1000 / impl_->cfg.update_hz);
         while (impl_->running.load()) {
+            const int current_hz = std::max(1, impl_->current_update_hz);
+            const auto step = std::chrono::milliseconds(std::max(1, 1000 / current_hz));
             const auto t0 = std::chrono::steady_clock::now();
 
             PerceptionInput in{};
@@ -253,10 +259,32 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
                 if (st == PluginStatus::Ok) {
                     impl_->latest_out = out;
                     ++impl_->out_seq;
+                    impl_->consecutive_timeout_count = 0;
                     impl_->last_error.clear();
                 } else {
                     if (st == PluginStatus::Timeout) {
                         ++impl_->timeout_count;
+                        ++impl_->consecutive_timeout_count;
+
+                        if (impl_->consecutive_timeout_count >= impl_->cfg.timeout_degrade_threshold) {
+                            int next_hz = impl_->current_update_hz;
+                            if (next_hz > 120) {
+                                next_hz = 120;
+                            } else if (next_hz > 60) {
+                                next_hz = 60;
+                            } else if (next_hz > 30) {
+                                next_hz = 30;
+                            } else if (next_hz > 15) {
+                                next_hz = 15;
+                            }
+                            if (next_hz != impl_->current_update_hz) {
+                                impl_->current_update_hz = next_hz;
+                                SDL_Log("PluginWorker degraded update_hz to %d due to consecutive timeouts", next_hz);
+                            }
+                            impl_->consecutive_timeout_count = 0;
+                        }
+                    } else {
+                        impl_->consecutive_timeout_count = 0;
                     }
                     if (caught_exception) {
                         ++impl_->exception_count;
@@ -312,6 +340,7 @@ PluginWorkerStats PluginWorker::GetStats() const {
     PluginWorkerStats s{};
     s.timeout_count = impl_->timeout_count;
     s.exception_count = impl_->exception_count;
+    s.current_update_hz = impl_->current_update_hz;
     s.last_error = impl_->last_error;
     return s;
 }

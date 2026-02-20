@@ -56,7 +56,7 @@ add_executable(AI_assistant WIN32
     src/k2d/capture/screen_capture_dxgi.cpp
 )
 
-target_link_libraries(AI_assistant PRIVATE SDL3::SDL3 "${ONNXRUNTIME_LIB}" d3d11 dxgi)
+target_link_libraries(AI_assistant PRIVATE SDL3::SDL3 "${ONNXRUNTIME_LIB}" d3d11 dxgi windowsapp runtimeobject)
 
 # Allow includes like "k2d/core/png_texture.h" and "stb_image.h".
 target_include_directories(AI_assistant PRIVATE
@@ -83,7 +83,7 @@ add_executable(plugin_lifecycle_tests
     src/k2d/lifecycle/inference_adapter.cpp
 )
 
-target_link_libraries(plugin_lifecycle_tests PRIVATE SDL3::SDL3 "${ONNXRUNTIME_LIB}" d3d11 dxgi)
+target_link_libraries(plugin_lifecycle_tests PRIVATE SDL3::SDL3 "${ONNXRUNTIME_LIB}" d3d11 dxgi windowsapp runtimeobject)
 
 target_include_directories(plugin_lifecycle_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src

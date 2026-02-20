@@ -124,6 +124,49 @@ private:
     int destroy_called_ = 0;
 };
 
+class FlakyCrashPlugin final : public IBehaviorPlugin {
+public:
+    PluginStatus Init(const PluginRuntimeConfig &,
+                      const PluginHostCallbacks &,
+                      PluginDescriptor *out_desc,
+                      std::string *out_error) override {
+        if (!out_desc) {
+            if (out_error) *out_error = "out_desc null";
+            return PluginStatus::InvalidArg;
+        }
+        *out_desc = PluginDescriptor{"flaky_crash", "1.0.0", "worker_isolation"};
+        inited_ = true;
+        return PluginStatus::Ok;
+    }
+
+    PluginStatus Update(const PerceptionInput &,
+                        BehaviorOutput &out,
+                        std::string *out_error) override {
+        if (!inited_) {
+            if (out_error) *out_error = "not initialized";
+            return PluginStatus::InternalError;
+        }
+
+        ++tick_;
+        if ((tick_ % 2) == 0) {
+            throw std::runtime_error("simulated plugin crash");
+        }
+
+        out = BehaviorOutput{};
+        out.param_targets["p.test"] = static_cast<float>(tick_);
+        out.param_weights["p.test"] = 1.0f;
+        return PluginStatus::Ok;
+    }
+
+    void Destroy() noexcept override {
+        inited_ = false;
+    }
+
+private:
+    bool inited_ = false;
+    int tick_ = 0;
+};
+
 bool TestInitUpdateDestroySuccess() {
     PluginManager mgr;
     mgr.SetPlugin(std::make_unique<StubPlugin>(StubPlugin::Mode::Success));
@@ -208,6 +251,61 @@ bool TestUpdateException() {
     return true;
 }
 
+bool TestMainLoopIsolationOnPluginCrash() {
+    PluginManager mgr;
+    mgr.SetPlugin(std::make_unique<FlakyCrashPlugin>());
+
+    std::string err;
+    if (!Assert::Eq(mgr.Init(PluginRuntimeConfig{}, PluginHostCallbacks{}, &err), PluginStatus::Ok,
+                    "isolation: init")) {
+        return false;
+    }
+
+    k2d::PluginWorker worker;
+    k2d::PluginWorkerConfig cfg{};
+    cfg.update_hz = 120;
+    cfg.frame_budget_ms = 1;
+    cfg.timeout_degrade_threshold = 8;
+    if (!Assert::True(worker.Start(&mgr, cfg, &err), "isolation: worker start")) {
+        return false;
+    }
+
+    std::uint64_t last_seq = 0;
+    int consumed_ok = 0;
+    for (int i = 0; i < 80; ++i) {
+        PerceptionInput in{};
+        in.time_sec = i * 0.01;
+        in.user_presence = 1.0f;
+        worker.SubmitInput(in);
+
+        BehaviorOutput out{};
+        std::uint64_t seq = 0;
+        if (worker.TryConsumeLatestOutput(out, &seq)) {
+            if (!Assert::True(seq > last_seq, "isolation: seq should be monotonic")) {
+                worker.Stop();
+                return false;
+            }
+            last_seq = seq;
+            ++consumed_ok;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(4));
+    }
+
+    worker.Stop();
+
+    if (!Assert::True(consumed_ok >= 5, "isolation: should still consume successful outputs after crashes")) {
+        return false;
+    }
+
+    const k2d::PluginWorkerStats stats = worker.GetStats();
+    if (!Assert::True(stats.exception_count > 0, "isolation: exception count should be recorded")) {
+        return false;
+    }
+
+    return true;
+}
+
 }  // namespace
 
 int main() {
@@ -219,6 +317,7 @@ int main() {
     if (!TestUpdateTimeout()) ++failed;
     if (!TestInitException()) ++failed;
     if (!TestUpdateException()) ++failed;
+    if (!TestMainLoopIsolationOnPluginCrash()) ++failed;
 
     if (failed == 0) {
         std::cout << "[PASS] plugin lifecycle tests all passed\n";

@@ -125,6 +125,7 @@ struct AppRuntime {
     int debug_fps_accum_frames = 0;
 
     PluginManager plugin_manager;
+    PluginWorker plugin_worker;
     bool plugin_ready = false;
 };
 
@@ -864,11 +865,10 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 in.time_sec = static_cast<double>(g_runtime.model_time);
                 in.audio_level = 0.0f;
                 in.user_presence = g_runtime.window_visible ? 1.0f : 0.0f;
+                g_runtime.plugin_worker.SubmitInput(in);
 
                 BehaviorOutput out{};
-                std::string plugin_err;
-                const PluginStatus st = g_runtime.plugin_manager.Update(in, out, &plugin_err);
-                if (st == PluginStatus::Ok) {
+                if (g_runtime.plugin_worker.TryConsumeLatestOutput(out, nullptr)) {
                     if (g_runtime.model_loaded && !g_runtime.model.parameters.empty()) {
                         const std::size_t n = std::min<std::size_t>(16, g_runtime.model.parameters.size());
                         for (std::size_t i = 0; i < n; ++i) {
@@ -896,8 +896,6 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                         g_runtime.manual_param_mode = out.param_targets[3] >= 0.5f;
                         SyncAnimationChannelState();
                     }
-                } else {
-                    SDL_Log("Plugin update failed: %s", plugin_err.c_str());
                 }
             }
         },
@@ -1021,6 +1019,14 @@ bool AppLifecycleBootstrap(AppLifecycleContext &ctx) {
                     desc.name ? desc.name : "unknown",
                     desc.version ? desc.version : "unknown",
                     desc.capabilities ? desc.capabilities : "");
+
+            PluginWorkerConfig worker_cfg{};
+            worker_cfg.update_hz = 60;
+            worker_cfg.frame_budget_ms = 1;
+            if (!g_runtime.plugin_worker.Start(&g_runtime.plugin_manager, worker_cfg, &plugin_err)) {
+                SDL_Log("Plugin worker start failed: %s", plugin_err.c_str());
+                g_runtime.plugin_ready = false;
+            }
         }
     }
 
@@ -1074,6 +1080,7 @@ bool AppLifecycleBootstrap(AppLifecycleContext &ctx) {
 }
 
 void AppLifecycleTeardown(AppLifecycleContext &ctx) {
+    g_runtime.plugin_worker.Stop();
     g_runtime.plugin_manager.Destroy();
     g_runtime.plugin_ready = false;
 

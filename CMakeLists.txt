@@ -20,6 +20,8 @@ add_executable(AI_assistant WIN32
     src/k2d/lifecycle/app_lifecycle.cpp
     src/k2d/lifecycle/plugin_lifecycle.cpp
     src/k2d/lifecycle/inference_adapter.cpp
+    src/k2d/lifecycle/behavior_applier.cpp
+    src/k2d/lifecycle/model_reload_service.cpp
     external/imgui/imgui.cpp
     external/imgui/imgui_draw.cpp
     external/imgui/imgui_tables.cpp
@@ -41,6 +43,7 @@ add_executable(AI_assistant WIN32
     src/k2d/controllers/param_controller.cpp
     src/k2d/controllers/app_loop.cpp
     src/k2d/controllers/app_input_controller.cpp
+    src/k2d/controllers/interaction_controller.cpp
 )
 
 target_link_libraries(AI_assistant PRIVATE SDL3::SDL3)

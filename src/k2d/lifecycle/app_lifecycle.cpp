@@ -20,7 +20,10 @@
 #include "k2d/controllers/param_controller.h"
 #include "k2d/controllers/app_loop.h"
 #include "k2d/controllers/app_input_controller.h"
+#include "k2d/controllers/interaction_controller.h"
 #include "k2d/lifecycle/plugin_lifecycle.h"
+#include "k2d/lifecycle/behavior_applier.h"
+#include "k2d/lifecycle/model_reload_service.h"
 
 #include <algorithm>
 #include <cmath>
@@ -133,8 +136,7 @@ struct AppRuntime {
     bool gui_enabled = true;
 
     // 鼠标摸头交互状态
-    float head_pat_react_ttl = 0.0f;
-    bool head_pat_hovering = false;
+    InteractionControllerState interaction_state{};
 
     std::unique_ptr<IInferenceAdapter> inference_adapter;
     bool plugin_ready = false;
@@ -146,7 +148,43 @@ EditorControllerState g_editor_state;
 
 void ApplyPivotDelta(ModelPart *part, float delta_x, float delta_y);
 void EnsureSelectedPartIndexValid();
+void EnsureSelectedParamIndexValid();
+void SyncAnimationChannelState();
+void SetEditorStatus(std::string text, float ttl_sec = 2.0f);
+void SetClickThrough(bool enabled);
 
+ModelReloadServiceContext BuildModelReloadServiceContext() {
+    ModelReloadServiceContext reload_ctx{};
+    reload_ctx.dev_hot_reload_enabled = g_runtime.dev_hot_reload_enabled;
+    reload_ctx.hot_reload_poll_accum_sec = &g_runtime.hot_reload_poll_accum_sec;
+    reload_ctx.model_loaded = &g_runtime.model_loaded;
+    reload_ctx.model = &g_runtime.model;
+    reload_ctx.renderer = g_runtime.renderer;
+    reload_ctx.model_time = &g_runtime.model_time;
+    reload_ctx.selected_part_index = &g_runtime.selected_part_index;
+    reload_ctx.model_last_write_time = &g_runtime.model_last_write_time;
+    reload_ctx.model_last_write_time_valid = &g_runtime.model_last_write_time_valid;
+    reload_ctx.ensure_selected_part_index_valid = [](void *) { EnsureSelectedPartIndexValid(); };
+    reload_ctx.ensure_selected_param_index_valid = [](void *) { EnsureSelectedParamIndexValid(); };
+    reload_ctx.sync_animation_channel_state = [](void *) { SyncAnimationChannelState(); };
+    reload_ctx.set_editor_status = [](const std::string &text, float ttl_sec, void *) {
+        SetEditorStatus(text, ttl_sec);
+    };
+    return reload_ctx;
+}
+
+BehaviorApplyContext BuildBehaviorApplyContext() {
+    BehaviorApplyContext apply_ctx{};
+    apply_ctx.model_loaded = g_runtime.model_loaded;
+    apply_ctx.model = &g_runtime.model;
+    apply_ctx.plugin_param_blend_mode = g_runtime.plugin_param_blend_mode;
+    apply_ctx.window = g_runtime.window;
+    apply_ctx.show_debug_stats = &g_runtime.show_debug_stats;
+    apply_ctx.manual_param_mode = &g_runtime.manual_param_mode;
+    apply_ctx.set_click_through = [](bool enabled, void *) { SetClickThrough(enabled); };
+    apply_ctx.sync_animation_channel_state = [](void *) { SyncAnimationChannelState(); };
+    return apply_ctx;
+}
 
 void SetClickThrough(bool enabled) {
     g_runtime.click_through = enabled;
@@ -235,7 +273,7 @@ bool HasModelParts() {
     return g_runtime.model_loaded && !g_runtime.model.parts.empty();
 }
 
-void SetEditorStatus(std::string text, float ttl_sec = 2.0f) {
+void SetEditorStatus(std::string text, float ttl_sec) {
     g_runtime.editor_status = std::move(text);
     g_runtime.editor_status_ttl = std::max(0.0f, ttl_sec);
 }
@@ -454,44 +492,6 @@ bool PartContainsPointPrecise(const ModelPart &part, float x, float y) {
     return false;
 }
 
-bool IsHeadPartId(const std::string &id) {
-    std::string lower;
-    lower.reserve(id.size());
-    for (char c : id) {
-        lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-    }
-    return (lower.find("head") != std::string::npos);
-}
-
-void TriggerHeadPatReaction() {
-    g_runtime.head_pat_react_ttl = 0.35f;
-}
-
-void UpdateHeadPatReaction(float dt_sec) {
-    if (!g_runtime.model_loaded || !HasModelParams()) {
-        return;
-    }
-    g_runtime.head_pat_react_ttl = std::max(0.0f, g_runtime.head_pat_react_ttl - std::max(0.0f, dt_sec));
-
-    if (g_runtime.head_pat_react_ttl <= 0.0f) {
-        return;
-    }
-
-    const float t = g_runtime.head_pat_react_ttl / 0.35f;
-    const float pulse = std::sin((1.0f - t) * 3.1415926f);
-
-    auto set_param_target = [&](const char *pid, float target) {
-        const auto it = g_runtime.model.param_index.find(pid);
-        if (it == g_runtime.model.param_index.end()) return;
-        const int idx = it->second;
-        if (idx < 0 || idx >= static_cast<int>(g_runtime.model.parameters.size())) return;
-        g_runtime.model.parameters[static_cast<std::size_t>(idx)].param.SetTarget(target);
-    };
-
-    set_param_target("BrowY", 0.35f * pulse);
-    set_param_target("MouthOpen", 0.20f * pulse);
-}
-
 int PickTopPartAt(float x, float y) {
     if (!HasModelParts()) {
         return -1;
@@ -699,95 +699,6 @@ void SaveEditedModelJsonToDisk() {
     }
 }
 
-std::string BuildStableModelBackupPath(const std::string &model_path) {
-    if (model_path.empty()) {
-        return "assets/model_01/model.last_good.json";
-    }
-    return model_path + ".last_good.json";
-}
-
-void CommitStableModelBackup(const ModelRuntime &model) {
-    if (model.model_path.empty()) {
-        return;
-    }
-    std::string save_err;
-    const std::string backup_path = BuildStableModelBackupPath(model.model_path);
-    if (!SaveModelRuntimeJson(model, backup_path.c_str(), &save_err)) {
-        SDL_Log("Stable model backup save failed: %s", save_err.c_str());
-    }
-}
-
-void TryHotReloadModel(float dt_sec) {
-    if (!g_runtime.dev_hot_reload_enabled || !g_runtime.model_loaded) {
-        return;
-    }
-    if (g_runtime.model.model_path.empty()) {
-        return;
-    }
-
-    g_runtime.hot_reload_poll_accum_sec += std::max(0.0f, dt_sec);
-    if (g_runtime.hot_reload_poll_accum_sec < 0.5f) {
-        return;
-    }
-    g_runtime.hot_reload_poll_accum_sec = 0.0f;
-
-    std::error_code ec;
-    const auto now_write_time = std::filesystem::last_write_time(g_runtime.model.model_path, ec);
-    if (ec) {
-        return;
-    }
-
-    if (!g_runtime.model_last_write_time_valid) {
-        g_runtime.model_last_write_time = now_write_time;
-        g_runtime.model_last_write_time_valid = true;
-        return;
-    }
-
-    if (now_write_time == g_runtime.model_last_write_time) {
-        return;
-    }
-
-    ModelRuntime new_model;
-    std::string load_err;
-    if (!LoadModelRuntime(g_runtime.renderer, g_runtime.model.model_path.c_str(), &new_model, &load_err)) {
-        const std::string backup_path = BuildStableModelBackupPath(g_runtime.model.model_path);
-        ModelRuntime rollback_model;
-        std::string rollback_err;
-        if (LoadModelRuntime(g_runtime.renderer, backup_path.c_str(), &rollback_model, &rollback_err)) {
-            DestroyModelRuntime(&g_runtime.model);
-            g_runtime.model = std::move(rollback_model);
-            g_runtime.model_loaded = true;
-            g_runtime.model_time = 0.0f;
-            g_runtime.selected_part_index = -1;
-            EnsureSelectedPartIndexValid();
-            EnsureSelectedParamIndexValid();
-            SyncAnimationChannelState();
-            SetEditorStatus("hot reload failed, rolled back to last stable model", 3.0f);
-            SDL_Log("Hot reload failed: %s | rollback applied from %s", load_err.c_str(), backup_path.c_str());
-        } else {
-            SetEditorStatus("hot reload failed: " + load_err, 3.0f);
-            SDL_Log("Hot reload failed and rollback unavailable: reload_err=%s rollback_err=%s",
-                    load_err.c_str(),
-                    rollback_err.c_str());
-        }
-        return;
-    }
-
-    DestroyModelRuntime(&g_runtime.model);
-    g_runtime.model = std::move(new_model);
-    g_runtime.model_loaded = true;
-    g_runtime.model_time = 0.0f;
-    g_runtime.model_last_write_time = now_write_time;
-    g_runtime.model_last_write_time_valid = true;
-
-    g_runtime.selected_part_index = -1;
-    EnsureSelectedPartIndexValid();
-    EnsureSelectedParamIndexValid();
-    SyncAnimationChannelState();
-
-    CommitStableModelBackup(g_runtime.model);
-    SetEditorStatus("model hot reloaded", 1.5f);
-}
 
 void RenderFrame() {
     k2d::RenderAppFrame(k2d::AppRenderContext{
@@ -876,20 +787,16 @@ k2d::EditorInputCallbacks BuildEditorInputCallbacks() {
             EndGizmoDrag();
         },
         .on_mouse_motion = [](float mx, float my) {
-            if (g_runtime.model_loaded) {
-                const int picked = PickTopPartAt(mx, my);
-                bool hovering_head = false;
-                if (picked >= 0 && picked < static_cast<int>(g_runtime.model.parts.size())) {
-                    const ModelPart &part = g_runtime.model.parts[static_cast<std::size_t>(picked)];
-                    hovering_head = IsHeadPartId(part.id);
-                }
-                if (hovering_head && !g_runtime.head_pat_hovering) {
-                    TriggerHeadPatReaction();
-                }
-                g_runtime.head_pat_hovering = hovering_head;
-            } else {
-                g_runtime.head_pat_hovering = false;
-            }
+            HandleHeadPatMouseMotion(
+                g_runtime.interaction_state,
+                InteractionControllerContext{
+                    .model_loaded = g_runtime.model_loaded,
+                    .model = &g_runtime.model,
+                    .pick_top_part_at = [](float x, float y) { return PickTopPartAt(x, y); },
+                    .has_model_params = []() { return HasModelParams(); },
+                },
+                mx,
+                my);
 
             if (g_runtime.gizmo_dragging) {
                 HandleGizmoDragMotion(mx, my);
@@ -962,8 +869,17 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
         },
         .on_update = [](float dt) {
             if (g_runtime.model_loaded) {
-                TryHotReloadModel(dt);
-                UpdateHeadPatReaction(dt);
+                auto reload_ctx = BuildModelReloadServiceContext();
+                TryHotReloadModel(reload_ctx, dt);
+                UpdateHeadPatReaction(
+                    g_runtime.interaction_state,
+                    InteractionControllerContext{
+                        .model_loaded = g_runtime.model_loaded,
+                        .model = &g_runtime.model,
+                        .pick_top_part_at = [](float x, float y) { return PickTopPartAt(x, y); },
+                        .has_model_params = []() { return HasModelParams(); },
+                    },
+                    dt);
                 UpdateModelRuntime(&g_runtime.model, g_runtime.model_time, dt);
             }
 
@@ -976,130 +892,8 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
 
                 BehaviorOutput out{};
                 if (g_runtime.inference_adapter->TryConsumeLatestOutput(out, nullptr)) {
-                    static std::unordered_map<std::string, Uint64> s_last_log_ms;
-                    const Uint64 now_ms = SDL_GetTicks();
-                    auto should_log = [&](const std::string &key) {
-                        Uint64 &last = s_last_log_ms[key];
-                        if (now_ms - last >= 2000) {
-                            last = now_ms;
-                            return true;
-                        }
-                        return false;
-                    };
-
-                    if (g_runtime.model_loaded && !g_runtime.model.parameters.empty()) {
-                        for (const auto &kv : out.param_targets) {
-                            const auto w_it = out.param_weights.find(kv.first);
-                            if (w_it == out.param_weights.end()) {
-                                continue;
-                            }
-
-                            if (!std::isfinite(w_it->second)) {
-                                if (should_log("plugin.invalid.weight.nan." + kv.first)) {
-                                    SDL_Log("Plugin param ignored: id='%s' weight is NaN/Inf", kv.first.c_str());
-                                }
-                                continue;
-                            }
-
-                            const float w = std::clamp(w_it->second, 0.0f, 1.0f);
-                            if (w <= 0.0f) {
-                                continue;
-                            }
-                            if (w != w_it->second && should_log("plugin.invalid.weight.range." + kv.first)) {
-                                SDL_Log("Plugin param weight clamped: id='%s' raw=%f clamped=%f", kv.first.c_str(), w_it->second, w);
-                            }
-
-                            const auto p_it = g_runtime.model.param_index.find(kv.first);
-                            if (p_it == g_runtime.model.param_index.end()) {
-                                continue;
-                            }
-
-                            const int idx = p_it->second;
-                            if (idx < 0 || idx >= static_cast<int>(g_runtime.model.parameters.size())) {
-                                continue;
-                            }
-
-                            auto &param = g_runtime.model.parameters[static_cast<std::size_t>(idx)].param;
-                            if (!std::isfinite(kv.second)) {
-                                if (should_log("plugin.invalid.target.nan." + kv.first)) {
-                                    SDL_Log("Plugin param ignored: id='%s' target is NaN/Inf", kv.first.c_str());
-                                }
-                                continue;
-                            }
-
-                            const float clamped_target = std::clamp(kv.second, param.spec().min_value, param.spec().max_value);
-                            if (clamped_target != kv.second && should_log("plugin.invalid.target.range." + kv.first)) {
-                                SDL_Log("Plugin param target clamped: id='%s' raw=%f clamped=%f range=[%f,%f]",
-                                        kv.first.c_str(),
-                                        kv.second,
-                                        clamped_target,
-                                        param.spec().min_value,
-                                        param.spec().max_value);
-                            }
-
-                            if (g_runtime.plugin_param_blend_mode == PluginParamBlendMode::Weighted) {
-                                const float mixed = param.target() * (1.0f - w) + clamped_target * w;
-                                param.SetTarget(mixed);
-                            } else {
-                                param.SetTarget(clamped_target);
-                            }
-                        }
-                    }
-
-                    const auto opacity_w_it = out.param_weights.find("window.opacity");
-                    const auto opacity_t_it = out.param_targets.find("window.opacity");
-                    if (opacity_w_it != out.param_weights.end() && opacity_t_it != out.param_targets.end() && g_runtime.window) {
-                        if (!std::isfinite(opacity_w_it->second) || !std::isfinite(opacity_t_it->second)) {
-                            if (should_log("plugin.invalid.window.opacity.nan")) {
-                                SDL_Log("Plugin window.opacity ignored: weight/target is NaN/Inf");
-                            }
-                        } else if (opacity_w_it->second > 0.0f) {
-                            const float opacity = std::clamp(opacity_t_it->second, 0.05f, 1.0f);
-                            if (opacity != opacity_t_it->second && should_log("plugin.invalid.window.opacity.range")) {
-                                SDL_Log("Plugin window.opacity clamped: raw=%f clamped=%f", opacity_t_it->second, opacity);
-                            }
-                            if (!SDL_SetWindowOpacity(g_runtime.window, opacity)) {
-                                SDL_Log("Plugin SetWindowOpacity failed: %s", SDL_GetError());
-                            }
-                        }
-                    }
-
-                    const auto click_w_it = out.param_weights.find("window.click_through");
-                    const auto click_t_it = out.param_targets.find("window.click_through");
-                    if (click_w_it != out.param_weights.end() && click_t_it != out.param_targets.end()) {
-                        if (!std::isfinite(click_w_it->second) || !std::isfinite(click_t_it->second)) {
-                            if (should_log("plugin.invalid.window.click.nan")) {
-                                SDL_Log("Plugin window.click_through ignored: weight/target is NaN/Inf");
-                            }
-                        } else if (click_w_it->second > 0.0f) {
-                            SetClickThrough(click_t_it->second >= 0.5f);
-                        }
-                    }
-
-                    const auto debug_w_it = out.param_weights.find("runtime.show_debug_stats");
-                    const auto debug_t_it = out.param_targets.find("runtime.show_debug_stats");
-                    if (debug_w_it != out.param_weights.end() && debug_t_it != out.param_targets.end()) {
-                        if (!std::isfinite(debug_w_it->second) || !std::isfinite(debug_t_it->second)) {
-                            if (should_log("plugin.invalid.runtime.debug.nan")) {
-                                SDL_Log("Plugin runtime.show_debug_stats ignored: weight/target is NaN/Inf");
-                            }
-                        } else if (debug_w_it->second > 0.0f) {
-                            g_runtime.show_debug_stats = debug_t_it->second >= 0.5f;
-                        }
-                    }
-
-                    const auto manual_w_it = out.param_weights.find("runtime.manual_param_mode");
-                    const auto manual_t_it = out.param_targets.find("runtime.manual_param_mode");
-                    if (manual_w_it != out.param_weights.end() && manual_t_it != out.param_targets.end()) {
-                        if (!std::isfinite(manual_w_it->second) || !std::isfinite(manual_t_it->second)) {
-                            if (should_log("plugin.invalid.runtime.manual.nan")) {
-                                SDL_Log("Plugin runtime.manual_param_mode ignored: weight/target is NaN/Inf");
-                            }
-                        } else if (manual_w_it->second > 0.0f) {
-                            g_runtime.manual_param_mode = manual_t_it->second >= 0.5f;
-                            SyncAnimationChannelState();
-                        }
-                    }
+                    auto apply_ctx = BuildBehaviorApplyContext();
+                    ApplyBehaviorOutput(out, apply_ctx);
                 }
             }
         },
@@ -1119,9 +913,9 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 ImGui::Checkbox("GUI Enabled", &g_runtime.gui_enabled);
 
                 ImGui::SeparatorText("Head Pat Interaction");
-                ImGui::Text("Head Hovering: %s", g_runtime.head_pat_hovering ? "Yes" : "No");
-                ImGui::Text("React TTL: %.3f s", g_runtime.head_pat_react_ttl);
-                const float pat_ratio = std::clamp(g_runtime.head_pat_react_ttl / 0.35f, 0.0f, 1.0f);
+                ImGui::Text("Head Hovering: %s", g_runtime.interaction_state.head_pat_hovering ? "Yes" : "No");
+                ImGui::Text("React TTL: %.3f s", g_runtime.interaction_state.head_pat_react_ttl);
+                const float pat_ratio = std::clamp(g_runtime.interaction_state.head_pat_react_ttl / 0.35f, 0.0f, 1.0f);
                 ImGui::ProgressBar(pat_ratio, ImVec2(-1.0f, 0.0f), "Pat React");
 
                 ImGui::Separator();

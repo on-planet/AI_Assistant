@@ -27,6 +27,7 @@
 #include <filesystem>
 #include <limits>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -877,11 +878,37 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
 
                 BehaviorOutput out{};
                 if (g_runtime.plugin_worker.TryConsumeLatestOutput(out, nullptr)) {
+                    static std::unordered_map<std::string, Uint64> s_last_log_ms;
+                    const Uint64 now_ms = SDL_GetTicks();
+                    auto should_log = [&](const std::string &key) {
+                        Uint64 &last = s_last_log_ms[key];
+                        if (now_ms - last >= 2000) {
+                            last = now_ms;
+                            return true;
+                        }
+                        return false;
+                    };
+
                     if (g_runtime.model_loaded && !g_runtime.model.parameters.empty()) {
                         for (const auto &kv : out.param_targets) {
                             const auto w_it = out.param_weights.find(kv.first);
-                            if (w_it == out.param_weights.end() || w_it->second <= 0.0f) {
+                            if (w_it == out.param_weights.end()) {
                                 continue;
+                            }
+
+                            if (!std::isfinite(w_it->second)) {
+                                if (should_log("plugin.invalid.weight.nan." + kv.first)) {
+                                    SDL_Log("Plugin param ignored: id='%s' weight is NaN/Inf", kv.first.c_str());
+                                }
+                                continue;
+                            }
+
+                            const float w = std::clamp(w_it->second, 0.0f, 1.0f);
+                            if (w <= 0.0f) {
+                                continue;
+                            }
+                            if (w != w_it->second && should_log("plugin.invalid.weight.range." + kv.first)) {
+                                SDL_Log("Plugin param weight clamped: id='%s' raw=%f clamped=%f", kv.first.c_str(), w_it->second, w);
                             }
 
                             const auto p_it = g_runtime.model.param_index.find(kv.first);
@@ -895,46 +922,85 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                             }
 
                             auto &param = g_runtime.model.parameters[static_cast<std::size_t>(idx)].param;
+                            if (!std::isfinite(kv.second)) {
+                                if (should_log("plugin.invalid.target.nan." + kv.first)) {
+                                    SDL_Log("Plugin param ignored: id='%s' target is NaN/Inf", kv.first.c_str());
+                                }
+                                continue;
+                            }
+
+                            const float clamped_target = std::clamp(kv.second, param.spec().min_value, param.spec().max_value);
+                            if (clamped_target != kv.second && should_log("plugin.invalid.target.range." + kv.first)) {
+                                SDL_Log("Plugin param target clamped: id='%s' raw=%f clamped=%f range=[%f,%f]",
+                                        kv.first.c_str(),
+                                        kv.second,
+                                        clamped_target,
+                                        param.spec().min_value,
+                                        param.spec().max_value);
+                            }
+
                             if (g_runtime.plugin_param_blend_mode == PluginParamBlendMode::Weighted) {
-                                const float w = std::clamp(w_it->second, 0.0f, 1.0f);
-                                const float mixed = param.target() * (1.0f - w) + kv.second * w;
+                                const float mixed = param.target() * (1.0f - w) + clamped_target * w;
                                 param.SetTarget(mixed);
                             } else {
-                                param.SetTarget(kv.second);
+                                param.SetTarget(clamped_target);
                             }
                         }
                     }
 
                     const auto opacity_w_it = out.param_weights.find("window.opacity");
                     const auto opacity_t_it = out.param_targets.find("window.opacity");
-                    if (opacity_w_it != out.param_weights.end() && opacity_t_it != out.param_targets.end() &&
-                        opacity_w_it->second > 0.0f && g_runtime.window) {
-                        const float opacity = std::clamp(opacity_t_it->second, 0.05f, 1.0f);
-                        if (!SDL_SetWindowOpacity(g_runtime.window, opacity)) {
-                            SDL_Log("Plugin SetWindowOpacity failed: %s", SDL_GetError());
+                    if (opacity_w_it != out.param_weights.end() && opacity_t_it != out.param_targets.end() && g_runtime.window) {
+                        if (!std::isfinite(opacity_w_it->second) || !std::isfinite(opacity_t_it->second)) {
+                            if (should_log("plugin.invalid.window.opacity.nan")) {
+                                SDL_Log("Plugin window.opacity ignored: weight/target is NaN/Inf");
+                            }
+                        } else if (opacity_w_it->second > 0.0f) {
+                            const float opacity = std::clamp(opacity_t_it->second, 0.05f, 1.0f);
+                            if (opacity != opacity_t_it->second && should_log("plugin.invalid.window.opacity.range")) {
+                                SDL_Log("Plugin window.opacity clamped: raw=%f clamped=%f", opacity_t_it->second, opacity);
+                            }
+                            if (!SDL_SetWindowOpacity(g_runtime.window, opacity)) {
+                                SDL_Log("Plugin SetWindowOpacity failed: %s", SDL_GetError());
+                            }
                         }
                     }
 
                     const auto click_w_it = out.param_weights.find("window.click_through");
                     const auto click_t_it = out.param_targets.find("window.click_through");
-                    if (click_w_it != out.param_weights.end() && click_t_it != out.param_targets.end() &&
-                        click_w_it->second > 0.0f) {
-                        SetClickThrough(click_t_it->second >= 0.5f);
+                    if (click_w_it != out.param_weights.end() && click_t_it != out.param_targets.end()) {
+                        if (!std::isfinite(click_w_it->second) || !std::isfinite(click_t_it->second)) {
+                            if (should_log("plugin.invalid.window.click.nan")) {
+                                SDL_Log("Plugin window.click_through ignored: weight/target is NaN/Inf");
+                            }
+                        } else if (click_w_it->second > 0.0f) {
+                            SetClickThrough(click_t_it->second >= 0.5f);
+                        }
                     }
 
                     const auto debug_w_it = out.param_weights.find("runtime.show_debug_stats");
                     const auto debug_t_it = out.param_targets.find("runtime.show_debug_stats");
-                    if (debug_w_it != out.param_weights.end() && debug_t_it != out.param_targets.end() &&
-                        debug_w_it->second > 0.0f) {
-                        g_runtime.show_debug_stats = debug_t_it->second >= 0.5f;
+                    if (debug_w_it != out.param_weights.end() && debug_t_it != out.param_targets.end()) {
+                        if (!std::isfinite(debug_w_it->second) || !std::isfinite(debug_t_it->second)) {
+                            if (should_log("plugin.invalid.runtime.debug.nan")) {
+                                SDL_Log("Plugin runtime.show_debug_stats ignored: weight/target is NaN/Inf");
+                            }
+                        } else if (debug_w_it->second > 0.0f) {
+                            g_runtime.show_debug_stats = debug_t_it->second >= 0.5f;
+                        }
                     }
 
                     const auto manual_w_it = out.param_weights.find("runtime.manual_param_mode");
                     const auto manual_t_it = out.param_targets.find("runtime.manual_param_mode");
-                    if (manual_w_it != out.param_weights.end() && manual_t_it != out.param_targets.end() &&
-                        manual_w_it->second > 0.0f) {
-                        g_runtime.manual_param_mode = manual_t_it->second >= 0.5f;
-                        SyncAnimationChannelState();
+                    if (manual_w_it != out.param_weights.end() && manual_t_it != out.param_targets.end()) {
+                        if (!std::isfinite(manual_w_it->second) || !std::isfinite(manual_t_it->second)) {
+                            if (should_log("plugin.invalid.runtime.manual.nan")) {
+                                SDL_Log("Plugin runtime.manual_param_mode ignored: weight/target is NaN/Inf");
+                            }
+                        } else if (manual_w_it->second > 0.0f) {
+                            g_runtime.manual_param_mode = manual_t_it->second >= 0.5f;
+                            SyncAnimationChannelState();
+                        }
                     }
                 }
             }

@@ -16,6 +16,12 @@ add_executable(AI_assistant WIN32
     src/k2d/lifecycle/app.cpp
     src/k2d/lifecycle/app_lifecycle.cpp
     src/k2d/lifecycle/plugin_lifecycle.cpp
+    external/imgui/imgui.cpp
+    external/imgui/imgui_draw.cpp
+    external/imgui/imgui_tables.cpp
+    external/imgui/imgui_widgets.cpp
+    external/imgui/backends/imgui_impl_sdl3.cpp
+    external/imgui/backends/imgui_impl_sdlrenderer3.cpp
     src/k2d/core/mesh_generator.cpp
     src/k2d/core/params.cpp
     src/k2d/core/deform.cpp
@@ -39,6 +45,8 @@ target_link_libraries(AI_assistant PRIVATE SDL3::SDL3)
 target_include_directories(AI_assistant PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/external
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
 )
 
 

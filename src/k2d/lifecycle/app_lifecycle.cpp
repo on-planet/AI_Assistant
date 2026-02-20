@@ -850,6 +850,10 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 k2d::ApplyWindowShape(g_runtime.window, g_runtime.window_w, g_runtime.window_h, g_runtime.interactive_rect, g_runtime.click_through);
             } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE) {
                 g_runtime.running = false;
+            } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F1) {
+                // 强制恢复可见调试 UI
+                g_runtime.gui_enabled = true;
+                SetEditorStatus("GUI ON", 1.0f);
             } else {
                 const auto non_edit_ctx = k2d::AppInputControllerContext{
                     .running = &g_runtime.running,

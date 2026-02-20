@@ -25,6 +25,7 @@
 #include "k2d/lifecycle/behavior_applier.h"
 #include "k2d/lifecycle/model_reload_service.h"
 #include "k2d/lifecycle/reminder_service.h"
+#include "k2d/capture/screen_capture.h"
 
 #include <algorithm>
 #include <cmath>
@@ -155,6 +156,11 @@ struct AppRuntime {
     int reminder_after_min = 10;
     std::vector<ReminderItem> reminder_upcoming;
     std::string reminder_last_error;
+
+    ScreenCapture screen_capture;
+    bool screen_capture_ready = false;
+    float screen_capture_poll_accum_sec = 0.0f;
+    std::string screen_capture_last_error;
 };
 
 AppRuntime g_runtime;
@@ -959,6 +965,18 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                     }
                 }
             }
+
+            if (g_runtime.screen_capture_ready) {
+                g_runtime.screen_capture_poll_accum_sec += std::max(0.0f, dt);
+                if (g_runtime.screen_capture_poll_accum_sec >= 0.25f) {
+                    g_runtime.screen_capture_poll_accum_sec = 0.0f;
+                    ScreenCaptureFrame frame{};
+                    std::string cap_err;
+                    if (!g_runtime.screen_capture.Capture(frame, &cap_err) && !cap_err.empty()) {
+                        g_runtime.screen_capture_last_error = cap_err;
+                    }
+                }
+            }
         },
         .on_render = []() {
             ImGui_ImplSDLRenderer3_NewFrame();
@@ -1008,6 +1026,10 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 ImGui::ProgressBar(pat_ratio, ImVec2(-1.0f, 0.0f), "Pat React");
 
                 ImGui::Separator();
+                ImGui::Text("Capture: %s", g_runtime.screen_capture_ready ? "DXGI ready" : "not ready");
+                if (!g_runtime.screen_capture_last_error.empty()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Capture Error: %s", g_runtime.screen_capture_last_error.c_str());
+                }
                 if (ImGui::Button("Close Program")) {
                     g_runtime.running = false;
                 }
@@ -1254,6 +1276,18 @@ bool AppLifecycleBootstrap(AppLifecycleContext &ctx) {
         }
     }
 
+    {
+        std::string capture_err;
+        g_runtime.screen_capture_ready = g_runtime.screen_capture.Init(&capture_err);
+        if (!g_runtime.screen_capture_ready) {
+            g_runtime.screen_capture_last_error = capture_err;
+            SDL_Log("Screen capture init failed: %s", capture_err.c_str());
+        } else {
+            g_runtime.screen_capture_last_error.clear();
+            SDL_Log("Screen capture init ok: DXGI Desktop Duplication");
+        }
+    }
+
     g_runtime.demo_texture = bootstrap.demo_texture;
     g_runtime.demo_texture_w = bootstrap.demo_texture_w;
     g_runtime.demo_texture_h = bootstrap.demo_texture_h;
@@ -1316,6 +1350,9 @@ void AppLifecycleTeardown(AppLifecycleContext &ctx) {
         g_runtime.inference_adapter.reset();
     }
     g_runtime.plugin_ready = false;
+
+    g_runtime.screen_capture.Shutdown();
+    g_runtime.screen_capture_ready = false;
 
     if (g_runtime.tray) {
         SDL_DestroyTray(g_runtime.tray);

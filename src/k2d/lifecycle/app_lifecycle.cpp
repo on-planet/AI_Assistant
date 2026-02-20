@@ -877,30 +877,54 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 BehaviorOutput out{};
                 if (g_runtime.plugin_worker.TryConsumeLatestOutput(out, nullptr)) {
                     if (g_runtime.model_loaded && !g_runtime.model.parameters.empty()) {
-                        const std::size_t n = std::min<std::size_t>(16, g_runtime.model.parameters.size());
-                        for (std::size_t i = 0; i < n; ++i) {
-                            if (out.param_weights[i] <= 0.0f) {
+                        for (const auto &kv : out.param_targets) {
+                            const auto w_it = out.param_weights.find(kv.first);
+                            if (w_it == out.param_weights.end() || w_it->second <= 0.0f) {
                                 continue;
                             }
-                            g_runtime.model.parameters[i].param.SetTarget(out.param_targets[i]);
+
+                            const auto p_it = g_runtime.model.param_index.find(kv.first);
+                            if (p_it == g_runtime.model.param_index.end()) {
+                                continue;
+                            }
+
+                            const int idx = p_it->second;
+                            if (idx < 0 || idx >= static_cast<int>(g_runtime.model.parameters.size())) {
+                                continue;
+                            }
+                            g_runtime.model.parameters[static_cast<std::size_t>(idx)].param.SetTarget(kv.second);
                         }
                     }
 
-                    const float opacity = std::clamp(out.param_targets[0], 0.05f, 1.0f);
-                    if (out.param_weights[0] > 0.0f && g_runtime.window) {
+                    const auto opacity_w_it = out.param_weights.find("window.opacity");
+                    const auto opacity_t_it = out.param_targets.find("window.opacity");
+                    if (opacity_w_it != out.param_weights.end() && opacity_t_it != out.param_targets.end() &&
+                        opacity_w_it->second > 0.0f && g_runtime.window) {
+                        const float opacity = std::clamp(opacity_t_it->second, 0.05f, 1.0f);
                         if (!SDL_SetWindowOpacity(g_runtime.window, opacity)) {
                             SDL_Log("Plugin SetWindowOpacity failed: %s", SDL_GetError());
                         }
                     }
 
-                    if (out.param_weights[1] > 0.0f) {
-                        SetClickThrough(out.param_targets[1] >= 0.5f);
+                    const auto click_w_it = out.param_weights.find("window.click_through");
+                    const auto click_t_it = out.param_targets.find("window.click_through");
+                    if (click_w_it != out.param_weights.end() && click_t_it != out.param_targets.end() &&
+                        click_w_it->second > 0.0f) {
+                        SetClickThrough(click_t_it->second >= 0.5f);
                     }
-                    if (out.param_weights[2] > 0.0f) {
-                        g_runtime.show_debug_stats = out.param_targets[2] >= 0.5f;
+
+                    const auto debug_w_it = out.param_weights.find("runtime.show_debug_stats");
+                    const auto debug_t_it = out.param_targets.find("runtime.show_debug_stats");
+                    if (debug_w_it != out.param_weights.end() && debug_t_it != out.param_targets.end() &&
+                        debug_w_it->second > 0.0f) {
+                        g_runtime.show_debug_stats = debug_t_it->second >= 0.5f;
                     }
-                    if (out.param_weights[3] > 0.0f) {
-                        g_runtime.manual_param_mode = out.param_targets[3] >= 0.5f;
+
+                    const auto manual_w_it = out.param_weights.find("runtime.manual_param_mode");
+                    const auto manual_t_it = out.param_targets.find("runtime.manual_param_mode");
+                    if (manual_w_it != out.param_weights.end() && manual_t_it != out.param_targets.end() &&
+                        manual_w_it->second > 0.0f) {
+                        g_runtime.manual_param_mode = manual_t_it->second >= 0.5f;
                         SyncAnimationChannelState();
                     }
                 }

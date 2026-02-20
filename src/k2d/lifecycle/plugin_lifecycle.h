@@ -1,8 +1,9 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
-#include <cstdint>
+#include <unordered_map>
 
 namespace k2d {
 
@@ -25,8 +26,8 @@ struct PerceptionInput {
 };
 
 struct BehaviorOutput {
-    float param_targets[16]{};
-    float param_weights[16]{};
+    std::unordered_map<std::string, float> param_targets;
+    std::unordered_map<std::string, float> param_weights;
     bool trigger_blink = false;
     bool trigger_idle_shift = false;
 };

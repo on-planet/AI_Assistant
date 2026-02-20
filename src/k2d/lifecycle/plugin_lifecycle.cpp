@@ -62,17 +62,17 @@ public:
 
         out = BehaviorOutput{};
         const float pulse = 0.1f * SDL_sinf(static_cast<float>(elapsed_time_sec_) * 1.2f);
-        out.param_targets[0] = std::clamp(base_opacity_ + pulse, 0.05f, 1.0f);
-        out.param_weights[0] = 1.0f;
+        out.param_targets["window.opacity"] = std::clamp(base_opacity_ + pulse, 0.05f, 1.0f);
+        out.param_weights["window.opacity"] = 1.0f;
 
-        out.param_targets[1] = base_click_through_ ? 1.0f : 0.0f;
-        out.param_weights[1] = 1.0f;
+        out.param_targets["window.click_through"] = base_click_through_ ? 1.0f : 0.0f;
+        out.param_weights["window.click_through"] = 1.0f;
 
-        out.param_targets[2] = base_show_debug_stats_ ? 1.0f : 0.0f;
-        out.param_weights[2] = 1.0f;
+        out.param_targets["runtime.show_debug_stats"] = base_show_debug_stats_ ? 1.0f : 0.0f;
+        out.param_weights["runtime.show_debug_stats"] = 1.0f;
 
-        out.param_targets[3] = base_manual_param_mode_ ? 1.0f : 0.0f;
-        out.param_weights[3] = 1.0f;
+        out.param_targets["runtime.manual_param_mode"] = base_manual_param_mode_ ? 1.0f : 0.0f;
+        out.param_weights["runtime.manual_param_mode"] = 1.0f;
 
         out.trigger_idle_shift = (static_cast<int>(elapsed_time_sec_) % 4) == 0;
         out.trigger_blink = (in.user_presence > 0.8f);

@@ -142,7 +142,6 @@ void RenderAppFrame(const AppRenderContext &ctx) {
         SDL_RenderTexture(ctx.renderer, ctx.demo_texture, nullptr, &dest_rect);
     }
 
-    RenderDebugStats(ctx);
     RenderPartEditorOverlay(ctx);
     RenderEditorStatus(ctx);
 }

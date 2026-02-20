@@ -116,7 +116,7 @@ void ToggleWindowVisibility(SDL_Window *window, bool *window_visible) {
 
 SDL_HitTestResult WindowHitTest(bool click_through, const SDL_Rect &interactive_rect, const SDL_Point *area) {
     if (!area) {
-        return SDL_HITTEST_DRAGGABLE;
+        return SDL_HITTEST_NORMAL;
     }
 
     if (click_through) {
@@ -143,7 +143,7 @@ SDL_HitTestResult WindowHitTest(bool click_through, const SDL_Rect &interactive_
     if (top) return SDL_HITTEST_RESIZE_TOP;
     if (bottom) return SDL_HITTEST_RESIZE_BOTTOM;
 
-    return SDL_HITTEST_DRAGGABLE;
+    return SDL_HITTEST_NORMAL;
 }
 
 }  // namespace k2d

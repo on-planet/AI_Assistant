@@ -135,7 +135,7 @@ struct AppRuntime {
     float debug_fps_accum_sec = 0.0f;
     int debug_fps_accum_frames = 0;
 
-    bool gui_enabled = false;
+    bool gui_enabled = true;
 
     // 鼠标摸头交互状态
     InteractionControllerState interaction_state{};
@@ -939,7 +939,29 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
 
             RenderFrame();
 
+            if (g_runtime.show_debug_stats) {
+                ImGui::SetNextWindowBgAlpha(0.35f);
+                ImGuiWindowFlags fps_flags = ImGuiWindowFlags_NoDecoration |
+                                             ImGuiWindowFlags_AlwaysAutoResize |
+                                             ImGuiWindowFlags_NoSavedSettings |
+                                             ImGuiWindowFlags_NoFocusOnAppearing |
+                                             ImGuiWindowFlags_NoNav;
+                ImGui::SetNextWindowPos(ImVec2(12.0f, 12.0f), ImGuiCond_Always);
+                if (ImGui::Begin("FPS Overlay", nullptr, fps_flags)) {
+                    ImGui::Text("FPS: %.1f", g_runtime.debug_fps);
+                    ImGui::Text("Frame: %.2f ms", g_runtime.debug_frame_ms);
+                    ImGui::Text("Parts: %d/%d",
+                                g_runtime.model.debug_stats.drawn_part_count,
+                                g_runtime.model.debug_stats.part_count);
+                    ImGui::Text("Verts: %d  Tris: %d",
+                                g_runtime.model.debug_stats.vertex_count,
+                                g_runtime.model.debug_stats.triangle_count);
+                }
+                ImGui::End();
+            }
+
             if (g_runtime.gui_enabled) {
+                ImGui::SetNextWindowPos(ImVec2(12.0f, 120.0f), ImGuiCond_FirstUseEver);
                 ImGui::Begin("Runtime Debug");
                 ImGui::Text("FPS: %.2f", g_runtime.debug_fps);
                 ImGui::Text("Frame: %.2f ms", g_runtime.debug_frame_ms);

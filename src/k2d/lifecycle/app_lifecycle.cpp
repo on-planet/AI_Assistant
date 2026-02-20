@@ -746,6 +746,7 @@ k2d::EditorInputCallbacks BuildEditorInputCallbacks() {
     const auto ctx = k2d::AppInputControllerContext{
         .running = &g_runtime.running,
         .show_debug_stats = &g_runtime.show_debug_stats,
+        .gui_enabled = &g_runtime.gui_enabled,
         .edit_mode = &g_runtime.edit_mode,
         .manual_param_mode = &g_runtime.manual_param_mode,
         .toggle_edit_mode = []() {
@@ -855,6 +856,7 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 const auto non_edit_ctx = k2d::AppInputControllerContext{
                     .running = &g_runtime.running,
                     .show_debug_stats = &g_runtime.show_debug_stats,
+                    .gui_enabled = &g_runtime.gui_enabled,
                     .edit_mode = &g_runtime.edit_mode,
                     .manual_param_mode = &g_runtime.manual_param_mode,
                     .toggle_edit_mode = []() {
@@ -970,6 +972,8 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 ImGui::Checkbox("Show Debug Stats", &g_runtime.show_debug_stats);
                 ImGui::Checkbox("Manual Param Mode", &g_runtime.manual_param_mode);
                 ImGui::Checkbox("GUI Enabled", &g_runtime.gui_enabled);
+                ImGui::Checkbox("Hair Spring", &g_runtime.model.enable_hair_spring);
+                ImGui::Checkbox("Simple Mask", &g_runtime.model.enable_simple_mask);
 
                 ImGui::SeparatorText("Head Pat Interaction");
                 ImGui::Text("Head Hovering: %s", g_runtime.interaction_state.head_pat_hovering ? "Yes" : "No");

@@ -11,6 +11,7 @@ namespace k2d {
 struct AppInputControllerContext {
     bool *running = nullptr;
     bool *show_debug_stats = nullptr;
+    bool *gui_enabled = nullptr;
     bool *edit_mode = nullptr;
     bool *manual_param_mode = nullptr;
 

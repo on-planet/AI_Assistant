@@ -601,6 +601,37 @@ void RenderModelRuntime(SDL_Renderer *renderer, const ModelRuntime *model) {
     std::vector<SDL_Vertex> vertices;
     std::vector<int> indices;
 
+    SDL_Rect head_clip{0, 0, 0, 0};
+    bool head_clip_valid = false;
+    if (model->enable_simple_mask) {
+        auto head_it = model->part_index.find("HeadBase");
+        if (head_it != model->part_index.end()) {
+            const int idx = head_it->second;
+            if (idx >= 0 && idx < static_cast<int>(model->parts.size())) {
+                const ModelPart &head = model->parts[static_cast<std::size_t>(idx)];
+                if (head.deformed_positions.size() >= 2) {
+                    float min_x = head.deformed_positions[0];
+                    float min_y = head.deformed_positions[1];
+                    float max_x = min_x;
+                    float max_y = min_y;
+                    for (std::size_t i = 0; i + 1 < head.deformed_positions.size(); i += 2) {
+                        const float x = head.deformed_positions[i];
+                        const float y = head.deformed_positions[i + 1];
+                        min_x = std::min(min_x, x);
+                        min_y = std::min(min_y, y);
+                        max_x = std::max(max_x, x);
+                        max_y = std::max(max_y, y);
+                    }
+                    head_clip.x = static_cast<int>(std::floor(min_x));
+                    head_clip.y = static_cast<int>(std::floor(min_y));
+                    head_clip.w = std::max(1, static_cast<int>(std::ceil(max_x - min_x)));
+                    head_clip.h = std::max(1, static_cast<int>(std::ceil(max_y - min_y)));
+                    head_clip_valid = true;
+                }
+            }
+        }
+    }
+
     for (int part_idx : model->draw_order_indices) {
         if (part_idx < 0 || part_idx >= static_cast<int>(model->parts.size())) continue;
         const ModelPart &part = model->parts[static_cast<std::size_t>(part_idx)];
@@ -629,6 +660,20 @@ void RenderModelRuntime(SDL_Renderer *renderer, const ModelRuntime *model) {
             indices[i] = static_cast<int>(part.mesh.indices[i]);
         }
 
+        bool use_clip = false;
+        if (model->enable_simple_mask && head_clip_valid) {
+            const bool face_like = part.id.find("Face") != std::string::npos ||
+                                   part.id.find("Eye") != std::string::npos ||
+                                   part.id.find("Brow") != std::string::npos ||
+                                   part.id.find("Mouth") != std::string::npos;
+            use_clip = face_like && part.id != "HeadBase";
+        }
+        if (use_clip) {
+            SDL_SetRenderClipRect(renderer, &head_clip);
+        } else {
+            SDL_SetRenderClipRect(renderer, nullptr);
+        }
+
         SDL_RenderGeometry(renderer,
                            part.texture,
                            vertices.data(),
@@ -641,6 +686,8 @@ void RenderModelRuntime(SDL_Renderer *renderer, const ModelRuntime *model) {
         model->debug_stats.index_count += static_cast<int>(indices.size());
         model->debug_stats.triangle_count += static_cast<int>(indices.size() / 3);
     }
+
+    SDL_SetRenderClipRect(renderer, nullptr);
 }
 
 bool SaveModelRuntimeJson(const ModelRuntime &model,

@@ -152,6 +152,8 @@ bool UpdateDirtyCachesAndCheckChanged(ModelRuntime *model) {
 void ResolveLocalPartStates(ModelRuntime *model, float time_sec, float dt_sec) {
     if (!model) return;
 
+    const float dt = std::clamp(dt_sec, 0.0f, 0.05f);
+
     for (ModelPart &part : model->parts) {
         float pos_x = part.base_pos_x;
         float pos_y = part.base_pos_y;
@@ -199,6 +201,71 @@ void ResolveLocalPartStates(ModelRuntime *model, float time_sec, float dt_sec) {
                     std::cos(time_sec * 1.2f + nx * 2.2f - ny * 1.3f) * 6.0f * falloff;
             }
         }
+    }
+
+    if (model->spring_offset_x.size() != model->parts.size()) {
+        model->spring_offset_x.assign(model->parts.size(), 0.0f);
+        model->spring_offset_y.assign(model->parts.size(), 0.0f);
+        model->spring_vel_x.assign(model->parts.size(), 0.0f);
+        model->spring_vel_y.assign(model->parts.size(), 0.0f);
+        model->spring_initialized = false;
+    }
+
+    auto head_it = model->part_index.find("HeadBase");
+    if (head_it == model->part_index.end()) {
+        return;
+    }
+    const int head_idx = head_it->second;
+    if (head_idx < 0 || head_idx >= static_cast<int>(model->parts.size())) {
+        return;
+    }
+
+    const float head_x = model->parts[static_cast<std::size_t>(head_idx)].runtime_pos_x;
+    const float head_y = model->parts[static_cast<std::size_t>(head_idx)].runtime_pos_y;
+
+    if (!model->spring_initialized) {
+        model->spring_head_prev_x = head_x;
+        model->spring_head_prev_y = head_y;
+        model->spring_initialized = true;
+        return;
+    }
+
+    const float head_dx = head_x - model->spring_head_prev_x;
+    const float head_dy = head_y - model->spring_head_prev_y;
+    model->spring_head_prev_x = head_x;
+    model->spring_head_prev_y = head_y;
+
+    auto has_tag = [](const std::string &id, const char *tag) {
+        return id.find(tag) != std::string::npos;
+    };
+
+    for (std::size_t i = 0; i < model->parts.size(); ++i) {
+        ModelPart &part = model->parts[i];
+        const bool spring_target =
+            part.parent_index == head_idx ||
+            has_tag(part.id, "Hair") || has_tag(part.id, "hair") ||
+            has_tag(part.id, "Bang") || has_tag(part.id, "bang");
+        if (!spring_target) {
+            continue;
+        }
+
+        const float target_x = -head_dx * 0.35f;
+        const float target_y = -head_dy * 0.35f;
+        const float stiffness = 18.0f;
+        const float damping = 6.5f;
+
+        float &ox = model->spring_offset_x[i];
+        float &oy = model->spring_offset_y[i];
+        float &vx = model->spring_vel_x[i];
+        float &vy = model->spring_vel_y[i];
+
+        vx += (stiffness * (target_x - ox) - damping * vx) * dt;
+        vy += (stiffness * (target_y - oy) - damping * vy) * dt;
+        ox += vx * dt;
+        oy += vy * dt;
+
+        part.runtime_pos_x += ox;
+        part.runtime_pos_y += oy;
     }
 }
 

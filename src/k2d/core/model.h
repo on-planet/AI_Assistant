@@ -144,6 +144,18 @@ struct ModelRuntime {
     // 用于“参数和基础变换都未变化时跳过重算”。
     std::vector<float> cached_param_values;
     std::vector<float> cached_part_base_signature;  // 每个 part 7 个值：pos/rot/scale/pivot/opacity
+
+    // 最小可用弹簧：用于“头部移动 -> 发丝/挂件延迟摆动”。
+    bool spring_initialized = false;
+    float spring_head_prev_x = 0.0f;
+    float spring_head_prev_y = 0.0f;
+    std::vector<float> spring_offset_x;
+    std::vector<float> spring_offset_y;
+    std::vector<float> spring_vel_x;
+    std::vector<float> spring_vel_y;
+
+    bool enable_hair_spring = true;
+    bool enable_simple_mask = true;
 };
 
 bool LoadModelRuntime(SDL_Renderer *renderer,

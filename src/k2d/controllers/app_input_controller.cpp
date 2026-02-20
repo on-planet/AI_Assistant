@@ -10,8 +10,8 @@ void HandleNonEditKeyDown(const AppInputControllerContext &ctx, SDL_Keycode key,
             }
             break;
         case SDLK_F1:
-            if (ctx.show_debug_stats) {
-                *ctx.show_debug_stats = !*ctx.show_debug_stats;
+            if (ctx.gui_enabled) {
+                *ctx.gui_enabled = !*ctx.gui_enabled;
             }
             break;
         case SDLK_E:
@@ -89,8 +89,8 @@ EditorInputCallbacks BuildEditorInputCallbacks(const AppInputControllerContext &
                 return;
             }
             if (key == SDLK_F1) {
-                if (ctx.show_debug_stats) {
-                    *ctx.show_debug_stats = !*ctx.show_debug_stats;
+                if (ctx.gui_enabled) {
+                    *ctx.gui_enabled = !*ctx.gui_enabled;
                 }
                 return;
             }

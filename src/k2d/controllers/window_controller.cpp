@@ -125,6 +125,24 @@ SDL_HitTestResult WindowHitTest(bool click_through, const SDL_Rect &interactive_
         return inside ? SDL_HITTEST_DRAGGABLE : SDL_HITTEST_NORMAL;
     }
 
+    const int border = 8;
+    const int w = interactive_rect.x + interactive_rect.w;
+    const int h = interactive_rect.y + interactive_rect.h;
+
+    const bool left = area->x < border;
+    const bool right = area->x >= (w - border);
+    const bool top = area->y < border;
+    const bool bottom = area->y >= (h - border);
+
+    if (top && left) return SDL_HITTEST_RESIZE_TOPLEFT;
+    if (top && right) return SDL_HITTEST_RESIZE_TOPRIGHT;
+    if (bottom && left) return SDL_HITTEST_RESIZE_BOTTOMLEFT;
+    if (bottom && right) return SDL_HITTEST_RESIZE_BOTTOMRIGHT;
+    if (left) return SDL_HITTEST_RESIZE_LEFT;
+    if (right) return SDL_HITTEST_RESIZE_RIGHT;
+    if (top) return SDL_HITTEST_RESIZE_TOP;
+    if (bottom) return SDL_HITTEST_RESIZE_BOTTOM;
+
     return SDL_HITTEST_DRAGGABLE;
 }
 

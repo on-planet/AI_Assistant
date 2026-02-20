@@ -135,7 +135,7 @@ struct AppRuntime {
     float debug_fps_accum_sec = 0.0f;
     int debug_fps_accum_frames = 0;
 
-    bool gui_enabled = true;
+    bool gui_enabled = false;
 
     // 鼠标摸头交互状态
     InteractionControllerState interaction_state{};
@@ -739,6 +739,7 @@ void RenderFrame() {
         },
     });
 }
+
 }  // namespace
 
 k2d::EditorInputCallbacks BuildEditorInputCallbacks() {
@@ -850,10 +851,6 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 k2d::ApplyWindowShape(g_runtime.window, g_runtime.window_w, g_runtime.window_h, g_runtime.interactive_rect, g_runtime.click_through);
             } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE) {
                 g_runtime.running = false;
-            } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F1) {
-                // 强制恢复可见调试 UI
-                g_runtime.gui_enabled = true;
-                SetEditorStatus("GUI ON", 1.0f);
             } else {
                 const auto non_edit_ctx = k2d::AppInputControllerContext{
                     .running = &g_runtime.running,
@@ -936,6 +933,8 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
             }
         },
         .on_render = []() {
+            RenderFrame();
+
             ImGui_ImplSDLRenderer3_NewFrame();
             ImGui_ImplSDL3_NewFrame();
             ImGui::NewFrame();
@@ -1000,8 +999,6 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 ImGui::End();
             }
 
-            RenderFrame();
-
             ImGui::Render();
             ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), g_runtime.renderer);
         },
@@ -1022,8 +1019,7 @@ bool AppLifecycleInit(AppLifecycleContext &ctx) {
         return false;
     }
 
-    const SDL_WindowFlags flags = SDL_WINDOW_TRANSPARENT | SDL_WINDOW_BORDERLESS |
-                                  SDL_WINDOW_ALWAYS_ON_TOP | SDL_WINDOW_UTILITY;
+    const SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE;
 
     const AppRuntimeConfig runtime_cfg = LoadRuntimeConfig();
 
@@ -1048,7 +1044,7 @@ bool AppLifecycleInit(AppLifecycleContext &ctx) {
         return false;
     }
 
-    if (!SDL_SetWindowOpacity(g_runtime.window, runtime_cfg.window_opacity)) {
+    if (!SDL_SetWindowOpacity(g_runtime.window, 1.0f)) {
         SDL_Log("SDL_SetWindowOpacity failed: %s", SDL_GetError());
     }
 
@@ -1070,6 +1066,9 @@ bool AppLifecycleInit(AppLifecycleContext &ctx) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
+    ImGuiStyle &style = ImGui::GetStyle();
+    style.Colors[ImGuiCol_Text] = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.08f, 0.08f, 0.08f, 1.0f);
 
     if (!ImGui_ImplSDL3_InitForSDLRenderer(g_runtime.window, g_runtime.renderer)) {
         SDL_Log("ImGui_ImplSDL3_InitForSDLRenderer failed");
@@ -1116,7 +1115,7 @@ bool AppLifecycleBootstrap(AppLifecycleContext &ctx) {
         plugin_cfg.show_debug_stats = g_runtime.show_debug_stats;
         plugin_cfg.manual_param_mode = g_runtime.manual_param_mode;
         plugin_cfg.click_through = g_runtime.click_through;
-        plugin_cfg.window_opacity = bootstrap.runtime_config.window_opacity;
+        plugin_cfg.window_opacity = 1.0f;
 
         PluginHostCallbacks host{};
         host.log = [](void *, const char *msg) {

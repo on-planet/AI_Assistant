@@ -13,6 +13,8 @@ void RenderPartEditorOverlay(const AppRenderContext &ctx) {
         return;
     }
 
+    SDL_SetRenderDrawColor(ctx.renderer, 255, 255, 255, 255);
+
     if (ctx.ensure_selected_part_index_valid) {
         ctx.ensure_selected_part_index_valid();
     }
@@ -62,13 +64,16 @@ void RenderEditorStatus(const AppRenderContext &ctx) {
         return;
     }
 
+    SDL_SetRenderDrawColor(ctx.renderer, 255, 255, 255, 255);
     SDL_RenderDebugText(ctx.renderer, 12.0f, static_cast<float>(ctx.window_h - 24), ctx.editor_status);
 }
 
 void RenderDebugStats(const AppRenderContext &ctx) {
-    if (!ctx.renderer || !ctx.model || !ctx.show_debug_stats) {
+    if (!ctx.renderer || !ctx.model) {
         return;
     }
+
+    SDL_SetRenderDrawColor(ctx.renderer, 255, 255, 255, 255);
 
     char line1[128]{};
     char line2[128]{};

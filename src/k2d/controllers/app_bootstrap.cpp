@@ -21,6 +21,7 @@ AppRuntimeConfig BuildSafeRuntimeConfig() {
     cfg.show_debug_stats = true;
     cfg.manual_param_mode = false;
     cfg.dev_hot_reload_enabled = true;
+    cfg.plugin_param_blend_mode = PluginParamBlendMode::Override;
 
     cfg.default_model_candidates = {
         "assets/model_01/model.json",
@@ -84,6 +85,15 @@ AppRuntimeConfig LoadRuntimeConfigImpl() {
     if (const JsonValue *debug = root.get("debug"); debug && debug->isObject()) {
         cfg.show_debug_stats = debug->getBool("showStats").value_or(cfg.show_debug_stats);
         cfg.dev_hot_reload_enabled = debug->getBool("hotReload").value_or(cfg.dev_hot_reload_enabled);
+    }
+
+    if (const JsonValue *plugin = root.get("plugin"); plugin && plugin->isObject()) {
+        const std::string mode = plugin->getString("paramBlendMode").value_or(std::string());
+        if (mode == "weighted") {
+            cfg.plugin_param_blend_mode = PluginParamBlendMode::Weighted;
+        } else if (mode == "override") {
+            cfg.plugin_param_blend_mode = PluginParamBlendMode::Override;
+        }
     }
 
     if (const JsonValue *startup = root.get("startup"); startup && startup->isObject()) {

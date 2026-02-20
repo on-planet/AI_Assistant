@@ -9,6 +9,11 @@
 
 namespace k2d {
 
+enum class PluginParamBlendMode {
+    Override = 0,
+    Weighted,
+};
+
 struct AppRuntimeConfig {
     // window
     int window_width = 800;
@@ -21,6 +26,7 @@ struct AppRuntimeConfig {
     bool show_debug_stats = true;
     bool manual_param_mode = false;
     bool dev_hot_reload_enabled = true;
+    PluginParamBlendMode plugin_param_blend_mode = PluginParamBlendMode::Override;
 
     // default model candidates (from first to last)
     std::vector<std::string> default_model_candidates;

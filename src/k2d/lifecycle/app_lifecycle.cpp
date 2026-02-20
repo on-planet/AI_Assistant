@@ -133,6 +133,7 @@ struct AppRuntime {
     PluginManager plugin_manager;
     PluginWorker plugin_worker;
     bool plugin_ready = false;
+    PluginParamBlendMode plugin_param_blend_mode = PluginParamBlendMode::Override;
 };
 
 AppRuntime g_runtime;
@@ -892,7 +893,15 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                             if (idx < 0 || idx >= static_cast<int>(g_runtime.model.parameters.size())) {
                                 continue;
                             }
-                            g_runtime.model.parameters[static_cast<std::size_t>(idx)].param.SetTarget(kv.second);
+
+                            auto &param = g_runtime.model.parameters[static_cast<std::size_t>(idx)].param;
+                            if (g_runtime.plugin_param_blend_mode == PluginParamBlendMode::Weighted) {
+                                const float w = std::clamp(w_it->second, 0.0f, 1.0f);
+                                const float mixed = param.target() * (1.0f - w) + kv.second * w;
+                                param.SetTarget(mixed);
+                            } else {
+                                param.SetTarget(kv.second);
+                            }
                         }
                     }
 
@@ -1004,6 +1013,7 @@ bool AppLifecycleInit(AppLifecycleContext &ctx) {
     g_runtime.show_debug_stats = runtime_cfg.show_debug_stats;
     g_runtime.manual_param_mode = runtime_cfg.manual_param_mode;
     g_runtime.dev_hot_reload_enabled = runtime_cfg.dev_hot_reload_enabled;
+    g_runtime.plugin_param_blend_mode = runtime_cfg.plugin_param_blend_mode;
 
     SDL_GetWindowSize(g_runtime.window, &g_runtime.window_w, &g_runtime.window_h);
     g_runtime.interactive_rect = k2d::ComputeInteractiveRect(g_runtime.window_w, g_runtime.window_h);

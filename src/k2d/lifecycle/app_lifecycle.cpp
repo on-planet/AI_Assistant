@@ -869,6 +869,16 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 std::string plugin_err;
                 const PluginStatus st = g_runtime.plugin_manager.Update(in, out, &plugin_err);
                 if (st == PluginStatus::Ok) {
+                    if (g_runtime.model_loaded && !g_runtime.model.parameters.empty()) {
+                        const std::size_t n = std::min<std::size_t>(16, g_runtime.model.parameters.size());
+                        for (std::size_t i = 0; i < n; ++i) {
+                            if (out.param_weights[i] <= 0.0f) {
+                                continue;
+                            }
+                            g_runtime.model.parameters[i].param.SetTarget(out.param_targets[i]);
+                        }
+                    }
+
                     const float opacity = std::clamp(out.param_targets[0], 0.05f, 1.0f);
                     if (out.param_weights[0] > 0.0f && g_runtime.window) {
                         if (!SDL_SetWindowOpacity(g_runtime.window, opacity)) {

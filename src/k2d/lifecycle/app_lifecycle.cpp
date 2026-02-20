@@ -862,30 +862,29 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
             if (g_runtime.plugin_ready) {
                 PerceptionInput in{};
                 in.time_sec = static_cast<double>(g_runtime.model_time);
-                in.delta_time_sec = dt;
-                in.has_user_focus = true;
-                in.has_pointer_inside_window = false;
                 in.audio_level = 0.0f;
+                in.user_presence = g_runtime.window_visible ? 1.0f : 0.0f;
 
                 BehaviorOutput out{};
                 std::string plugin_err;
                 const PluginStatus st = g_runtime.plugin_manager.Update(in, out, &plugin_err);
                 if (st == PluginStatus::Ok) {
-                    if (out.has_request_show_debug_stats) {
-                        g_runtime.show_debug_stats = out.request_show_debug_stats;
-                    }
-                    if (out.has_request_manual_param_mode) {
-                        g_runtime.manual_param_mode = out.request_manual_param_mode;
-                        SyncAnimationChannelState();
-                    }
-                    if (out.has_request_click_through) {
-                        SetClickThrough(out.request_click_through);
-                    }
-                    if (out.has_target_opacity && g_runtime.window) {
-                        const float opacity = std::clamp(out.target_opacity, 0.05f, 1.0f);
+                    const float opacity = std::clamp(out.param_targets[0], 0.05f, 1.0f);
+                    if (out.param_weights[0] > 0.0f && g_runtime.window) {
                         if (!SDL_SetWindowOpacity(g_runtime.window, opacity)) {
                             SDL_Log("Plugin SetWindowOpacity failed: %s", SDL_GetError());
                         }
+                    }
+
+                    if (out.param_weights[1] > 0.0f) {
+                        SetClickThrough(out.param_targets[1] >= 0.5f);
+                    }
+                    if (out.param_weights[2] > 0.0f) {
+                        g_runtime.show_debug_stats = out.param_targets[2] >= 0.5f;
+                    }
+                    if (out.param_weights[3] > 0.0f) {
+                        g_runtime.manual_param_mode = out.param_targets[3] >= 0.5f;
+                        SyncAnimationChannelState();
                     }
                 } else {
                     SDL_Log("Plugin update failed: %s", plugin_err.c_str());

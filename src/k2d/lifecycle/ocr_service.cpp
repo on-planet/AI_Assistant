@@ -25,19 +25,45 @@ std::string ReadTextFile(const std::string &path, std::string *out_error) {
     return oss.str();
 }
 
+std::vector<std::string> BuildFallbackKeys() {
+    // 仅用于 keys 文件缺失时兜底，保证 det+rec 链路可运行。
+    // 顺序采用常见可见 ASCII，覆盖英文/数字/基础符号。
+    static const std::string kAscii =
+        "0123456789"
+        "abcdefghijklmnopqrstuvwxyz"
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+        " ";
+
+    std::vector<std::string> keys;
+    keys.reserve(kAscii.size());
+    for (char ch : kAscii) {
+        keys.emplace_back(1, ch);
+    }
+    return keys;
+}
+
 std::vector<std::string> ReadKeys(const std::string &path, std::string *out_error) {
     std::ifstream ifs(path, std::ios::in | std::ios::binary);
-    if (!ifs) {
-        if (out_error) *out_error = "failed to open keys file: " + path;
-        return {};
-    }
     std::vector<std::string> keys;
-    std::string line;
-    while (std::getline(ifs, line)) {
-        while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
-        if (!line.empty()) keys.push_back(line);
+
+    if (ifs) {
+        std::string line;
+        while (std::getline(ifs, line)) {
+            while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
+            if (!line.empty()) keys.push_back(line);
+        }
+        if (!keys.empty()) {
+            if (out_error) out_error->clear();
+            return keys;
+        }
     }
-    if (keys.empty() && out_error) *out_error = "ocr keys is empty";
+
+    // keys 文件缺失或为空时，回退到内置字符表，避免 OCR 初始化失败。
+    keys = BuildFallbackKeys();
+    if (out_error) {
+        *out_error = "keys file missing/empty, fallback builtin keys: " + path;
+    }
     return keys;
 }
 

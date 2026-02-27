@@ -1,5 +1,8 @@
 #pragma once
 
+#include <atomic>
+#include <future>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -34,7 +37,7 @@ struct PerceptionPipelineState {
     OcrResult ocr_result;
     OcrResult ocr_last_stable_result;
     bool ocr_skipped_due_timeout = false;
-    int ocr_timeout_ms = 120;
+    int ocr_timeout_ms = 1500;
 
     std::string ocr_summary_candidate;
     std::string ocr_summary_stable;
@@ -59,6 +62,19 @@ private:
     SceneClassifier scene_classifier_;
     OcrService ocr_service_;
     SystemContextService system_context_service_;
+
+    struct AsyncOcrPacket {
+        bool ready = false;
+        bool ok = false;
+        OcrResult result;
+        std::string error;
+        int elapsed_ms = 0;
+    };
+
+    std::future<void> ocr_future_;
+    std::atomic<bool> ocr_running_{false};
+    std::mutex ocr_mutex_;
+    AsyncOcrPacket ocr_packet_;
 };
 
 }  // namespace k2d

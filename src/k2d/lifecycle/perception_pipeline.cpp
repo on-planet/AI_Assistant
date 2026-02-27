@@ -86,9 +86,12 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
     {
         std::string ocr_err;
         const std::vector<std::tuple<std::string, std::string, std::string>> ocr_candidates = {
-            {"assets/ocr/ppocr_det.onnx", "assets/ocr/ppocr_rec.onnx", "assets/ocr/ppocr_keys.txt"},
-            {"../assets/ocr/ppocr_det.onnx", "../assets/ocr/ppocr_rec.onnx", "../assets/ocr/ppocr_keys.txt"},
-            {"../../assets/ocr/ppocr_det.onnx", "../../assets/ocr/ppocr_rec.onnx", "../../assets/ocr/ppocr_keys.txt"},
+            {"assets/PP-OCRv5_server_det_infer.onnx", "assets/PP-OCRv5_server_rec_infer.onnx", "assets/ocr/ppocr_keys.txt"},
+            {"../assets/PP-OCRv5_server_det_infer.onnx", "../assets/PP-OCRv5_server_rec_infer.onnx", "../assets/ocr/ppocr_keys.txt"},
+            {"../../assets/PP-OCRv5_server_det_infer.onnx", "../../assets/PP-OCRv5_server_rec_infer.onnx", "../../assets/ocr/ppocr_keys.txt"},
+            {"assets/PP-OCRv5_server_det_infer.onnx", "assets/PP-OCRv5_server_rec_infer.onnx", "assets/ppocr_keys.txt"},
+            {"../assets/PP-OCRv5_server_det_infer.onnx", "../assets/PP-OCRv5_server_rec_infer.onnx", "../assets/ppocr_keys.txt"},
+            {"../../assets/PP-OCRv5_server_det_infer.onnx", "../../assets/PP-OCRv5_server_rec_infer.onnx", "../../assets/ppocr_keys.txt"},
         };
 
         for (const auto &cand : ocr_candidates) {
@@ -130,6 +133,11 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
 }
 
 void PerceptionPipeline::Shutdown(PerceptionPipelineState &state) noexcept {
+    if (ocr_future_.valid()) {
+        ocr_future_.wait();
+    }
+    ocr_running_.store(false, std::memory_order_release);
+
     ocr_service_.Shutdown();
     scene_classifier_.Shutdown();
     screen_capture_.Shutdown();
@@ -181,34 +189,62 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
     }
 
     if (state.ocr_ready) {
-        state.ocr_skipped_due_timeout = false;
+        if (ocr_future_.valid() &&
+            ocr_future_.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+            ocr_future_.get();
+            ocr_running_.store(false, std::memory_order_release);
+        }
 
-        std::string ocr_err;
-        OcrResult ocr_out{};
-        OcrSystemContext ocr_context{};
-        ocr_context.process_name = state.system_context_snapshot.process_name;
-        ocr_context.window_title = state.system_context_snapshot.window_title;
-        ocr_context.url = state.system_context_snapshot.url_hint;
-
-        const auto t0 = std::chrono::steady_clock::now();
-        const bool ocr_ok = ocr_service_.Recognize(frame, &ocr_context, ocr_out, &ocr_err);
-        const auto t1 = std::chrono::steady_clock::now();
-        const int elapsed_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
-
-        if (!ocr_ok) {
-            if (!ocr_err.empty()) {
-                state.ocr_last_error = ocr_err;
+        AsyncOcrPacket packet;
+        bool has_packet = false;
+        {
+            std::lock_guard<std::mutex> lk(ocr_mutex_);
+            if (ocr_packet_.ready) {
+                packet = std::move(ocr_packet_);
+                ocr_packet_ = AsyncOcrPacket{};
+                has_packet = true;
             }
-        } else if (elapsed_ms > state.ocr_timeout_ms) {
-            state.ocr_skipped_due_timeout = true;
-            state.ocr_last_error = "ocr timeout degrade, keep last stable result";
-            if (!state.ocr_last_stable_result.summary.empty() || !state.ocr_last_stable_result.lines.empty()) {
-                state.ocr_result = state.ocr_last_stable_result;
+        }
+
+        if (has_packet) {
+            state.ocr_skipped_due_timeout = false;
+            if (!packet.ok) {
+                if (!packet.error.empty()) {
+                    state.ocr_last_error = packet.error;
+                }
+            } else if (packet.elapsed_ms > state.ocr_timeout_ms) {
+                state.ocr_skipped_due_timeout = true;
+                state.ocr_last_error = "ocr timeout degrade, keep last stable result";
+                if (!state.ocr_last_stable_result.summary.empty() || !state.ocr_last_stable_result.lines.empty()) {
+                    state.ocr_result = state.ocr_last_stable_result;
+                }
+            } else {
+                state.ocr_result = std::move(packet.result);
+                state.ocr_last_stable_result = state.ocr_result;
+                state.ocr_last_error.clear();
             }
-        } else {
-            state.ocr_result = std::move(ocr_out);
-            state.ocr_last_stable_result = state.ocr_result;
-            state.ocr_last_error.clear();
+        }
+
+        if (!ocr_running_.load(std::memory_order_acquire)) {
+            ScreenCaptureFrame ocr_frame = frame;
+            OcrSystemContext ocr_context{};
+            ocr_context.process_name = state.system_context_snapshot.process_name;
+            ocr_context.window_title = state.system_context_snapshot.window_title;
+            ocr_context.url = state.system_context_snapshot.url_hint;
+
+            ocr_running_.store(true, std::memory_order_release);
+            ocr_future_ = std::async(std::launch::async, [this, ocr_frame = std::move(ocr_frame), ocr_context = std::move(ocr_context)]() mutable {
+                AsyncOcrPacket local{};
+                local.ready = true;
+
+                const auto t0 = std::chrono::steady_clock::now();
+                local.ok = ocr_service_.Recognize(ocr_frame, &ocr_context, local.result, &local.error);
+                const auto t1 = std::chrono::steady_clock::now();
+                local.elapsed_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
+
+                std::lock_guard<std::mutex> lk(ocr_mutex_);
+                ocr_packet_ = std::move(local);
+            });
         }
 
         std::string norm_summary = state.ocr_result.summary;

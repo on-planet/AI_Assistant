@@ -1056,7 +1056,13 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                     PerceptionInput in{};
                     in.time_sec = static_cast<double>(g_runtime.model_time);
                     in.audio_level = 0.0f;
-                    in.user_presence = g_runtime.window_visible ? 1.0f : 0.0f;
+                    in.user_presence = g_runtime.perception_state.camera_result.face_present ? 1.0f : (g_runtime.window_visible ? 1.0f : 0.0f);
+                    in.vision.user_presence = in.user_presence;
+                    in.vision.head_yaw_deg = g_runtime.perception_state.camera_result.head_yaw_deg;
+                    in.vision.head_pitch_deg = g_runtime.perception_state.camera_result.head_pitch_deg;
+                    in.vision.head_roll_deg = g_runtime.perception_state.camera_result.head_roll_deg;
+                    in.vision.gaze_x = 0.0f;
+                    in.vision.gaze_y = 0.0f;
                     g_runtime.inference_adapter->SubmitInput(in);
                     has_plugin_out = g_runtime.inference_adapter->TryConsumeLatestOutput(plugin_out, nullptr);
                 }
@@ -1167,6 +1173,21 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 }
 
                 ImGui::Text("OCR: %s", g_runtime.perception_state.ocr_ready ? "ready" : "not ready");
+                ImGui::Text("Camera FaceMesh: %s", g_runtime.perception_state.camera_ready ? "ready" : "not ready");
+                if (g_runtime.perception_state.camera_ready) {
+                    ImGui::Text("Face: %s (%.2f)",
+                                g_runtime.perception_state.camera_result.face_present ? "present" : "none",
+                                g_runtime.perception_state.camera_result.face_presence_score);
+                    ImGui::Text("Head Y/P/R: %.1f / %.1f / %.1f",
+                                g_runtime.perception_state.camera_result.head_yaw_deg,
+                                g_runtime.perception_state.camera_result.head_pitch_deg,
+                                g_runtime.perception_state.camera_result.head_roll_deg);
+                    ImGui::Text("Eye Open: %.2f", g_runtime.perception_state.camera_result.eye_open);
+                    ImGui::Text("Landmarks: %d", static_cast<int>(g_runtime.perception_state.camera_result.landmarks.size()));
+                }
+                if (!g_runtime.perception_state.camera_last_error.empty()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Camera Error: %s", g_runtime.perception_state.camera_last_error.c_str());
+                }
                 ImGui::SeparatorText("System Context");
                 ImGui::Text("Process: %s", g_runtime.perception_state.system_context_snapshot.process_name.empty() ? "(empty)" : g_runtime.perception_state.system_context_snapshot.process_name.c_str());
                 ImGui::TextWrapped("Title: %s", g_runtime.perception_state.system_context_snapshot.window_title.empty() ? "(empty)" : g_runtime.perception_state.system_context_snapshot.window_title.c_str());
@@ -1176,6 +1197,11 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 }
 
                 ImGui::SeparatorText("OCR");
+                ImGui::SliderInt("OCR Timeout (ms)", &g_runtime.perception_state.ocr_timeout_ms, 500, 10000);
+                g_runtime.perception_state.ocr_timeout_ms = std::clamp(g_runtime.perception_state.ocr_timeout_ms, 500, 10000);
+                ImGui::SliderInt("OCR Det Input", &g_runtime.perception_state.ocr_det_input_size, 160, 1280);
+                g_runtime.perception_state.ocr_det_input_size = std::clamp(g_runtime.perception_state.ocr_det_input_size, 160, 1280);
+
                 if (g_runtime.perception_state.ocr_ready && !g_runtime.perception_state.ocr_result.summary.empty()) {
                     ImGui::TextWrapped("OCR Summary: %s", g_runtime.perception_state.ocr_result.summary.c_str());
                     if (!g_runtime.perception_state.ocr_result.lines.empty()) {

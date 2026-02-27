@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "k2d/capture/screen_capture.h"
+#include "k2d/lifecycle/camera_facemesh_service.h"
 #include "k2d/lifecycle/ocr_service.h"
 #include "k2d/lifecycle/scene_classifier.h"
 #include "k2d/lifecycle/system_context_service.h"
@@ -19,8 +20,18 @@ struct OcrBlackboardData {
     std::vector<std::string> domain_tags;
 };
 
+struct CameraBlackboardData {
+    bool face_present = false;
+    float face_presence_score = 0.0f;
+    float head_yaw_deg = 0.0f;
+    float head_pitch_deg = 0.0f;
+    float head_roll_deg = 0.0f;
+    float eye_open = 0.0f;
+};
+
 struct PerceptionBlackboard {
     OcrBlackboardData ocr;
+    CameraBlackboardData camera;
 };
 
 struct PerceptionPipelineState {
@@ -38,11 +49,17 @@ struct PerceptionPipelineState {
     OcrResult ocr_last_stable_result;
     bool ocr_skipped_due_timeout = false;
     int ocr_timeout_ms = 1500;
+    int ocr_det_input_size = 640;
 
     std::string ocr_summary_candidate;
     std::string ocr_summary_stable;
     int ocr_summary_consistent_count = 0;
     int ocr_summary_debounce_frames = 2;
+
+    bool camera_ready = false;
+    std::string camera_last_error;
+    FaceMeshResult camera_result;
+    int camera_index = 0;
 
     SystemContextSnapshot system_context_snapshot;
     std::string system_context_last_error;
@@ -61,6 +78,7 @@ private:
     ScreenCapture screen_capture_;
     SceneClassifier scene_classifier_;
     OcrService ocr_service_;
+    CameraFaceMeshService camera_facemesh_service_;
     SystemContextService system_context_service_;
 
     struct AsyncOcrPacket {

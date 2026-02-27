@@ -173,6 +173,7 @@ struct OcrService::Impl {
 
     int rec_h = 48;
     int rec_w = 320;
+    int det_input_size = 640;
 
     std::vector<std::string> rec_keys;
 };
@@ -242,6 +243,16 @@ bool OcrService::IsReady() const noexcept {
     return impl_ && impl_->det_session && impl_->rec_session;
 }
 
+void OcrService::SetDetInputSize(int size) {
+    if (!impl_) return;
+    impl_->det_input_size = std::clamp(size, 160, 1280);
+}
+
+int OcrService::GetDetInputSize() const noexcept {
+    if (!impl_) return 640;
+    return impl_->det_input_size;
+}
+
 bool OcrService::Recognize(const ScreenCaptureFrame &frame,
                            const OcrSystemContext *context,
                            OcrResult &out,
@@ -258,8 +269,8 @@ bool OcrService::Recognize(const ScreenCaptureFrame &frame,
 
     // V1 最小落地：先跑 det session 做链路验证；rec 结构也已加载。
     // 后续可在此补充 DB 后处理 + 文本框裁切 + CTC 解码。
-    const int det_h = 640;
-    const int det_w = 640;
+    const int det_h = std::clamp(impl_->det_input_size, 160, 1280);
+    const int det_w = det_h;
     std::vector<float> det_input(1ull * 3ull * static_cast<std::size_t>(det_h) * static_cast<std::size_t>(det_w), 0.0f);
 
     auto sample_rgb01 = [&](int x, int y, int c) -> float {

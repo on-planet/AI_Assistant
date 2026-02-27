@@ -20,6 +20,8 @@ set(ONNXRUNTIME_LIB_DIR "${ONNXRUNTIME_ROOT}/lib")
 set(ONNXRUNTIME_LIB "${ONNXRUNTIME_LIB_DIR}/onnxruntime.lib")
 set(ONNXRUNTIME_DLL "${ONNXRUNTIME_LIB_DIR}/onnxruntime.dll")
 
+find_package(OpenCV QUIET)
+
 add_executable(AI_assistant WIN32
     main.cpp
     src/k2d/core/json.cpp
@@ -35,6 +37,7 @@ add_executable(AI_assistant WIN32
     src/k2d/lifecycle/scene_classifier.cpp
     src/k2d/lifecycle/ocr_service.cpp
     src/k2d/lifecycle/system_context_service.cpp
+    src/k2d/lifecycle/camera_facemesh_service.cpp
     src/k2d/lifecycle/perception_pipeline.cpp
     external/sqlite/sqlite3.c
     external/imgui/imgui.cpp
@@ -63,6 +66,12 @@ add_executable(AI_assistant WIN32
 )
 
 target_link_libraries(AI_assistant PRIVATE SDL3::SDL3 "${ONNXRUNTIME_LIB}" d3d11 dxgi windowsapp runtimeobject)
+if (OpenCV_FOUND)
+    target_link_libraries(AI_assistant PRIVATE ${OpenCV_LIBS})
+    target_compile_definitions(AI_assistant PRIVATE K2D_WITH_OPENCV=1)
+else()
+    target_compile_definitions(AI_assistant PRIVATE K2D_WITH_OPENCV=0)
+endif()
 
 # Allow includes like "k2d/core/png_texture.h" and "stb_image.h".
 target_include_directories(AI_assistant PRIVATE
@@ -73,6 +82,9 @@ target_include_directories(AI_assistant PRIVATE
     ${ONNXRUNTIME_INCLUDE_DIR}
     src/k2d/capture/screen_capture_dxgi.cpp
 )
+if (OpenCV_FOUND)
+    target_include_directories(AI_assistant PRIVATE ${OpenCV_INCLUDE_DIRS})
+endif()
 
 # Copy onnxruntime.dll next to executable for local run/package.
 if (EXISTS "${ONNXRUNTIME_DLL}")

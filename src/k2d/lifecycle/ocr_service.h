@@ -40,6 +40,9 @@ public:
 
     bool IsReady() const noexcept;
 
+    void SetDetInputSize(int size);
+    int GetDetInputSize() const noexcept;
+
     bool Recognize(const ScreenCaptureFrame &frame,
                    const OcrSystemContext *context,
                    OcrResult &out,

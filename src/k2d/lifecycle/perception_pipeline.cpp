@@ -106,6 +106,7 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
             if (ocr_service_.Init(std::get<0>(cand), std::get<1>(cand), std::get<2>(cand), &try_err)) {
                 state.ocr_ready = true;
                 state.ocr_last_error.clear();
+                ocr_service_.SetDetInputSize(state.ocr_det_input_size);
                 SDL_Log("OCR init ok: det=%s rec=%s keys=%s",
                         std::get<0>(cand).c_str(),
                         std::get<1>(cand).c_str(),
@@ -126,6 +127,38 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
         }
     }
 
+    {
+        std::string cam_err;
+        const std::vector<std::string> cam_model_candidates = {
+            "assets/facemesh.onnx",
+            "../assets/facemesh.onnx",
+            "../../assets/facemesh.onnx",
+        };
+        for (const auto &model_path : cam_model_candidates) {
+            std::error_code ec;
+            if (!std::filesystem::exists(model_path, ec)) {
+                continue;
+            }
+            std::string try_err;
+            if (camera_facemesh_service_.Init(state.camera_index, model_path, &try_err)) {
+                state.camera_ready = true;
+                state.camera_last_error.clear();
+                SDL_Log("Camera FaceMesh init ok: model=%s", model_path.c_str());
+                break;
+            }
+            if (cam_err.empty() && !try_err.empty()) {
+                cam_err = try_err;
+            }
+        }
+        if (!state.camera_ready) {
+            if (cam_err.empty()) {
+                cam_err = "facemesh model not found in candidate paths";
+            }
+            state.camera_last_error = cam_err;
+            SDL_Log("Camera FaceMesh init failed: %s", cam_err.c_str());
+        }
+    }
+
     if (out_error) {
         out_error->clear();
     }
@@ -139,12 +172,14 @@ void PerceptionPipeline::Shutdown(PerceptionPipelineState &state) noexcept {
     ocr_running_.store(false, std::memory_order_release);
 
     ocr_service_.Shutdown();
+    camera_facemesh_service_.Shutdown();
     scene_classifier_.Shutdown();
     screen_capture_.Shutdown();
 
     state.screen_capture_ready = false;
     state.scene_classifier_ready = false;
     state.ocr_ready = false;
+    state.camera_ready = false;
 }
 
 void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
@@ -188,7 +223,26 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
         state.system_context_last_error = ctx_err;
     }
 
+    if (state.camera_ready) {
+        FaceMeshResult cam_out{};
+        std::string cam_err;
+        if (camera_facemesh_service_.CaptureAndInfer(cam_out, &cam_err)) {
+            state.camera_result = std::move(cam_out);
+            state.camera_last_error.clear();
+        } else if (!cam_err.empty()) {
+            state.camera_last_error = cam_err;
+        }
+
+        state.blackboard.camera.face_present = state.camera_result.face_present;
+        state.blackboard.camera.face_presence_score = state.camera_result.face_presence_score;
+        state.blackboard.camera.head_yaw_deg = state.camera_result.head_yaw_deg;
+        state.blackboard.camera.head_pitch_deg = state.camera_result.head_pitch_deg;
+        state.blackboard.camera.head_roll_deg = state.camera_result.head_roll_deg;
+        state.blackboard.camera.eye_open = state.camera_result.eye_open;
+    }
+
     if (state.ocr_ready) {
+        ocr_service_.SetDetInputSize(state.ocr_det_input_size);
         if (ocr_future_.valid() &&
             ocr_future_.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
             ocr_future_.get();

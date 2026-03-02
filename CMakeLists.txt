@@ -20,7 +20,10 @@ set(ONNXRUNTIME_LIB_DIR "${ONNXRUNTIME_ROOT}/lib")
 set(ONNXRUNTIME_LIB "${ONNXRUNTIME_LIB_DIR}/onnxruntime.lib")
 set(ONNXRUNTIME_DLL "${ONNXRUNTIME_LIB_DIR}/onnxruntime.dll")
 
-find_package(OpenCV QUIET)
+# OpenCV (prebuilt package under external/opencv)
+set(OpenCV_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/opencv/build/x64/vc16/lib")
+find_package(OpenCV REQUIRED)
+set(OPENCV_BIN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/opencv/build/x64/vc16/bin")
 
 add_executable(AI_assistant WIN32
     main.cpp
@@ -37,7 +40,6 @@ add_executable(AI_assistant WIN32
     src/k2d/lifecycle/scene_classifier.cpp
     src/k2d/lifecycle/ocr_service.cpp
     src/k2d/lifecycle/system_context_service.cpp
-    src/k2d/lifecycle/camera_facemesh_service.cpp
     src/k2d/lifecycle/perception_pipeline.cpp
     external/sqlite/sqlite3.c
     external/imgui/imgui.cpp
@@ -63,15 +65,10 @@ add_executable(AI_assistant WIN32
     src/k2d/controllers/app_input_controller.cpp
     src/k2d/controllers/interaction_controller.cpp
     src/k2d/capture/screen_capture_dxgi.cpp
+    src/k2d/lifecycle/camera_facemesh_service.cpp
 )
 
-target_link_libraries(AI_assistant PRIVATE SDL3::SDL3 "${ONNXRUNTIME_LIB}" d3d11 dxgi windowsapp runtimeobject)
-if (OpenCV_FOUND)
-    target_link_libraries(AI_assistant PRIVATE ${OpenCV_LIBS})
-    target_compile_definitions(AI_assistant PRIVATE K2D_WITH_OPENCV=1)
-else()
-    target_compile_definitions(AI_assistant PRIVATE K2D_WITH_OPENCV=0)
-endif()
+target_link_libraries(AI_assistant PRIVATE SDL3::SDL3 "${ONNXRUNTIME_LIB}" ${OpenCV_LIBS} d3d11 dxgi windowsapp runtimeobject)
 
 # Allow includes like "k2d/core/png_texture.h" and "stb_image.h".
 target_include_directories(AI_assistant PRIVATE
@@ -80,11 +77,8 @@ target_include_directories(AI_assistant PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
     ${ONNXRUNTIME_INCLUDE_DIR}
-    src/k2d/capture/screen_capture_dxgi.cpp
+    ${OpenCV_INCLUDE_DIRS}
 )
-if (OpenCV_FOUND)
-    target_include_directories(AI_assistant PRIVATE ${OpenCV_INCLUDE_DIRS})
-endif()
 
 # Copy onnxruntime.dll next to executable for local run/package.
 if (EXISTS "${ONNXRUNTIME_DLL}")
@@ -94,6 +88,14 @@ if (EXISTS "${ONNXRUNTIME_DLL}")
                 "$<TARGET_FILE_DIR:AI_assistant>/onnxruntime.dll")
 endif()
 
+# Copy OpenCV runtime DLLs next to executable for local run/package.
+if (EXISTS "${OPENCV_BIN_DIR}")
+    add_custom_command(TARGET AI_assistant POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${OPENCV_BIN_DIR}"
+                "$<TARGET_FILE_DIR:AI_assistant>")
+endif()
+
 add_executable(plugin_lifecycle_tests
     tests/plugin_lifecycle_tests.cpp
     src/k2d/core/async_logger.cpp
@@ -101,7 +103,7 @@ add_executable(plugin_lifecycle_tests
     src/k2d/lifecycle/inference_adapter.cpp
 )
 
-target_link_libraries(plugin_lifecycle_tests PRIVATE SDL3::SDL3 "${ONNXRUNTIME_LIB}" d3d11 dxgi windowsapp runtimeobject)
+target_link_libraries(plugin_lifecycle_tests PRIVATE SDL3::SDL3 "${ONNXRUNTIME_LIB}" ${OpenCV_LIBS} d3d11 dxgi windowsapp runtimeobject)
 
 target_include_directories(plugin_lifecycle_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -109,6 +111,7 @@ target_include_directories(plugin_lifecycle_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
     ${ONNXRUNTIME_INCLUDE_DIR}
+    ${OpenCV_INCLUDE_DIRS}
 )
 
 if (EXISTS "${ONNXRUNTIME_DLL}")
@@ -116,6 +119,13 @@ if (EXISTS "${ONNXRUNTIME_DLL}")
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${ONNXRUNTIME_DLL}"
                 "$<TARGET_FILE_DIR:plugin_lifecycle_tests>/onnxruntime.dll")
+endif()
+
+if (EXISTS "${OPENCV_BIN_DIR}")
+    add_custom_command(TARGET plugin_lifecycle_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${OPENCV_BIN_DIR}"
+                "$<TARGET_FILE_DIR:plugin_lifecycle_tests>")
 endif()
 
 add_test(NAME plugin_lifecycle_tests COMMAND plugin_lifecycle_tests)

@@ -425,6 +425,66 @@ const char *EditorPropName(EditorProp p) {
     }
 }
 
+void RenderModelHierarchyTree(const ModelRuntime &model, int selected_part_index) {
+    if (model.parts.empty()) {
+        ImGui::TextDisabled("(no parts)");
+        return;
+    }
+
+    std::vector<std::vector<int>> children(model.parts.size());
+    std::vector<int> roots;
+    roots.reserve(model.parts.size());
+
+    for (int i = 0; i < static_cast<int>(model.parts.size()); ++i) {
+        const int parent = model.parts[static_cast<std::size_t>(i)].parent_index;
+        if (parent >= 0 && parent < static_cast<int>(model.parts.size())) {
+            children[static_cast<std::size_t>(parent)].push_back(i);
+        } else {
+            roots.push_back(i);
+        }
+    }
+
+    for (auto &v : children) {
+        std::sort(v.begin(), v.end(), [&](int a, int b) {
+            const auto &pa = model.parts[static_cast<std::size_t>(a)];
+            const auto &pb = model.parts[static_cast<std::size_t>(b)];
+            if (pa.draw_order != pb.draw_order) return pa.draw_order < pb.draw_order;
+            return pa.id < pb.id;
+        });
+    }
+    std::sort(roots.begin(), roots.end(), [&](int a, int b) {
+        const auto &pa = model.parts[static_cast<std::size_t>(a)];
+        const auto &pb = model.parts[static_cast<std::size_t>(b)];
+        if (pa.draw_order != pb.draw_order) return pa.draw_order < pb.draw_order;
+        return pa.id < pb.id;
+    });
+
+    auto draw_node = [&](auto &&self, int idx) -> void {
+        const auto &part = model.parts[static_cast<std::size_t>(idx)];
+        const auto &sub = children[static_cast<std::size_t>(idx)];
+
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth;
+        if (sub.empty()) flags |= ImGuiTreeNodeFlags_Leaf;
+        if (idx == selected_part_index) flags |= ImGuiTreeNodeFlags_Selected;
+
+        const std::string label = part.id + "##part_tree_" + std::to_string(idx);
+        const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(draw=%d, parent=%d)", part.draw_order, part.parent_index);
+
+        if (open) {
+            for (int c : sub) {
+                self(self, c);
+            }
+            ImGui::TreePop();
+        }
+    };
+
+    for (int r : roots) {
+        draw_node(draw_node, r);
+    }
+}
+
 void UndoLastEdit() {
     const bool ok = k2d::UndoLastEdit(
         g_runtime.model,
@@ -1147,6 +1207,10 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 ImGui::Text("Frame: %.2f ms", g_runtime.debug_frame_ms);
                 ImGui::Text("Model Loaded: %s", g_runtime.model_loaded ? "Yes" : "No");
                 ImGui::Text("PartCount: %d", static_cast<int>(g_runtime.model.parts.size()));
+
+                ImGui::SeparatorText("Model Hierarchy");
+                RenderModelHierarchyTree(g_runtime.model, g_runtime.selected_part_index);
+
                 ImGui::Checkbox("Show Debug Stats", &g_runtime.show_debug_stats);
                 ImGui::Checkbox("Manual Param Mode", &g_runtime.manual_param_mode);
                 ImGui::Checkbox("GUI Enabled", &g_runtime.gui_enabled);

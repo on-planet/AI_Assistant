@@ -83,6 +83,19 @@ struct CameraFacemeshService::Impl {
     std::vector<std::string> labels;
     cv::VideoCapture camera;
     int camera_index = 0;
+
+    // 稳定化状态：关键点滤波 + 缺帧插值 + 遮挡降级
+    bool has_last_face = false;
+    std::vector<FaceKeypoint> last_keypoints;
+    std::string last_emotion_label;
+    float last_emotion_score = 0.0f;
+    int miss_count = 0;
+    int max_interp_miss = 5;
+    float keypoint_smooth_alpha = 0.35f;   // 越小越平滑
+    float occlusion_area_ratio_min = 0.012f;
+
+    // 低光降级阈值（灰度均值，0~255）
+    float low_light_mean_luma_min = 48.0f;
 };
 
 bool CameraFacemeshService::Init(const std::string &model_path,
@@ -198,12 +211,31 @@ bool CameraFacemeshService::RecognizeFromFrame(const ScreenCaptureFrame &frame,
 
     cv::Mat gray;
     cv::cvtColor(bgr, gray, cv::COLOR_BGR2GRAY);
+    const cv::Scalar mean_luma = cv::mean(gray);
+    const bool low_light = static_cast<float>(mean_luma[0]) < impl_->low_light_mean_luma_min;
     cv::equalizeHist(gray, gray);
 
     std::vector<cv::Rect> faces;
     impl_->face_cascade.detectMultiScale(gray, faces, 1.1, 3, 0, cv::Size(40, 40));
     if (faces.empty()) {
+        // 缺帧插值：短时丢脸时维持上一帧稳定输出并逐步衰减置信
+        if (impl_->has_last_face && impl_->miss_count < impl_->max_interp_miss) {
+            impl_->miss_count += 1;
+            out.face_detected = true;
+            out.keypoints = impl_->last_keypoints;
+            out.emotion_label = impl_->last_emotion_label;
+            const float decay = std::pow(0.82f, static_cast<float>(impl_->miss_count));
+            out.emotion_score = impl_->last_emotion_score * decay;
+            if (out.emotion_score < 0.15f) {
+                out.emotion_label = "neutral";
+            }
+            if (out_error) out_error->clear();
+            return true;
+        }
+
         out.face_detected = false;
+        impl_->has_last_face = false;
+        impl_->miss_count = 0;
         if (out_error) out_error->clear();
         return true;
     }
@@ -213,6 +245,7 @@ bool CameraFacemeshService::RecognizeFromFrame(const ScreenCaptureFrame &frame,
     });
     const cv::Rect face = *best_it;
     out.face_detected = true;
+    impl_->miss_count = 0;
 
     // 关键点（当前用检测框推导 5-point，后续可替换为真实 facemesh landmark 输出）
     const float x = static_cast<float>(face.x);
@@ -226,6 +259,15 @@ bool CameraFacemeshService::RecognizeFromFrame(const ScreenCaptureFrame &frame,
         FaceKeypoint{x + w * 0.35f, y + h * 0.76f, 1.0f, "mouth_left"},
         FaceKeypoint{x + w * 0.65f, y + h * 0.76f, 1.0f, "mouth_right"},
     };
+
+    // 关键点滤波：指数平滑
+    if (impl_->has_last_face && impl_->last_keypoints.size() == out.keypoints.size()) {
+        const float a = std::clamp(impl_->keypoint_smooth_alpha, 0.01f, 1.0f);
+        for (std::size_t i = 0; i < out.keypoints.size(); ++i) {
+            out.keypoints[i].x = impl_->last_keypoints[i].x * (1.0f - a) + out.keypoints[i].x * a;
+            out.keypoints[i].y = impl_->last_keypoints[i].y * (1.0f - a) + out.keypoints[i].y * a;
+        }
+    }
 
     cv::Mat roi = bgr(face).clone();
     cv::Mat resized;
@@ -285,9 +327,56 @@ bool CameraFacemeshService::RecognizeFromFrame(const ScreenCaptureFrame &frame,
             out.emotion_label = "unknown";
         }
 
+        // 遮挡降级：检测框太小（疑似遮挡/偏离）时降低置信并偏向中性
+        const float area_ratio = (frame.width > 0 && frame.height > 0)
+                                     ? (static_cast<float>(face.width * face.height) /
+                                        static_cast<float>(frame.width * frame.height))
+                                     : 0.0f;
+        const bool occluded = area_ratio < impl_->occlusion_area_ratio_min;
+        if (occluded) {
+            out.emotion_score *= std::max(0.25f, area_ratio / std::max(1e-4f, impl_->occlusion_area_ratio_min));
+            if (out.emotion_score < 0.30f) {
+                out.emotion_label = "neutral";
+            }
+        }
+
+        // 低光/遮挡下平滑回退到中性姿态
+        if (low_light || occluded) {
+            const float degrade = low_light ? 0.65f : 0.80f;
+            out.emotion_score *= degrade;
+            if (out.emotion_score < 0.55f) {
+                out.emotion_label = "neutral";
+            }
+        }
+
+        // 情绪分数平滑（防抖）
+        if (impl_->has_last_face) {
+            out.emotion_score = impl_->last_emotion_score * 0.6f + out.emotion_score * 0.4f;
+            if (out.emotion_score < 0.45f && (low_light || occluded)) {
+                out.emotion_label = "neutral";
+            } else if (out.emotion_score < 0.25f && !impl_->last_emotion_label.empty()) {
+                out.emotion_label = impl_->last_emotion_label;
+            }
+        }
+
+        impl_->has_last_face = true;
+        impl_->last_keypoints = out.keypoints;
+        impl_->last_emotion_label = out.emotion_label;
+        impl_->last_emotion_score = out.emotion_score;
+
         if (out_error) out_error->clear();
         return true;
     } catch (const std::exception &e) {
+        // 推理异常时走“短时缺帧插值”降级
+        if (impl_->has_last_face && impl_->miss_count < impl_->max_interp_miss) {
+            impl_->miss_count += 1;
+            out.face_detected = true;
+            out.keypoints = impl_->last_keypoints;
+            out.emotion_label = impl_->last_emotion_label.empty() ? "neutral" : impl_->last_emotion_label;
+            out.emotion_score = impl_->last_emotion_score * std::pow(0.75f, static_cast<float>(impl_->miss_count));
+            if (out_error) out_error->clear();
+            return true;
+        }
         if (out_error) *out_error = std::string("facemesh infer exception: ") + e.what();
         return false;
     }

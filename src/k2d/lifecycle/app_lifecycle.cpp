@@ -1214,22 +1214,6 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                     ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "System Context Error: %s", g_runtime.perception_state.system_context_last_error.c_str());
                 }
 
-                ImGui::SeparatorText("OCR");
-                ImGui::SliderInt("OCR Timeout (ms)", &g_runtime.perception_state.ocr_timeout_ms, 500, 10000);
-                g_runtime.perception_state.ocr_timeout_ms = std::clamp(g_runtime.perception_state.ocr_timeout_ms, 500, 10000);
-
-                if (g_runtime.perception_state.ocr_ready && !g_runtime.perception_state.ocr_result.summary.empty()) {
-                    ImGui::TextWrapped("OCR Summary: %s", g_runtime.perception_state.ocr_result.summary.c_str());
-                    if (!g_runtime.perception_state.ocr_result.lines.empty()) {
-                        ImGui::Text("OCR Top1: %s (%.3f)",
-                                    g_runtime.perception_state.ocr_result.lines.front().text.c_str(),
-                                    g_runtime.perception_state.ocr_result.lines.front().score);
-                    }
-                }
-                if (!g_runtime.perception_state.ocr_last_error.empty()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "OCR Error: %s", g_runtime.perception_state.ocr_last_error.c_str());
-                }
-
                 ImGui::SeparatorText("Task Category");
                 ImGui::Text("Primary: %s", TaskPrimaryCategoryName(g_runtime.task_primary));
                 ImGui::Text("Secondary: %s", TaskSecondaryCategoryName(g_runtime.task_secondary));

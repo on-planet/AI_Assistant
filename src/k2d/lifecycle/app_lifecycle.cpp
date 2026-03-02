@@ -9,6 +9,7 @@
 
 #include "k2d/core/model.h"
 #include "k2d/core/png_texture.h"
+#include "k2d/lifecycle/state/app_runtime_state.h"
 #include "k2d/lifecycle/inference_adapter.h"
 #include "k2d/editor/editor_commands.h"
 #include "k2d/editor/editor_gizmo.h"
@@ -26,6 +27,9 @@
 #include "k2d/lifecycle/model_reload_service.h"
 #include "k2d/lifecycle/reminder_service.h"
 #include "k2d/lifecycle/perception_pipeline.h"
+#include "k2d/lifecycle/systems/app_systems.h"
+#include "k2d/lifecycle/ui/app_debug_ui.h"
+#include "k2d/lifecycle/ui/reminder_panel.h"
 
 #include <algorithm>
 #include <cctype>
@@ -44,148 +48,6 @@ namespace k2d {
 
 namespace {
 
-enum class AxisConstraint {
-    None,
-    XOnly,
-    YOnly,
-};
-
-enum class TaskPrimaryCategory {
-    Unknown,
-    Work,
-    Game,
-};
-
-enum class TaskSecondaryCategory {
-    Unknown,
-    WorkCoding,
-    WorkDebugging,
-    WorkReadingDocs,
-    WorkMeetingNotes,
-    GameLobby,
-    GameMatch,
-    GameSettlement,
-    GameMenu,
-};
-
-enum class EditorProp {
-    PosX,
-    PosY,
-    PivotX,
-    PivotY,
-    RotDeg,
-    ScaleX,
-    ScaleY,
-    Count,
-};
-
-struct AppRuntime {
-    SDL_Window *window = nullptr;
-    SDL_Renderer *renderer = nullptr;
-    SDL_Tray *tray = nullptr;
-    SDL_TrayEntry *entry_click_through = nullptr;
-    SDL_TrayEntry *entry_show_hide = nullptr;
-
-    SDL_Texture *demo_texture = nullptr;
-    int demo_texture_w = 0;
-    int demo_texture_h = 0;
-
-    ModelRuntime model;
-    bool model_loaded = false;
-    float model_time = 0.0f;
-
-    bool running = true;
-
-    // 开发态模型热重载
-    bool dev_hot_reload_enabled = true;
-    float hot_reload_poll_accum_sec = 0.0f;
-    std::filesystem::file_time_type model_last_write_time{};
-    bool model_last_write_time_valid = false;
-    bool click_through = false;
-    bool window_visible = true;
-    int window_w = 0;
-    int window_h = 0;
-    SDL_Rect interactive_rect{0, 0, 0, 0};
-
-    bool show_debug_stats = true;
-    bool manual_param_mode = false;
-    int selected_param_index = 0;
-
-    bool edit_mode = false;
-    int selected_part_index = -1;
-    bool dragging_part = false;
-    bool dragging_pivot = false;
-    float drag_last_x = 0.0f;
-    float drag_last_y = 0.0f;
-    float drag_start_pos_x = 0.0f;
-    float drag_start_pos_y = 0.0f;
-    float drag_start_pivot_x = 0.0f;
-    float drag_start_pivot_y = 0.0f;
-
-    AxisConstraint axis_constraint = AxisConstraint::None;
-    bool snap_enabled = false;
-    float snap_grid = 10.0f;
-
-    bool dragging_model_whole = false;
-    float dragging_model_last_x = 0.0f;
-    float dragging_model_last_y = 0.0f;
-
-    bool property_panel_enabled = true;
-    int selected_editor_prop = 0;
-
-    std::vector<EditCommand> undo_stack;
-    std::vector<EditCommand> redo_stack;
-
-    GizmoHandle gizmo_hover_handle = GizmoHandle::None;
-    GizmoHandle gizmo_active_handle = GizmoHandle::None;
-    bool gizmo_dragging = false;
-    float gizmo_drag_start_mouse_x = 0.0f;
-    float gizmo_drag_start_mouse_y = 0.0f;
-    float gizmo_drag_start_pos_x = 0.0f;
-    float gizmo_drag_start_pos_y = 0.0f;
-    float gizmo_drag_start_rot_deg = 0.0f;
-    float gizmo_drag_start_scale_x = 1.0f;
-    float gizmo_drag_start_scale_y = 1.0f;
-    float gizmo_drag_start_angle = 0.0f;
-    float gizmo_drag_start_dist = 1.0f;
-
-    bool edit_capture_active = false;
-    EditCommand active_edit_cmd;
-
-    std::string editor_status;
-    float editor_status_ttl = 0.0f;
-
-    float debug_fps = 0.0f;
-    float debug_frame_ms = 0.0f;
-    float debug_fps_accum_sec = 0.0f;
-    int debug_fps_accum_frames = 0;
-
-    bool gui_enabled = true;
-
-    // 鼠标摸头交互状态
-    InteractionControllerState interaction_state{};
-
-    std::unique_ptr<IInferenceAdapter> inference_adapter;
-    bool plugin_ready = false;
-    PluginParamBlendMode plugin_param_blend_mode = PluginParamBlendMode::Override;
-
-    ReminderService reminder_service;
-    bool reminder_ready = false;
-    float reminder_poll_accum_sec = 0.0f;
-    char reminder_title_input[128] = "喝水";
-    int reminder_after_min = 10;
-    std::vector<ReminderItem> reminder_upcoming;
-    std::string reminder_last_error;
-
-    PerceptionPipeline perception_pipeline;
-    PerceptionPipelineState perception_state;
-
-    TaskPrimaryCategory task_primary = TaskPrimaryCategory::Unknown;
-    TaskSecondaryCategory task_secondary = TaskSecondaryCategory::Unknown;
-};
-
-AppRuntime g_runtime;
-EditorControllerState g_editor_state;
 
 void ApplyPivotDelta(ModelPart *part, float delta_x, float delta_y);
 void EnsureSelectedPartIndexValid();
@@ -352,6 +214,99 @@ const char *TaskSecondaryCategoryName(TaskSecondaryCategory c) {
         case TaskSecondaryCategory::GameMenu: return "menu";
         default: return "unknown";
     }
+}
+
+std::string MakeUtf8SafeLabel(const std::string &s) {
+    if (s.empty()) return s;
+
+    std::string out;
+    out.reserve(s.size());
+
+    bool has_invalid = false;
+    const auto *p = reinterpret_cast<const unsigned char *>(s.data());
+    const std::size_t n = s.size();
+
+    for (std::size_t i = 0; i < n;) {
+        const unsigned char c = p[i];
+        if (c <= 0x7F) {
+            out.push_back(static_cast<char>(c));
+            ++i;
+            continue;
+        }
+
+        int need = 0;
+        std::uint32_t cp = 0;
+        if (c >= 0xC2 && c <= 0xDF) {
+            need = 1;
+            cp = c & 0x1Fu;
+        } else if (c >= 0xE0 && c <= 0xEF) {
+            need = 2;
+            cp = c & 0x0Fu;
+        } else if (c >= 0xF0 && c <= 0xF4) {
+            need = 3;
+            cp = c & 0x07u;
+        } else {
+            has_invalid = true;
+            ++i;
+            continue;
+        }
+
+        if (i + static_cast<std::size_t>(need) >= n) {
+            has_invalid = true;
+            break;
+        }
+
+        bool ok = true;
+        for (int k = 1; k <= need; ++k) {
+            const unsigned char cc = p[i + static_cast<std::size_t>(k)];
+            if ((cc & 0xC0u) != 0x80u) {
+                ok = false;
+                break;
+            }
+            cp = (cp << 6u) | (cc & 0x3Fu);
+        }
+
+        if (!ok) {
+            has_invalid = true;
+            ++i;
+            continue;
+        }
+
+        if ((need == 1 && cp < 0x80u) ||
+            (need == 2 && cp < 0x800u) ||
+            (need == 3 && cp < 0x10000u) ||
+            (cp >= 0xD800u && cp <= 0xDFFFu) ||
+            (cp > 0x10FFFFu)) {
+            has_invalid = true;
+            ++i;
+            continue;
+        }
+
+        out.append(s, i, static_cast<std::size_t>(need + 1));
+        i += static_cast<std::size_t>(need + 1);
+    }
+
+    if (has_invalid) {
+        return "[invalid-utf8]";
+    }
+    return out;
+}
+
+std::string MakeImguiAsciiSafe(const std::string &s) {
+    if (s.empty()) return s;
+    std::string out;
+    out.reserve(s.size());
+    for (unsigned char ch : s) {
+        if (ch >= 32 && ch <= 126) {
+            out.push_back(static_cast<char>(ch));
+        } else {
+            out.push_back('_');
+        }
+    }
+    if (out.find_first_not_of('_') == std::string::npos) {
+        return "[non-ascii-label]";
+    }
+    return out;
 }
 
 void InferTaskCategory(const SystemContextSnapshot &ctx,
@@ -1164,31 +1119,7 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 }
             }
 
-            if (g_runtime.reminder_ready) {
-                g_runtime.reminder_poll_accum_sec += std::max(0.0f, dt);
-                if (g_runtime.reminder_poll_accum_sec >= 1.0f) {
-                    g_runtime.reminder_poll_accum_sec = 0.0f;
-                    const std::int64_t now_sec = static_cast<std::int64_t>(std::time(nullptr));
-
-                    std::string due_err;
-                    auto due_items = g_runtime.reminder_service.PollDueAndMarkNotified(now_sec, 8, &due_err);
-                    if (!due_err.empty()) {
-                        g_runtime.reminder_last_error = due_err;
-                    }
-                    for (const auto &item : due_items) {
-                        SetEditorStatus(std::string("提醒: ") + item.title, 3.0f);
-                        SDL_Log("[Reminder] due id=%lld title=%s", static_cast<long long>(item.id), item.title.c_str());
-                    }
-
-                    std::string list_err;
-                    g_runtime.reminder_upcoming = g_runtime.reminder_service.ListUpcoming(now_sec, 8, &list_err);
-                    if (!list_err.empty()) {
-                        g_runtime.reminder_last_error = list_err;
-                    }
-                }
-            }
-
-            g_runtime.perception_pipeline.Tick(dt, g_runtime.perception_state);
+            TickAppSystems(g_runtime, dt);
             InferTaskCategory(g_runtime.perception_state.system_context_snapshot,
                               g_runtime.perception_state.ocr_result,
                               g_runtime.perception_state.scene_result,
@@ -1226,10 +1157,7 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
             if (g_runtime.gui_enabled) {
                 ImGui::SetNextWindowPos(ImVec2(12.0f, 120.0f), ImGuiCond_FirstUseEver);
                 ImGui::Begin("Runtime Debug");
-                ImGui::Text("FPS: %.2f", g_runtime.debug_fps);
-                ImGui::Text("Frame: %.2f ms", g_runtime.debug_frame_ms);
-                ImGui::Text("Model Loaded: %s", g_runtime.model_loaded ? "Yes" : "No");
-                ImGui::Text("PartCount: %d", static_cast<int>(g_runtime.model.parts.size()));
+                RenderAppDebugUi(g_runtime);
 
                 ImGui::SeparatorText("Model Hierarchy");
                 RenderModelHierarchyTree(g_runtime.model, g_runtime.selected_part_index);
@@ -1253,7 +1181,12 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 }
                 ImGui::Text("Scene Classifier: %s", g_runtime.perception_state.scene_classifier_ready ? "ready" : "not ready");
                 if (g_runtime.perception_state.scene_classifier_ready && !g_runtime.perception_state.scene_result.label.empty()) {
-                    ImGui::Text("Scene: %s (%.3f)", g_runtime.perception_state.scene_result.label.c_str(), g_runtime.perception_state.scene_result.score);
+                    const std::string safe_scene_label = MakeUtf8SafeLabel(g_runtime.perception_state.scene_result.label);
+                    std::string shown_scene_label = safe_scene_label;
+                    if (shown_scene_label.empty() || shown_scene_label.find('?') != std::string::npos) {
+                        shown_scene_label = "[unknown-label]";
+                    }
+                    ImGui::Text("Scene: %s (%.3f)", shown_scene_label.c_str(), g_runtime.perception_state.scene_result.score);
                 }
                 if (!g_runtime.perception_state.scene_classifier_last_error.empty()) {
                     ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Scene Error: %s", g_runtime.perception_state.scene_classifier_last_error.c_str());
@@ -1284,7 +1217,6 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 ImGui::SeparatorText("OCR");
                 ImGui::SliderInt("OCR Timeout (ms)", &g_runtime.perception_state.ocr_timeout_ms, 500, 10000);
                 g_runtime.perception_state.ocr_timeout_ms = std::clamp(g_runtime.perception_state.ocr_timeout_ms, 500, 10000);
-                ImGui::TextDisabled("OCR Det Input: fixed in current OcrService implementation");
 
                 if (g_runtime.perception_state.ocr_ready && !g_runtime.perception_state.ocr_result.summary.empty()) {
                     ImGui::TextWrapped("OCR Summary: %s", g_runtime.perception_state.ocr_result.summary.c_str());
@@ -1298,9 +1230,9 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                     ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "OCR Error: %s", g_runtime.perception_state.ocr_last_error.c_str());
                 }
 
-                ImGui::SeparatorText("任务分类");
-                ImGui::Text("一级: %s", TaskPrimaryCategoryName(g_runtime.task_primary));
-                ImGui::Text("二级: %s", TaskSecondaryCategoryName(g_runtime.task_secondary));
+                ImGui::SeparatorText("Task Category");
+                ImGui::Text("Primary: %s", TaskPrimaryCategoryName(g_runtime.task_primary));
+                ImGui::Text("Secondary: %s", TaskSecondaryCategoryName(g_runtime.task_secondary));
 
                 if (ImGui::Button("Close Program")) {
                     g_runtime.running = false;
@@ -1308,77 +1240,7 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 ImGui::SameLine();
                 ImGui::TextDisabled("(Esc)");
 
-                ImGui::SeparatorText("Schedule Reminder (SQLite)");
-                ImGui::InputText("Title", g_runtime.reminder_title_input, static_cast<int>(sizeof(g_runtime.reminder_title_input)));
-                ImGui::InputInt("After Minutes", &g_runtime.reminder_after_min, 1, 10);
-                g_runtime.reminder_after_min = std::max(1, g_runtime.reminder_after_min);
-
-                if (ImGui::Button("Add Reminder")) {
-                    if (!g_runtime.reminder_ready) {
-                        g_runtime.reminder_last_error = "reminder service not ready";
-                    } else {
-                        const std::int64_t now_sec = static_cast<std::int64_t>(std::time(nullptr));
-                        const std::int64_t due_sec = now_sec + static_cast<std::int64_t>(g_runtime.reminder_after_min) * 60;
-                        std::string add_err;
-                        if (g_runtime.reminder_service.AddReminder(g_runtime.reminder_title_input, due_sec, &add_err)) {
-                            SetEditorStatus("reminder added", 1.5f);
-                            g_runtime.reminder_last_error.clear();
-                            g_runtime.reminder_upcoming = g_runtime.reminder_service.ListActive(32, nullptr);
-                        } else {
-                            g_runtime.reminder_last_error = add_err;
-                        }
-                    }
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Refresh")) {
-                    if (g_runtime.reminder_ready) {
-                        std::string list_err;
-                        g_runtime.reminder_upcoming = g_runtime.reminder_service.ListActive(32, &list_err);
-                        if (!list_err.empty()) {
-                            g_runtime.reminder_last_error = list_err;
-                        }
-                    }
-                }
-
-                if (!g_runtime.reminder_last_error.empty()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Reminder Error: %s", g_runtime.reminder_last_error.c_str());
-                }
-
-                ImGui::Text("Active Reminders:");
-                const std::int64_t now_sec_ui = static_cast<std::int64_t>(std::time(nullptr));
-                for (const auto &item : g_runtime.reminder_upcoming) {
-                    ImGui::PushID(static_cast<int>(item.id));
-                    const long long remain_sec = static_cast<long long>(item.due_unix_sec - now_sec_ui);
-                    ImGui::Text("[%lld] %s", static_cast<long long>(item.id), item.title.c_str());
-                    ImGui::SameLine();
-                    if (remain_sec >= 0) {
-                        ImGui::TextDisabled("in %llds", remain_sec);
-                    } else {
-                        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "overdue %llds", -remain_sec);
-                    }
-
-                    if (ImGui::Button("Complete")) {
-                        std::string op_err;
-                        if (g_runtime.reminder_service.MarkCompleted(item.id, true, &op_err)) {
-                            g_runtime.reminder_upcoming = g_runtime.reminder_service.ListActive(32, nullptr);
-                            g_runtime.reminder_last_error.clear();
-                        } else {
-                            g_runtime.reminder_last_error = op_err;
-                        }
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Delete")) {
-                        std::string op_err;
-                        if (g_runtime.reminder_service.DeleteReminder(item.id, &op_err)) {
-                            g_runtime.reminder_upcoming = g_runtime.reminder_service.ListActive(32, nullptr);
-                            g_runtime.reminder_last_error.clear();
-                        } else {
-                            g_runtime.reminder_last_error = op_err;
-                        }
-                    }
-                    ImGui::Separator();
-                    ImGui::PopID();
-                }
+                RenderReminderPanel(g_runtime);
 
                 ImGui::End();
             }

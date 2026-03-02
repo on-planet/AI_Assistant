@@ -66,6 +66,11 @@ add_executable(AI_assistant WIN32
     src/k2d/controllers/interaction_controller.cpp
     src/k2d/capture/screen_capture_dxgi.cpp
     src/k2d/lifecycle/camera_facemesh_service.cpp
+    src/k2d/lifecycle/state/app_runtime_state.cpp
+    src/k2d/lifecycle/systems/app_systems.cpp
+    src/k2d/lifecycle/ui/app_debug_ui.cpp
+    src/k2d/lifecycle/ui/reminder_panel.cpp
+    src/k2d/lifecycle/orchestrator/app_orchestrator.cpp
 )
 
 target_link_libraries(AI_assistant PRIVATE SDL3::SDL3 "${ONNXRUNTIME_LIB}" ${OpenCV_LIBS} d3d11 dxgi windowsapp runtimeobject)

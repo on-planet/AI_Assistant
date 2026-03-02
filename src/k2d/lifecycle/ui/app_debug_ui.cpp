@@ -123,6 +123,12 @@ void RenderAppDebugUi(AppRuntime &runtime) {
     if (!runtime.asr_last_result.text.empty()) {
         ImGui::TextWrapped("ASR Text: %s", runtime.asr_last_result.text.c_str());
     }
+    ImGui::Text("Switch Reason: %s", runtime.asr_last_switch_reason.empty() ? "(none)" : runtime.asr_last_switch_reason.c_str());
+    ImGui::Text("RTF: %.3f", runtime.asr_rtf);
+    ImGui::Text("WER Proxy: %.3f", runtime.asr_wer_proxy);
+    ImGui::Text("Timeout Rate: %.2f%%", runtime.asr_timeout_rate * 100.0);
+    ImGui::Text("Cloud Call Ratio: %.2f%%", runtime.asr_cloud_call_ratio * 100.0);
+    ImGui::Text("Cloud Success Ratio: %.2f%%", runtime.asr_cloud_success_ratio * 100.0);
     if (!runtime.asr_last_error.empty()) {
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "ASR Error: %s", runtime.asr_last_error.c_str());
     }

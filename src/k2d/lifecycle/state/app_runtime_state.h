@@ -172,6 +172,21 @@ struct AppRuntime {
     std::vector<float> asr_audio_buffer;
     int asr_frame_samples = 320; // 20ms @ 16k
 
+    // ASR 监控指标
+    std::int64_t asr_total_segments = 0;
+    std::int64_t asr_timeout_segments = 0;
+    std::int64_t asr_cloud_attempts = 0;
+    std::int64_t asr_cloud_success = 0;
+    std::int64_t asr_cloud_fallbacks = 0;
+    double asr_audio_total_sec = 0.0;
+    double asr_infer_total_sec = 0.0;
+    double asr_rtf = 0.0;
+    double asr_timeout_rate = 0.0;
+    double asr_cloud_call_ratio = 0.0;
+    double asr_cloud_success_ratio = 0.0;
+    double asr_wer_proxy = 0.0;
+    std::string asr_last_switch_reason;
+
     TaskPrimaryCategory task_primary = TaskPrimaryCategory::Unknown;
     TaskSecondaryCategory task_secondary = TaskSecondaryCategory::Unknown;
 };

@@ -71,6 +71,37 @@ void TickAppSystems(AppRuntime &runtime, float dt) {
                 AsrRecognitionResult result{};
                 std::string asr_err;
                 const bool ok = runtime.asr_provider->Recognize(chunk, options, result, &asr_err);
+
+                runtime.asr_total_segments += 1;
+                const double audio_sec = static_cast<double>(chunk.samples.size()) /
+                                         static_cast<double>(std::max(1, chunk.sample_rate_hz));
+                const double infer_sec = static_cast<double>(std::max<std::int64_t>(0, result.latency_ms)) / 1000.0;
+                runtime.asr_audio_total_sec += audio_sec;
+                runtime.asr_infer_total_sec += infer_sec;
+                runtime.asr_rtf = runtime.asr_audio_total_sec > 1e-9
+                                      ? (runtime.asr_infer_total_sec / runtime.asr_audio_total_sec)
+                                      : 0.0;
+
+                if (result.timeout_detected) runtime.asr_timeout_segments += 1;
+                if (result.cloud_attempted) runtime.asr_cloud_attempts += 1;
+                if (result.cloud_succeeded) runtime.asr_cloud_success += 1;
+                if (result.fallback_to_offline) runtime.asr_cloud_fallbacks += 1;
+
+                runtime.asr_timeout_rate = runtime.asr_total_segments > 0
+                                               ? static_cast<double>(runtime.asr_timeout_segments) /
+                                                     static_cast<double>(runtime.asr_total_segments)
+                                               : 0.0;
+                runtime.asr_cloud_call_ratio = runtime.asr_total_segments > 0
+                                                   ? static_cast<double>(runtime.asr_cloud_attempts) /
+                                                         static_cast<double>(runtime.asr_total_segments)
+                                                   : 0.0;
+                runtime.asr_cloud_success_ratio = runtime.asr_cloud_attempts > 0
+                                                      ? static_cast<double>(runtime.asr_cloud_success) /
+                                                            static_cast<double>(runtime.asr_cloud_attempts)
+                                                      : 0.0;
+                runtime.asr_wer_proxy = std::clamp(1.0 - static_cast<double>(result.confidence), 0.0, 1.0);
+                runtime.asr_last_switch_reason = result.switch_reason;
+
                 if (ok) {
                     runtime.asr_last_result = std::move(result);
                     runtime.asr_last_error.clear();

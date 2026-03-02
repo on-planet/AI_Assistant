@@ -34,6 +34,14 @@ struct AsrRecognitionResult {
     std::string error;
     std::int64_t latency_ms = 0;
     AsrProviderKind provider = AsrProviderKind::Offline;
+
+    // 观测字段：路由与回退原因
+    bool cloud_attempted = false;
+    bool cloud_succeeded = false;
+    bool fallback_to_offline = false;
+    bool timeout_detected = false;
+    bool low_confidence_triggered = false;
+    std::string switch_reason;
 };
 
 class IAsrProvider {

@@ -1101,6 +1101,8 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                     in.vision.head_roll_deg = 0.0f;
                     in.vision.gaze_x = 0.0f;
                     in.vision.gaze_y = 0.0f;
+                    in.scene_label = g_runtime.perception_state.scene_result.label;
+                    in.task_label = TaskSecondaryCategoryName(g_runtime.task_secondary);
                     g_runtime.inference_adapter->SubmitInput(in);
                     has_plugin_out = g_runtime.inference_adapter->TryConsumeLatestOutput(plugin_out, nullptr);
                 }

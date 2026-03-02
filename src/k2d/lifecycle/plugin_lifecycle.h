@@ -60,6 +60,11 @@ struct PerceptionInput {
     float audio_level = 0.0f;
     float user_presence = 0.0f;
 
+    // 专家路由提示：先粗分类，再转发给子专家。
+    // 典型值：game / code / meeting / unknown
+    std::string scene_label;
+    std::string task_label;
+
     AudioFeaturePacket audio;
     VisionFeaturePacket vision;
     RuntimeStateFeaturePacket state;

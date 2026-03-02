@@ -212,7 +212,31 @@ public:
 
         out = BehaviorOutput{};
         const float presence = std::clamp(in.vision.user_presence, 0.0f, 1.0f);
-        out.param_targets["window.opacity"] = std::clamp(base_opacity_ + presence * 0.05f, 0.05f, 1.0f);
+
+        std::string route = "unknown";
+        if (in.scene_label.find("game") != std::string::npos) {
+            route = "game";
+        } else if (in.scene_label.find("code") != std::string::npos || in.scene_label.find("work") != std::string::npos) {
+            route = "code";
+        } else if (in.scene_label.find("meeting") != std::string::npos) {
+            route = "meeting";
+        }
+
+        float opacity_bias = 0.0f;
+        if (route == "game") {
+            opacity_bias = 0.08f;
+            out.event_scores["plugin.route.game"] = 1.0f;
+        } else if (route == "code") {
+            opacity_bias = 0.03f;
+            out.event_scores["plugin.route.code"] = 1.0f;
+        } else if (route == "meeting") {
+            opacity_bias = -0.05f;
+            out.event_scores["plugin.route.meeting"] = 1.0f;
+        } else {
+            out.event_scores["plugin.route.unknown"] = 1.0f;
+        }
+
+        out.param_targets["window.opacity"] = std::clamp(base_opacity_ + opacity_bias + presence * 0.05f, 0.05f, 1.0f);
         out.param_weights["window.opacity"] = 1.0f;
         out.param_targets["window.click_through"] = base_click_through_ ? 1.0f : 0.0f;
         out.param_weights["window.click_through"] = 1.0f;
@@ -221,6 +245,7 @@ public:
         out.param_targets["runtime.manual_param_mode"] = base_manual_param_mode_ ? 1.0f : 0.0f;
         out.param_weights["runtime.manual_param_mode"] = 1.0f;
         out.event_scores["plugin.models.count"] = static_cast<float>(1 + spec_.extra_onnx_paths.size());
+        out.event_scores["plugin.route.selected"] = (route == "unknown" ? 0.0f : 1.0f);
         out.trigger_blink = (presence > 0.8f);
         return PluginStatus::Ok;
     }

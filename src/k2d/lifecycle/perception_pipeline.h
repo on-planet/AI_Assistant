@@ -32,6 +32,12 @@ struct PerceptionBlackboard {
 };
 
 struct PerceptionPipelineState {
+    bool enabled = true;
+    bool scene_classifier_enabled = true;
+    bool ocr_enabled = true;
+    bool camera_facemesh_enabled = true;
+    bool system_context_enabled = true;
+
     bool screen_capture_ready = false;
     float screen_capture_poll_accum_sec = 0.0f;
     std::string screen_capture_last_error;

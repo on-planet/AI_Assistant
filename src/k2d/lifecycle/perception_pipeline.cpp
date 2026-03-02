@@ -185,7 +185,7 @@ void PerceptionPipeline::Shutdown(PerceptionPipelineState &state) noexcept {
 }
 
 void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
-    if (!state.screen_capture_ready) {
+    if (!state.enabled || !state.screen_capture_ready) {
         return;
     }
 
@@ -205,7 +205,7 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
         return;
     }
 
-    if (state.scene_classifier_ready) {
+    if (state.scene_classifier_enabled && state.scene_classifier_ready) {
         std::string scene_err;
         SceneClassificationResult scene_out{};
         if (scene_classifier_.Classify(frame, scene_out, &scene_err)) {
@@ -216,16 +216,18 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
         }
     }
 
-    SystemContextSnapshot context_snapshot{};
-    std::string ctx_err;
-    if (system_context_service_.Capture(context_snapshot, &ctx_err)) {
-        state.system_context_snapshot = std::move(context_snapshot);
-        state.system_context_last_error.clear();
-    } else if (!ctx_err.empty()) {
-        state.system_context_last_error = ctx_err;
+    if (state.system_context_enabled) {
+        SystemContextSnapshot context_snapshot{};
+        std::string ctx_err;
+        if (system_context_service_.Capture(context_snapshot, &ctx_err)) {
+            state.system_context_snapshot = std::move(context_snapshot);
+            state.system_context_last_error.clear();
+        } else if (!ctx_err.empty()) {
+            state.system_context_last_error = ctx_err;
+        }
     }
 
-    if (state.ocr_ready) {
+    if (state.ocr_enabled && state.ocr_ready) {
         if (ocr_future_.valid() &&
             ocr_future_.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
             ocr_future_.get();
@@ -360,7 +362,7 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
         }
     }
 
-    if (state.camera_facemesh_ready) {
+    if (state.camera_facemesh_enabled && state.camera_facemesh_ready) {
         FaceEmotionResult face_out{};
         std::string face_err;
         if (camera_facemesh_service_.RecognizeFromCamera(face_out, &face_err)) {

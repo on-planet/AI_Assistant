@@ -8,10 +8,18 @@
 
 #include "k2d/lifecycle/state/app_runtime_state.h"
 #include "k2d/lifecycle/asr/asr_provider.h"
+#include "k2d/lifecycle/asr/vad_segmenter.h"
 
 namespace k2d {
 
 void TickAppSystems(AppRuntime &runtime, float dt) {
+    runtime.perception_state.scene_classifier_enabled = runtime.feature_scene_classifier_enabled;
+    runtime.perception_state.ocr_enabled = runtime.feature_ocr_enabled;
+    runtime.perception_state.camera_facemesh_enabled = runtime.feature_face_emotion_enabled;
+    runtime.perception_state.system_context_enabled =
+        runtime.feature_scene_classifier_enabled || runtime.feature_ocr_enabled || runtime.feature_face_emotion_enabled;
+    runtime.perception_state.enabled = runtime.perception_state.system_context_enabled;
+
     // 迁移批次 #1：Reminder + Perception
     if (runtime.reminder_ready) {
         runtime.reminder_poll_accum_sec += std::max(0.0f, dt);
@@ -38,28 +46,38 @@ void TickAppSystems(AppRuntime &runtime, float dt) {
 
     runtime.perception_pipeline.Tick(dt, runtime.perception_state);
 
-    if (runtime.asr_ready && runtime.asr_provider) {
+    if (runtime.feature_asr_enabled && runtime.asr_ready && runtime.asr_provider) {
         runtime.asr_poll_accum_sec += std::max(0.0f, dt);
-        if (runtime.asr_poll_accum_sec >= 2.0f) {
+        if (runtime.asr_poll_accum_sec >= 0.02f) {
             runtime.asr_poll_accum_sec = 0.0f;
 
-            AsrAudioChunk chunk{};
-            chunk.sample_rate_hz = 16000;
-            chunk.is_final = true;
-            chunk.samples.assign(16000, 0.0f);
+            // TODO: 接入真实麦克风 PCM 数据。这里先用静音帧做行为占位。
+            runtime.asr_audio_buffer.assign(static_cast<std::size_t>(runtime.asr_frame_samples), 0.0f);
 
-            AsrRecognitionOptions options{};
-            options.language = "zh";
+            VadFrame frame{};
+            frame.sample_rate_hz = 16000;
+            frame.samples = runtime.asr_audio_buffer;
 
-            AsrRecognitionResult result{};
-            std::string asr_err;
-            const bool ok = runtime.asr_provider->Recognize(chunk, options, result, &asr_err);
-            if (ok) {
-                runtime.asr_last_result = std::move(result);
-                runtime.asr_last_error.clear();
-            } else {
-                runtime.asr_last_error = asr_err;
-                SDL_Log("ASR recognize failed: %s", asr_err.c_str());
+            VadSegment seg{};
+            if (runtime.asr_vad.Accept(frame, seg)) {
+                AsrAudioChunk chunk{};
+                chunk.sample_rate_hz = seg.sample_rate_hz;
+                chunk.is_final = seg.is_final;
+                chunk.samples = seg.samples;
+
+                AsrRecognitionOptions options{};
+                options.language = "zh";
+
+                AsrRecognitionResult result{};
+                std::string asr_err;
+                const bool ok = runtime.asr_provider->Recognize(chunk, options, result, &asr_err);
+                if (ok) {
+                    runtime.asr_last_result = std::move(result);
+                    runtime.asr_last_error.clear();
+                } else {
+                    runtime.asr_last_error = asr_err;
+                    SDL_Log("ASR recognize failed: %s", asr_err.c_str());
+                }
             }
         }
     }

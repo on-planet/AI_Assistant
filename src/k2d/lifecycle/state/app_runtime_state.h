@@ -19,6 +19,7 @@
 #include "k2d/lifecycle/plugin_lifecycle.h"
 #include "k2d/lifecycle/reminder_service.h"
 #include "k2d/lifecycle/asr/asr_provider.h"
+#include "k2d/lifecycle/asr/vad_segmenter.h"
 
 namespace k2d {
 
@@ -156,11 +157,20 @@ struct AppRuntime {
     PerceptionPipeline perception_pipeline;
     PerceptionPipelineState perception_state;
 
+    bool feature_scene_classifier_enabled = true;
+    bool feature_ocr_enabled = true;
+    bool feature_face_emotion_enabled = true;
+    bool feature_asr_enabled = false;
+
     std::unique_ptr<IAsrProvider> asr_provider;
     bool asr_ready = false;
     float asr_poll_accum_sec = 0.0f;
     std::string asr_last_error;
     AsrRecognitionResult asr_last_result;
+
+    EnergyVadSegmenter asr_vad;
+    std::vector<float> asr_audio_buffer;
+    int asr_frame_samples = 320; // 20ms @ 16k
 
     TaskPrimaryCategory task_primary = TaskPrimaryCategory::Unknown;
     TaskSecondaryCategory task_secondary = TaskSecondaryCategory::Unknown;

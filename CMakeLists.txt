@@ -69,6 +69,7 @@ add_executable(AI_assistant WIN32
     src/k2d/lifecycle/asr/offline_asr_provider.cpp
     src/k2d/lifecycle/asr/cloud_asr_provider.cpp
     src/k2d/lifecycle/asr/hybrid_asr_provider.cpp
+    src/k2d/lifecycle/asr/vad_segmenter.cpp
     src/k2d/lifecycle/state/app_runtime_state.cpp
     src/k2d/lifecycle/systems/app_systems.cpp
     src/k2d/lifecycle/ui/app_debug_ui.cpp

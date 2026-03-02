@@ -57,6 +57,12 @@ void RenderAppDebugUi(AppRuntime &runtime) {
     const float pat_ratio = std::clamp(runtime.interaction_state.head_pat_react_ttl / 0.35f, 0.0f, 1.0f);
     ImGui::ProgressBar(pat_ratio, ImVec2(-1.0f, 0.0f), "Pat React");
 
+    ImGui::SeparatorText("Feature Toggles");
+    ImGui::Checkbox("Enable Scene Classifier", &runtime.feature_scene_classifier_enabled);
+    ImGui::Checkbox("Enable OCR", &runtime.feature_ocr_enabled);
+    ImGui::Checkbox("Enable Face Emotion", &runtime.feature_face_emotion_enabled);
+    ImGui::Checkbox("Enable ASR", &runtime.feature_asr_enabled);
+
     ImGui::Separator();
     ImGui::Text("Capture: %s", runtime.perception_state.screen_capture_ready ? "ready" : "not ready");
     if (!runtime.perception_state.screen_capture_last_error.empty()) {
@@ -70,8 +76,8 @@ void RenderAppDebugUi(AppRuntime &runtime) {
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Scene Error: %s", runtime.perception_state.scene_classifier_last_error.c_str());
     }
 
-    ImGui::Text("OCR: %s", runtime.perception_state.ocr_ready ? "ready" : "not ready");
-    ImGui::Text("Camera FaceMesh: %s", runtime.perception_state.camera_facemesh_ready ? "ready" : "not ready");
+    ImGui::Text("OCR: %s (%s)", runtime.perception_state.ocr_ready ? "ready" : "not ready", runtime.feature_ocr_enabled ? "enabled" : "disabled");
+    ImGui::Text("Camera FaceMesh: %s (%s)", runtime.perception_state.camera_facemesh_ready ? "ready" : "not ready", runtime.feature_face_emotion_enabled ? "enabled" : "disabled");
     if (runtime.perception_state.camera_facemesh_ready) {
         ImGui::Text("Face: %s", runtime.perception_state.face_emotion_result.face_detected ? "present" : "none");
         ImGui::Text("Emotion: %s (%.2f)",
@@ -110,6 +116,15 @@ void RenderAppDebugUi(AppRuntime &runtime) {
     }
     if (!runtime.perception_state.ocr_last_error.empty()) {
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "OCR Error: %s", runtime.perception_state.ocr_last_error.c_str());
+    }
+
+    ImGui::SeparatorText("ASR");
+    ImGui::Text("ASR: %s (%s)", runtime.asr_ready ? "ready" : "not ready", runtime.feature_asr_enabled ? "enabled" : "disabled");
+    if (!runtime.asr_last_result.text.empty()) {
+        ImGui::TextWrapped("ASR Text: %s", runtime.asr_last_result.text.c_str());
+    }
+    if (!runtime.asr_last_error.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "ASR Error: %s", runtime.asr_last_error.c_str());
     }
 
     ImGui::SeparatorText("Task Category");

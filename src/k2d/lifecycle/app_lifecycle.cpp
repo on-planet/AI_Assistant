@@ -1162,58 +1162,6 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 ImGui::SeparatorText("Model Hierarchy");
                 RenderModelHierarchyTree(g_runtime.model, g_runtime.selected_part_index);
 
-                ImGui::Checkbox("Show Debug Stats", &g_runtime.show_debug_stats);
-                ImGui::Checkbox("Manual Param Mode", &g_runtime.manual_param_mode);
-                ImGui::Checkbox("GUI Enabled", &g_runtime.gui_enabled);
-                ImGui::Checkbox("Hair Spring", &g_runtime.model.enable_hair_spring);
-                ImGui::Checkbox("Simple Mask", &g_runtime.model.enable_simple_mask);
-
-                ImGui::SeparatorText("Head Pat Interaction");
-                ImGui::Text("Head Hovering: %s", g_runtime.interaction_state.head_pat_hovering ? "Yes" : "No");
-                ImGui::Text("React TTL: %.3f s", g_runtime.interaction_state.head_pat_react_ttl);
-                const float pat_ratio = std::clamp(g_runtime.interaction_state.head_pat_react_ttl / 0.35f, 0.0f, 1.0f);
-                ImGui::ProgressBar(pat_ratio, ImVec2(-1.0f, 0.0f), "Pat React");
-
-                ImGui::Separator();
-                ImGui::Text("Capture: %s", g_runtime.perception_state.screen_capture_ready ? "ready" : "not ready");
-                if (!g_runtime.perception_state.screen_capture_last_error.empty()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Capture Error: %s", g_runtime.perception_state.screen_capture_last_error.c_str());
-                }
-                ImGui::Text("Scene Classifier: %s", g_runtime.perception_state.scene_classifier_ready ? "ready" : "not ready");
-                if (g_runtime.perception_state.scene_classifier_ready && !g_runtime.perception_state.scene_result.label.empty()) {
-                    const std::string safe_scene_label = MakeUtf8SafeLabel(g_runtime.perception_state.scene_result.label);
-                    std::string shown_scene_label = safe_scene_label;
-                    if (shown_scene_label.empty() || shown_scene_label.find('?') != std::string::npos) {
-                        shown_scene_label = "[unknown-label]";
-                    }
-                    ImGui::Text("Scene: %s (%.3f)", shown_scene_label.c_str(), g_runtime.perception_state.scene_result.score);
-                }
-                if (!g_runtime.perception_state.scene_classifier_last_error.empty()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Scene Error: %s", g_runtime.perception_state.scene_classifier_last_error.c_str());
-                }
-
-                ImGui::Text("OCR: %s", g_runtime.perception_state.ocr_ready ? "ready" : "not ready");
-                ImGui::Text("Camera FaceMesh: %s", g_runtime.perception_state.camera_facemesh_ready ? "ready" : "not ready");
-                if (g_runtime.perception_state.camera_facemesh_ready) {
-                    ImGui::Text("Face: %s",
-                                g_runtime.perception_state.face_emotion_result.face_detected ? "present" : "none");
-                    ImGui::Text("Emotion: %s (%.2f)",
-                                g_runtime.perception_state.face_emotion_result.emotion_label.empty()
-                                    ? "(none)"
-                                    : g_runtime.perception_state.face_emotion_result.emotion_label.c_str(),
-                                g_runtime.perception_state.face_emotion_result.emotion_score);
-                }
-                if (!g_runtime.perception_state.camera_facemesh_last_error.empty()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Camera Error: %s", g_runtime.perception_state.camera_facemesh_last_error.c_str());
-                }
-                ImGui::SeparatorText("System Context");
-                ImGui::Text("Process: %s", g_runtime.perception_state.system_context_snapshot.process_name.empty() ? "(empty)" : g_runtime.perception_state.system_context_snapshot.process_name.c_str());
-                ImGui::TextWrapped("Title: %s", g_runtime.perception_state.system_context_snapshot.window_title.empty() ? "(empty)" : g_runtime.perception_state.system_context_snapshot.window_title.c_str());
-                ImGui::TextWrapped("URL: %s", g_runtime.perception_state.system_context_snapshot.url_hint.empty() ? "(empty)" : g_runtime.perception_state.system_context_snapshot.url_hint.c_str());
-                if (!g_runtime.perception_state.system_context_last_error.empty()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "System Context Error: %s", g_runtime.perception_state.system_context_last_error.c_str());
-                }
-
                 ImGui::SeparatorText("Task Category");
                 ImGui::Text("Primary: %s", TaskPrimaryCategoryName(g_runtime.task_primary));
                 ImGui::Text("Secondary: %s", TaskSecondaryCategoryName(g_runtime.task_secondary));

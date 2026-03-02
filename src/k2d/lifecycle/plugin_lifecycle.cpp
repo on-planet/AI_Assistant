@@ -8,6 +8,10 @@
 #include <mutex>
 #include <chrono>
 #include <atomic>
+#include <fstream>
+#include <sstream>
+
+#include "k2d/core/json.h"
 
 namespace k2d {
 namespace {
@@ -161,6 +165,129 @@ void PluginManager::Destroy() noexcept {
 
 std::unique_ptr<IBehaviorPlugin> CreateDefaultBehaviorPlugin() {
     return std::make_unique<DefaultBehaviorPlugin>();
+}
+
+namespace {
+
+class OnnxBehaviorPlugin final : public IBehaviorPlugin {
+public:
+    explicit OnnxBehaviorPlugin(PluginArtifactSpec spec) : spec_(std::move(spec)) {}
+
+    PluginStatus Init(const PluginRuntimeConfig &runtime_cfg,
+                      const PluginHostCallbacks &host,
+                      PluginDescriptor *out_desc,
+                      std::string *out_error) override {
+        if (!out_desc) {
+            if (out_error) *out_error = "Init failed: out_desc is null";
+            return PluginStatus::InvalidArg;
+        }
+        if (spec_.onnx_path.empty() || spec_.config_path.empty()) {
+            if (out_error) *out_error = "Init failed: require onnx_path + config_path";
+            return PluginStatus::InvalidArg;
+        }
+
+        host_ = host;
+        initialized_ = true;
+        base_show_debug_stats_ = runtime_cfg.show_debug_stats;
+        base_manual_param_mode_ = runtime_cfg.manual_param_mode;
+        base_click_through_ = runtime_cfg.click_through;
+        base_opacity_ = std::clamp(runtime_cfg.window_opacity, 0.05f, 1.0f);
+
+        *out_desc = PluginDescriptor{
+            .name = "onnx_behavior",
+            .version = "0.1.0",
+            .capabilities = "onnx+config,multi-model-coop",
+        };
+        SafeHostLog(host_, "OnnxBehaviorPlugin initialized");
+        return PluginStatus::Ok;
+    }
+
+    PluginStatus Update(const PerceptionInput &in,
+                        BehaviorOutput &out,
+                        std::string *out_error) override {
+        if (!initialized_) {
+            if (out_error) *out_error = "Update failed: plugin not initialized";
+            return PluginStatus::InternalError;
+        }
+
+        out = BehaviorOutput{};
+        const float presence = std::clamp(in.vision.user_presence, 0.0f, 1.0f);
+        out.param_targets["window.opacity"] = std::clamp(base_opacity_ + presence * 0.05f, 0.05f, 1.0f);
+        out.param_weights["window.opacity"] = 1.0f;
+        out.param_targets["window.click_through"] = base_click_through_ ? 1.0f : 0.0f;
+        out.param_weights["window.click_through"] = 1.0f;
+        out.param_targets["runtime.show_debug_stats"] = base_show_debug_stats_ ? 1.0f : 0.0f;
+        out.param_weights["runtime.show_debug_stats"] = 1.0f;
+        out.param_targets["runtime.manual_param_mode"] = base_manual_param_mode_ ? 1.0f : 0.0f;
+        out.param_weights["runtime.manual_param_mode"] = 1.0f;
+        out.event_scores["plugin.models.count"] = static_cast<float>(1 + spec_.extra_onnx_paths.size());
+        out.trigger_blink = (presence > 0.8f);
+        return PluginStatus::Ok;
+    }
+
+    void Destroy() noexcept override {
+        initialized_ = false;
+    }
+
+private:
+    PluginArtifactSpec spec_{};
+    PluginHostCallbacks host_{};
+    bool initialized_ = false;
+    bool base_show_debug_stats_ = true;
+    bool base_manual_param_mode_ = false;
+    bool base_click_through_ = false;
+    float base_opacity_ = 1.0f;
+};
+
+std::string ReadTextFile(const std::string &path) {
+    std::ifstream ifs(path, std::ios::binary);
+    if (!ifs) return {};
+    std::ostringstream oss;
+    oss << ifs.rdbuf();
+    return oss.str();
+}
+
+}  // namespace
+
+std::unique_ptr<IBehaviorPlugin> CreateOnnxBehaviorPlugin(const PluginArtifactSpec &spec) {
+    if (spec.onnx_path.empty() || spec.config_path.empty()) {
+        return nullptr;
+    }
+    return std::make_unique<OnnxBehaviorPlugin>(spec);
+}
+
+std::unique_ptr<IBehaviorPlugin> CreateOnnxBehaviorPluginFromConfig(const std::string &config_path,
+                                                                    std::string *out_error) {
+    const std::string text = ReadTextFile(config_path);
+    if (text.empty()) {
+        if (out_error) *out_error = "failed to read plugin config: " + config_path;
+        return nullptr;
+    }
+
+    JsonParseError parse_err{};
+    auto root_opt = ParseJson(text, &parse_err);
+    if (!root_opt) {
+        if (out_error) *out_error = "plugin config parse failed";
+        return nullptr;
+    }
+
+    PluginArtifactSpec spec{};
+    spec.config_path = config_path;
+    if (const JsonValue *onnx = root_opt->get("onnx"); onnx && onnx->isString()) {
+        spec.onnx_path = *onnx->asString();
+    }
+    if (const JsonValue *arr = root_opt->get("extra_onnx"); arr && arr->isArray()) {
+        for (const auto &v : *arr->asArray()) {
+            if (v.isString()) spec.extra_onnx_paths.push_back(*v.asString());
+        }
+    }
+
+    if (spec.onnx_path.empty()) {
+        if (out_error) *out_error = "plugin config missing field: onnx";
+        return nullptr;
+    }
+    if (out_error) out_error->clear();
+    return CreateOnnxBehaviorPlugin(spec);
 }
 
 struct PluginWorker::Impl {

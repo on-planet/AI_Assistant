@@ -135,7 +135,18 @@ private:
     bool initialized_ = false;
 };
 
+struct PluginArtifactSpec {
+    // 固化 AIPlugin 交付接口：.onnx + config.json
+    std::string onnx_path;
+    std::string config_path;
+    // 可选：多模型协作（专家集）
+    std::vector<std::string> extra_onnx_paths;
+};
+
 std::unique_ptr<IBehaviorPlugin> CreateDefaultBehaviorPlugin();
+std::unique_ptr<IBehaviorPlugin> CreateOnnxBehaviorPlugin(const PluginArtifactSpec &spec);
+std::unique_ptr<IBehaviorPlugin> CreateOnnxBehaviorPluginFromConfig(const std::string &config_path,
+                                                                    std::string *out_error = nullptr);
 
 struct PluginWorkerConfig {
     int update_hz = 60;

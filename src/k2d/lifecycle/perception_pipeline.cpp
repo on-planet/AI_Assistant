@@ -141,7 +141,7 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
             }
 
             std::string try_err;
-            if (camera_facemesh_service_.Init(cand.first, cand.second, &try_err)) {
+            if (camera_facemesh_service_.Init(cand.first, cand.second, &try_err, 0)) {
                 state.camera_facemesh_ready = true;
                 state.camera_facemesh_last_error.clear();
                 SDL_Log("CameraFacemesh init ok: model=%s labels=%s", cand.first.c_str(), cand.second.c_str());
@@ -363,7 +363,7 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
     if (state.camera_facemesh_ready) {
         FaceEmotionResult face_out{};
         std::string face_err;
-        if (camera_facemesh_service_.RecognizeFromFrame(frame, face_out, &face_err)) {
+        if (camera_facemesh_service_.RecognizeFromCamera(face_out, &face_err)) {
             state.face_emotion_result = std::move(face_out);
             state.camera_facemesh_last_error.clear();
         } else if (!face_err.empty()) {

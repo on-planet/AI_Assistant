@@ -7,11 +7,13 @@
 #include <fstream>
 #include <memory>
 #include <sstream>
+#include <cstring>
 
 #include <onnxruntime_cxx_api.h>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/objdetect.hpp>
+#include <opencv2/videoio.hpp>
 
 namespace k2d {
 namespace {
@@ -79,11 +81,14 @@ struct CameraFacemeshService::Impl {
 
     cv::CascadeClassifier face_cascade;
     std::vector<std::string> labels;
+    cv::VideoCapture camera;
+    int camera_index = 0;
 };
 
 bool CameraFacemeshService::Init(const std::string &model_path,
                                  const std::string &labels_path,
-                                 std::string *out_error) {
+                                 std::string *out_error,
+                                 int camera_index) {
     Shutdown();
 
     auto impl = std::make_unique<Impl>();
@@ -150,6 +155,12 @@ bool CameraFacemeshService::Init(const std::string &model_path,
         }
     }
 
+    impl->camera_index = camera_index;
+    if (!impl->camera.open(camera_index)) {
+        if (out_error) *out_error = "failed to open camera index: " + std::to_string(camera_index);
+        return false;
+    }
+
     impl_ = impl.release();
     if (out_error) out_error->clear();
     return true;
@@ -157,12 +168,15 @@ bool CameraFacemeshService::Init(const std::string &model_path,
 
 void CameraFacemeshService::Shutdown() noexcept {
     if (!impl_) return;
+    if (impl_->camera.isOpened()) {
+        impl_->camera.release();
+    }
     delete impl_;
     impl_ = nullptr;
 }
 
 bool CameraFacemeshService::IsReady() const noexcept {
-    return impl_ && impl_->session;
+    return impl_ && impl_->session && impl_->camera.isOpened();
 }
 
 bool CameraFacemeshService::RecognizeFromFrame(const ScreenCaptureFrame &frame,
@@ -200,6 +214,19 @@ bool CameraFacemeshService::RecognizeFromFrame(const ScreenCaptureFrame &frame,
     const cv::Rect face = *best_it;
     out.face_detected = true;
 
+    // 关键点（当前用检测框推导 5-point，后续可替换为真实 facemesh landmark 输出）
+    const float x = static_cast<float>(face.x);
+    const float y = static_cast<float>(face.y);
+    const float w = static_cast<float>(face.width);
+    const float h = static_cast<float>(face.height);
+    out.keypoints = {
+        FaceKeypoint{x + w * 0.30f, y + h * 0.38f, 1.0f, "left_eye"},
+        FaceKeypoint{x + w * 0.70f, y + h * 0.38f, 1.0f, "right_eye"},
+        FaceKeypoint{x + w * 0.50f, y + h * 0.56f, 1.0f, "nose"},
+        FaceKeypoint{x + w * 0.35f, y + h * 0.76f, 1.0f, "mouth_left"},
+        FaceKeypoint{x + w * 0.65f, y + h * 0.76f, 1.0f, "mouth_right"},
+    };
+
     cv::Mat roi = bgr(face).clone();
     cv::Mat resized;
     cv::resize(roi, resized, cv::Size(impl_->input_w, impl_->input_h), 0.0, 0.0, cv::INTER_LINEAR);
@@ -210,11 +237,11 @@ bool CameraFacemeshService::RecognizeFromFrame(const ScreenCaptureFrame &frame,
     std::vector<float> input(1ull * 3ull * static_cast<std::size_t>(impl_->input_h) * static_cast<std::size_t>(impl_->input_w), 0.0f);
     const std::size_t plane = static_cast<std::size_t>(impl_->input_h) * static_cast<std::size_t>(impl_->input_w);
 
-    for (int y = 0; y < impl_->input_h; ++y) {
-        const auto *row = rgb.ptr<cv::Vec3b>(y);
-        for (int x = 0; x < impl_->input_w; ++x) {
-            const cv::Vec3b px = row[x];
-            const std::size_t o = static_cast<std::size_t>(y) * static_cast<std::size_t>(impl_->input_w) + static_cast<std::size_t>(x);
+    for (int yy = 0; yy < impl_->input_h; ++yy) {
+        const auto *row = rgb.ptr<cv::Vec3b>(yy);
+        for (int xx = 0; xx < impl_->input_w; ++xx) {
+            const cv::Vec3b px = row[xx];
+            const std::size_t o = static_cast<std::size_t>(yy) * static_cast<std::size_t>(impl_->input_w) + static_cast<std::size_t>(xx);
             input[o] = static_cast<float>(px[0]) / 255.0f;
             input[plane + o] = static_cast<float>(px[1]) / 255.0f;
             input[plane * 2 + o] = static_cast<float>(px[2]) / 255.0f;
@@ -247,9 +274,10 @@ bool CameraFacemeshService::RecognizeFromFrame(const ScreenCaptureFrame &frame,
         auto it = std::max_element(out.logits.begin(), out.logits.end());
         const std::size_t best = static_cast<std::size_t>(std::distance(out.logits.begin(), it));
 
+        float max_v = *it;
         float sum_exp = 0.0f;
-        for (float v : out.logits) sum_exp += std::exp(v);
-        out.emotion_score = (sum_exp > 1e-6f) ? (std::exp(*it) / sum_exp) : 0.0f;
+        for (float v : out.logits) sum_exp += std::exp(v - max_v);
+        out.emotion_score = (sum_exp > 1e-6f) ? (1.0f / sum_exp) : 0.0f;
 
         if (best < impl_->labels.size()) {
             out.emotion_label = impl_->labels[best];
@@ -263,6 +291,33 @@ bool CameraFacemeshService::RecognizeFromFrame(const ScreenCaptureFrame &frame,
         if (out_error) *out_error = std::string("facemesh infer exception: ") + e.what();
         return false;
     }
+}
+
+bool CameraFacemeshService::RecognizeFromCamera(FaceEmotionResult &out,
+                                                std::string *out_error) {
+    out = FaceEmotionResult{};
+    if (!IsReady()) {
+        if (out_error) *out_error = "camera facemesh service not ready";
+        return false;
+    }
+
+    cv::Mat frame_bgr;
+    if (!impl_->camera.read(frame_bgr) || frame_bgr.empty()) {
+        if (out_error) *out_error = "failed to read camera frame";
+        return false;
+    }
+
+    cv::Mat frame_bgra;
+    cv::cvtColor(frame_bgr, frame_bgra, cv::COLOR_BGR2BGRA);
+
+    ScreenCaptureFrame fake_frame;
+    fake_frame.width = frame_bgra.cols;
+    fake_frame.height = frame_bgra.rows;
+    const std::size_t bytes = static_cast<std::size_t>(frame_bgra.cols) * static_cast<std::size_t>(frame_bgra.rows) * 4ull;
+    fake_frame.bgra.resize(bytes);
+    std::memcpy(fake_frame.bgra.data(), frame_bgra.data, bytes);
+
+    return RecognizeFromFrame(fake_frame, out, out_error);
 }
 
 }  // namespace k2d

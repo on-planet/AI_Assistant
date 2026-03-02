@@ -79,6 +79,11 @@ void RenderAppDebugUi(AppRuntime &runtime) {
                         ? "(none)"
                         : runtime.perception_state.face_emotion_result.emotion_label.c_str(),
                     runtime.perception_state.face_emotion_result.emotion_score);
+        ImGui::Text("Keypoints: %d", static_cast<int>(runtime.perception_state.face_emotion_result.keypoints.size()));
+        if (!runtime.perception_state.face_emotion_result.keypoints.empty()) {
+            const auto &kp = runtime.perception_state.face_emotion_result.keypoints.front();
+            ImGui::Text("KP[0]: %s (%.1f, %.1f) s=%.2f", kp.name.c_str(), kp.x, kp.y, kp.score);
+        }
     }
     if (!runtime.perception_state.camera_facemesh_last_error.empty()) {
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Camera Error: %s", runtime.perception_state.camera_facemesh_last_error.c_str());

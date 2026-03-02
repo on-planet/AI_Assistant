@@ -51,8 +51,20 @@ void TickAppSystems(AppRuntime &runtime, float dt) {
         if (runtime.asr_poll_accum_sec >= 0.02f) {
             runtime.asr_poll_accum_sec = 0.0f;
 
-            // TODO: 接入真实麦克风 PCM 数据。这里先用静音帧做行为占位。
-            runtime.asr_audio_buffer.assign(static_cast<std::size_t>(runtime.asr_frame_samples), 0.0f);
+            // 麦克风队列取 20ms 帧；不足时补静音。
+            runtime.asr_audio_buffer.clear();
+            runtime.asr_audio_buffer.reserve(static_cast<std::size_t>(runtime.asr_frame_samples));
+            {
+                std::lock_guard<std::mutex> lk(runtime.mic_mutex);
+                while (!runtime.mic_pcm_queue.empty() &&
+                       runtime.asr_audio_buffer.size() < static_cast<std::size_t>(runtime.asr_frame_samples)) {
+                    runtime.asr_audio_buffer.push_back(runtime.mic_pcm_queue.front());
+                    runtime.mic_pcm_queue.pop_front();
+                }
+            }
+            while (runtime.asr_audio_buffer.size() < static_cast<std::size_t>(runtime.asr_frame_samples)) {
+                runtime.asr_audio_buffer.push_back(0.0f);
+            }
 
             VadFrame frame{};
             frame.sample_rate_hz = 16000;

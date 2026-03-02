@@ -1,6 +1,7 @@
 #include "k2d/lifecycle/app_lifecycle.h"
 
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_audio.h>
 #include <SDL3/SDL_tray.h>
 
 #include "imgui.h"
@@ -58,6 +59,30 @@ void EnsureSelectedParamIndexValid();
 void SyncAnimationChannelState();
 void SetEditorStatus(std::string text, float ttl_sec = 2.0f);
 void SetClickThrough(bool enabled);
+
+void SDLCALL MicAudioInputCallback(void *userdata, SDL_AudioStream *stream, int additional_amount, int total_amount) {
+    (void)total_amount;
+    auto *runtime = static_cast<AppRuntime *>(userdata);
+    if (!runtime || additional_amount <= 0) {
+        return;
+    }
+
+    std::vector<float> tmp(static_cast<std::size_t>(additional_amount / static_cast<int>(sizeof(float))));
+    const int got = SDL_GetAudioStreamData(stream, tmp.data(), additional_amount);
+    if (got <= 0) {
+        return;
+    }
+
+    const int n = got / static_cast<int>(sizeof(float));
+    std::lock_guard<std::mutex> lk(runtime->mic_mutex);
+    for (int i = 0; i < n; ++i) {
+        runtime->mic_pcm_queue.push_back(tmp[static_cast<std::size_t>(i)]);
+    }
+    constexpr std::size_t kMaxQueueSamples = 16000 * 20;
+    while (runtime->mic_pcm_queue.size() > kMaxQueueSamples) {
+        runtime->mic_pcm_queue.pop_front();
+    }
+}
 
 ModelReloadServiceContext BuildModelReloadServiceContext() {
     ModelReloadServiceContext reload_ctx{};
@@ -1197,7 +1222,7 @@ bool AppLifecycleInit(AppLifecycleContext &ctx) {
     (void)ctx.argc;
     (void)ctx.argv;
 
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_AUDIO)) {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
         ctx.exit_code = 1;
         return false;
@@ -1259,6 +1284,36 @@ bool AppLifecycleInit(AppLifecycleContext &ctx) {
     }
     if (!ImGui_ImplSDLRenderer3_Init(g_runtime.renderer)) {
         SDL_Log("ImGui_ImplSDLRenderer3_Init failed");
+    }
+
+    SDL_AudioSpec desired{};
+    desired.format = SDL_AUDIO_F32;
+    desired.channels = 1;
+    desired.freq = 16000;
+
+    g_runtime.mic_device_id = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_RECORDING, &desired);
+    if (g_runtime.mic_device_id != 0) {
+        SDL_AudioSpec obtained{};
+        int sample_frames = 0;
+        if (SDL_GetAudioDeviceFormat(g_runtime.mic_device_id, &obtained, &sample_frames)) {
+            g_runtime.mic_obtained_spec = obtained;
+        }
+
+        SDL_AudioStream *mic_stream = SDL_CreateAudioStream(&desired, &desired);
+        if (mic_stream && SDL_BindAudioStream(g_runtime.mic_device_id, mic_stream)) {
+            SDL_SetAudioStreamGetCallback(mic_stream, MicAudioInputCallback, &g_runtime);
+            SDL_ResumeAudioDevice(g_runtime.mic_device_id);
+            SDL_Log("Mic capture ready: 16k mono f32");
+        } else {
+            SDL_Log("Mic stream bind failed, fallback to placeholder audio");
+            if (mic_stream) {
+                SDL_DestroyAudioStream(mic_stream);
+            }
+            SDL_CloseAudioDevice(g_runtime.mic_device_id);
+            g_runtime.mic_device_id = 0;
+        }
+    } else {
+        SDL_Log("Mic open failed: %s", SDL_GetError());
     }
 
     ctx.exit_code = 0;
@@ -1432,6 +1487,11 @@ void AppLifecycleTeardown(AppLifecycleContext &ctx) {
     g_runtime.plugin_ready = false;
 
     g_runtime.perception_pipeline.Shutdown(g_runtime.perception_state);
+
+    if (g_runtime.mic_device_id != 0) {
+        SDL_CloseAudioDevice(g_runtime.mic_device_id);
+        g_runtime.mic_device_id = 0;
+    }
 
     if (g_runtime.asr_provider) {
         g_runtime.asr_provider->Shutdown();

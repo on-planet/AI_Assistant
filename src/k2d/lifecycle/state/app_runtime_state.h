@@ -3,8 +3,10 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_tray.h>
 
+#include <deque>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -62,6 +64,11 @@ struct AppRuntime {
     SDL_Window *window = nullptr;
     SDL_Renderer *renderer = nullptr;
     SDL_Tray *tray = nullptr;
+
+    SDL_AudioDeviceID mic_device_id = 0;
+    SDL_AudioSpec mic_obtained_spec{};
+    std::mutex mic_mutex;
+    std::deque<float> mic_pcm_queue;
     SDL_TrayEntry *entry_click_through = nullptr;
     SDL_TrayEntry *entry_show_hide = nullptr;
 

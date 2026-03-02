@@ -18,6 +18,7 @@
 #include "k2d/lifecycle/perception_pipeline.h"
 #include "k2d/lifecycle/plugin_lifecycle.h"
 #include "k2d/lifecycle/reminder_service.h"
+#include "k2d/lifecycle/asr/asr_provider.h"
 
 namespace k2d {
 
@@ -154,6 +155,12 @@ struct AppRuntime {
 
     PerceptionPipeline perception_pipeline;
     PerceptionPipelineState perception_state;
+
+    std::unique_ptr<IAsrProvider> asr_provider;
+    bool asr_ready = false;
+    float asr_poll_accum_sec = 0.0f;
+    std::string asr_last_error;
+    AsrRecognitionResult asr_last_result;
 
     TaskPrimaryCategory task_primary = TaskPrimaryCategory::Unknown;
     TaskSecondaryCategory task_secondary = TaskSecondaryCategory::Unknown;

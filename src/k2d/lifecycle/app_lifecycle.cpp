@@ -30,6 +30,9 @@
 #include "k2d/lifecycle/systems/app_systems.h"
 #include "k2d/lifecycle/ui/app_debug_ui.h"
 #include "k2d/lifecycle/ui/reminder_panel.h"
+#include "k2d/lifecycle/asr/cloud_asr_provider.h"
+#include "k2d/lifecycle/asr/hybrid_asr_provider.h"
+#include "k2d/lifecycle/asr/offline_asr_provider.h"
 
 #include <algorithm>
 #include <cctype>
@@ -1349,6 +1352,22 @@ bool AppLifecycleBootstrap(AppLifecycleContext &ctx) {
         g_runtime.perception_pipeline.Init(g_runtime.perception_state, &perception_err);
     }
 
+    {
+        std::unique_ptr<IAsrProvider> offline = std::make_unique<OfflineAsrProvider>("assets/whisper/ggml-base.bin");
+        std::unique_ptr<IAsrProvider> cloud = std::make_unique<CloudAsrProvider>("https://api.openai.com/v1/audio/transcriptions", "YOUR_API_KEY");
+        g_runtime.asr_provider = std::make_unique<HybridAsrProvider>(std::move(offline), std::move(cloud));
+
+        std::string asr_err;
+        g_runtime.asr_ready = g_runtime.asr_provider->Init(&asr_err);
+        if (!g_runtime.asr_ready) {
+            g_runtime.asr_last_error = asr_err;
+            SDL_Log("ASR provider init failed: %s", asr_err.c_str());
+        } else {
+            g_runtime.asr_last_error.clear();
+            SDL_Log("ASR provider init ok: %s", g_runtime.asr_provider->Name());
+        }
+    }
+
     g_runtime.demo_texture = bootstrap.demo_texture;
     g_runtime.demo_texture_w = bootstrap.demo_texture_w;
     g_runtime.demo_texture_h = bootstrap.demo_texture_h;
@@ -1413,6 +1432,12 @@ void AppLifecycleTeardown(AppLifecycleContext &ctx) {
     g_runtime.plugin_ready = false;
 
     g_runtime.perception_pipeline.Shutdown(g_runtime.perception_state);
+
+    if (g_runtime.asr_provider) {
+        g_runtime.asr_provider->Shutdown();
+        g_runtime.asr_provider.reset();
+    }
+    g_runtime.asr_ready = false;
 
     if (g_runtime.tray) {
         SDL_DestroyTray(g_runtime.tray);

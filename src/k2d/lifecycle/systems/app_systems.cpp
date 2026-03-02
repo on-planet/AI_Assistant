@@ -7,6 +7,7 @@
 #include <SDL3/SDL_log.h>
 
 #include "k2d/lifecycle/state/app_runtime_state.h"
+#include "k2d/lifecycle/asr/asr_provider.h"
 
 namespace k2d {
 
@@ -36,6 +37,32 @@ void TickAppSystems(AppRuntime &runtime, float dt) {
     }
 
     runtime.perception_pipeline.Tick(dt, runtime.perception_state);
+
+    if (runtime.asr_ready && runtime.asr_provider) {
+        runtime.asr_poll_accum_sec += std::max(0.0f, dt);
+        if (runtime.asr_poll_accum_sec >= 2.0f) {
+            runtime.asr_poll_accum_sec = 0.0f;
+
+            AsrAudioChunk chunk{};
+            chunk.sample_rate_hz = 16000;
+            chunk.is_final = true;
+            chunk.samples.assign(16000, 0.0f);
+
+            AsrRecognitionOptions options{};
+            options.language = "zh";
+
+            AsrRecognitionResult result{};
+            std::string asr_err;
+            const bool ok = runtime.asr_provider->Recognize(chunk, options, result, &asr_err);
+            if (ok) {
+                runtime.asr_last_result = std::move(result);
+                runtime.asr_last_error.clear();
+            } else {
+                runtime.asr_last_error = asr_err;
+                SDL_Log("ASR recognize failed: %s", asr_err.c_str());
+            }
+        }
+    }
 }
 
 }  // namespace k2d

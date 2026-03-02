@@ -68,9 +68,13 @@ bool HybridAsrProvider::Recognize(const AsrAudioChunk &chunk,
         return false;
     }
 
+    // 统一音频标准：16kHz / mono / float PCM [-1, 1]
+    AsrAudioChunk normalized = chunk;
+    normalized.sample_rate_hz = 16000;
+
     AsrRecognitionResult offline_result;
     std::string offline_err;
-    const bool offline_ok = offline_->Recognize(chunk, options, offline_result, &offline_err);
+    const bool offline_ok = offline_->Recognize(normalized, options, offline_result, &offline_err);
 
     const bool should_fallback_to_cloud =
         cloud_ && config_.cloud_fallback_enabled &&
@@ -86,7 +90,7 @@ bool HybridAsrProvider::Recognize(const AsrAudioChunk &chunk,
 
     AsrRecognitionResult cloud_result;
     std::string cloud_err;
-    const bool cloud_ok = cloud_->Recognize(chunk, options, cloud_result, &cloud_err);
+    const bool cloud_ok = cloud_->Recognize(normalized, options, cloud_result, &cloud_err);
     if (cloud_ok && cloud_result.ok) {
         out_result = cloud_result;
         if (out_error) {
@@ -95,8 +99,13 @@ bool HybridAsrProvider::Recognize(const AsrAudioChunk &chunk,
         return true;
     }
 
+    // 云端失败自动回退离线，保证可用性
     out_result = offline_result;
-    out_result.error = cloud_err.empty() ? offline_err : cloud_err;
+    if (!offline_result.ok && !cloud_err.empty()) {
+        out_result.error = cloud_err;
+    } else {
+        out_result.error = cloud_err.empty() ? offline_err : ("cloud failed fallback offline: " + cloud_err);
+    }
     if (out_error) {
         *out_error = out_result.error;
     }

@@ -157,12 +157,20 @@ struct PluginWorkerConfig {
     int update_hz = 60;
     int frame_budget_ms = 1;
     int timeout_degrade_threshold = 8;
+
+    // 自动禁用与恢复策略
+    int disable_after_consecutive_failures = 24;
+    int auto_recover_after_ms = 5000;
 };
 
 struct PluginWorkerStats {
     std::uint64_t timeout_count = 0;
     std::uint64_t exception_count = 0;
+    std::uint64_t internal_error_count = 0;
+    std::uint64_t disable_count = 0;
+    std::uint64_t recover_count = 0;
     int current_update_hz = 60;
+    bool auto_disabled = false;
     std::string last_error;
 };
 

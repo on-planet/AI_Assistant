@@ -330,8 +330,14 @@ struct PluginWorker::Impl {
 
     std::uint64_t timeout_count = 0;
     std::uint64_t exception_count = 0;
+    std::uint64_t internal_error_count = 0;
+    std::uint64_t disable_count = 0;
+    std::uint64_t recover_count = 0;
     int current_update_hz = 60;
     int consecutive_timeout_count = 0;
+    int consecutive_failures = 0;
+    bool auto_disabled = false;
+    std::chrono::steady_clock::time_point last_disable_tp{};
     std::string last_error;
 };
 
@@ -374,8 +380,12 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
     impl_->cfg.update_hz = std::max(1, impl_->cfg.update_hz);
     impl_->cfg.frame_budget_ms = std::max(1, impl_->cfg.frame_budget_ms);
     impl_->cfg.timeout_degrade_threshold = std::max(1, impl_->cfg.timeout_degrade_threshold);
+    impl_->cfg.disable_after_consecutive_failures = std::max(1, impl_->cfg.disable_after_consecutive_failures);
+    impl_->cfg.auto_recover_after_ms = std::max(100, impl_->cfg.auto_recover_after_ms);
     impl_->current_update_hz = impl_->cfg.update_hz;
     impl_->consecutive_timeout_count = 0;
+    impl_->consecutive_failures = 0;
+    impl_->auto_disabled = false;
     impl_->running.store(true);
 
     impl_->worker = std::thread([this]() {
@@ -383,6 +393,19 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
             const int current_hz = std::max(1, impl_->current_update_hz);
             const auto step = std::chrono::milliseconds(std::max(1, 1000 / current_hz));
             const auto t0 = std::chrono::steady_clock::now();
+
+            {
+                std::lock_guard<std::mutex> lock(impl_->mtx);
+                if (impl_->auto_disabled) {
+                    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(t0 - impl_->last_disable_tp).count();
+                    if (ms >= impl_->cfg.auto_recover_after_ms) {
+                        impl_->auto_disabled = false;
+                        impl_->consecutive_failures = 0;
+                        ++impl_->recover_count;
+                        impl_->last_error = "plugin auto recovered";
+                    }
+                }
+            }
 
             PerceptionInput in{};
             {
@@ -412,8 +435,11 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
                     impl_->latest_out = out;
                     ++impl_->out_seq;
                     impl_->consecutive_timeout_count = 0;
+                    impl_->consecutive_failures = 0;
+                    impl_->auto_disabled = false;
                     impl_->last_error.clear();
                 } else {
+                    ++impl_->consecutive_failures;
                     if (st == PluginStatus::Timeout) {
                         ++impl_->timeout_count;
                         ++impl_->consecutive_timeout_count;
@@ -428,6 +454,8 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
                                 next_hz = 30;
                             } else if (next_hz > 15) {
                                 next_hz = 15;
+                            } else if (next_hz > 10) {
+                                next_hz = 10;
                             }
                             if (next_hz != impl_->current_update_hz) {
                                 impl_->current_update_hz = next_hz;
@@ -437,12 +465,21 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
                         }
                     } else {
                         impl_->consecutive_timeout_count = 0;
+                        ++impl_->internal_error_count;
                     }
+
                     if (caught_exception) {
                         ++impl_->exception_count;
                     }
                     if (!err.empty()) {
                         impl_->last_error = err;
+                    }
+
+                    if (!impl_->auto_disabled && impl_->consecutive_failures >= impl_->cfg.disable_after_consecutive_failures) {
+                        impl_->auto_disabled = true;
+                        impl_->last_disable_tp = std::chrono::steady_clock::now();
+                        ++impl_->disable_count;
+                        impl_->last_error = "plugin auto disabled due to consecutive failures";
                     }
                 }
             }
@@ -451,6 +488,10 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
                 std::chrono::steady_clock::now() - t0);
             if (elapsed.count() < impl_->cfg.frame_budget_ms) {
                 std::this_thread::sleep_for(step - std::min(step, elapsed));
+            }
+
+            if (impl_->auto_disabled) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
             }
         }
     });
@@ -492,7 +533,11 @@ PluginWorkerStats PluginWorker::GetStats() const {
     PluginWorkerStats s{};
     s.timeout_count = impl_->timeout_count;
     s.exception_count = impl_->exception_count;
+    s.internal_error_count = impl_->internal_error_count;
+    s.disable_count = impl_->disable_count;
+    s.recover_count = impl_->recover_count;
     s.current_update_hz = impl_->current_update_hz;
+    s.auto_disabled = impl_->auto_disabled;
     s.last_error = impl_->last_error;
     return s;
 }

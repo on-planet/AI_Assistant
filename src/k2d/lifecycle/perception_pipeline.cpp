@@ -243,9 +243,8 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
         }
 
         if (!scene_running_.load(std::memory_order_acquire)) {
-            ScreenCaptureFrame scene_frame = frame;
             scene_running_.store(true, std::memory_order_release);
-            scene_future_ = std::async(std::launch::async, [this, scene_frame = std::move(scene_frame)]() mutable {
+            scene_future_ = std::async(std::launch::async, [this, scene_frame = frame]() mutable {
                 AsyncScenePacket local{};
                 local.ready = true;
                 local.ok = scene_classifier_.Classify(scene_frame, local.result, &local.error);

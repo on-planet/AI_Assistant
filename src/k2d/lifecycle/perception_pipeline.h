@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <future>
 #include <memory>
 #include <mutex>
@@ -86,6 +87,7 @@ private:
     struct AsyncOcrPacket {
         bool ready = false;
         bool ok = false;
+        std::uint64_t seq = 0;
         OcrResult result;
         std::string error;
         int elapsed_ms = 0;
@@ -94,6 +96,7 @@ private:
     struct AsyncScenePacket {
         bool ready = false;
         bool ok = false;
+        std::uint64_t seq = 0;
         SceneClassificationResult result;
         std::string error;
     };
@@ -106,6 +109,7 @@ private:
     struct AsyncFacePacket {
         bool ready = false;
         bool ok = false;
+        std::uint64_t seq = 0;
         FaceEmotionResult result;
         std::string error;
     };
@@ -119,6 +123,14 @@ private:
     std::atomic<bool> ocr_running_{false};
     std::mutex ocr_mutex_;
     AsyncOcrPacket ocr_packet_;
+
+    std::atomic<std::uint64_t> scene_submit_seq_{0};
+    std::atomic<std::uint64_t> ocr_submit_seq_{0};
+    std::atomic<std::uint64_t> face_submit_seq_{0};
+
+    std::uint64_t scene_applied_seq_ = 0;
+    std::uint64_t ocr_applied_seq_ = 0;
+    std::uint64_t face_applied_seq_ = 0;
 };
 
 }  // namespace k2d

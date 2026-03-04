@@ -233,7 +233,8 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
             }
         }
 
-        if (has_scene_packet) {
+        if (has_scene_packet && scene_packet.seq > scene_applied_seq_) {
+            scene_applied_seq_ = scene_packet.seq;
             if (scene_packet.ok) {
                 state.scene_result = std::move(scene_packet.result);
                 state.scene_classifier_last_error.clear();
@@ -243,14 +244,18 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
         }
 
         if (!scene_running_.load(std::memory_order_acquire)) {
+            const std::uint64_t seq = scene_submit_seq_.fetch_add(1, std::memory_order_acq_rel) + 1;
             scene_running_.store(true, std::memory_order_release);
-            scene_future_ = std::async(std::launch::async, [this, scene_frame = frame]() mutable {
+            scene_future_ = std::async(std::launch::async, [this, seq, scene_frame = frame]() mutable {
                 AsyncScenePacket local{};
                 local.ready = true;
+                local.seq = seq;
                 local.ok = scene_classifier_.Classify(scene_frame, local.result, &local.error);
 
                 std::lock_guard<std::mutex> lk(scene_mutex_);
-                scene_packet_ = std::move(local);
+                if (!scene_packet_.ready || local.seq >= scene_packet_.seq) {
+                    scene_packet_ = std::move(local);
+                }
             });
         }
     }
@@ -285,7 +290,8 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
         }
 
         bool has_new_ocr_packet = false;
-        if (has_packet) {
+        if (has_packet && packet.seq > ocr_applied_seq_) {
+            ocr_applied_seq_ = packet.seq;
             has_new_ocr_packet = true;
             state.ocr_skipped_due_timeout = false;
             if (!packet.ok) {
@@ -306,6 +312,7 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
         }
 
         if (!ocr_running_.load(std::memory_order_acquire)) {
+            const std::uint64_t seq = ocr_submit_seq_.fetch_add(1, std::memory_order_acq_rel) + 1;
             // 避免在主线程深拷贝整帧 BGRA（可能数 MB~十几 MB），减少 OCR 触发瞬间卡顿。
             ScreenCaptureFrame ocr_frame = std::move(frame);
             OcrSystemContext ocr_context{};
@@ -314,9 +321,10 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
             ocr_context.url = state.system_context_snapshot.url_hint;
 
             ocr_running_.store(true, std::memory_order_release);
-            ocr_future_ = std::async(std::launch::async, [this, ocr_frame = std::move(ocr_frame), ocr_context = std::move(ocr_context)]() mutable {
+            ocr_future_ = std::async(std::launch::async, [this, seq, ocr_frame = std::move(ocr_frame), ocr_context = std::move(ocr_context)]() mutable {
                 AsyncOcrPacket local{};
                 local.ready = true;
+                local.seq = seq;
 
                 const auto t0 = std::chrono::steady_clock::now();
                 local.ok = ocr_service_.Recognize(ocr_frame, &ocr_context, local.result, &local.error);
@@ -324,7 +332,9 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
                 local.elapsed_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
 
                 std::lock_guard<std::mutex> lk(ocr_mutex_);
-                ocr_packet_ = std::move(local);
+                if (!ocr_packet_.ready || local.seq >= ocr_packet_.seq) {
+                    ocr_packet_ = std::move(local);
+                }
             });
         }
 
@@ -425,7 +435,8 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
             }
         }
 
-        if (has_face_packet) {
+        if (has_face_packet && face_packet.seq > face_applied_seq_) {
+            face_applied_seq_ = face_packet.seq;
             if (face_packet.ok) {
                 state.face_emotion_result = std::move(face_packet.result);
                 state.camera_facemesh_last_error.clear();
@@ -435,14 +446,18 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
         }
 
         if (!face_running_.load(std::memory_order_acquire)) {
+            const std::uint64_t seq = face_submit_seq_.fetch_add(1, std::memory_order_acq_rel) + 1;
             face_running_.store(true, std::memory_order_release);
-            face_future_ = std::async(std::launch::async, [this]() {
+            face_future_ = std::async(std::launch::async, [this, seq]() {
                 AsyncFacePacket local{};
                 local.ready = true;
+                local.seq = seq;
                 local.ok = camera_facemesh_service_.RecognizeFromCamera(local.result, &local.error);
 
                 std::lock_guard<std::mutex> lk(face_mutex_);
-                face_packet_ = std::move(local);
+                if (!face_packet_.ready || local.seq >= face_packet_.seq) {
+                    face_packet_ = std::move(local);
+                }
             });
         }
 

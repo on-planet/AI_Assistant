@@ -119,9 +119,45 @@ bool AppLifecycleInitImpl(AppLifecycleContext &ctx) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
+
+    ImGuiIO &io = ImGui::GetIO();
+    io.Fonts->Clear();
+
+    ImFontConfig font_cfg{};
+    font_cfg.OversampleH = 2;
+    font_cfg.OversampleV = 2;
+    font_cfg.PixelSnapH = true;
+
+    const char *font_candidates[] = {
+        "C:/Windows/Fonts/msyh.ttc",   // 微软雅黑（优先，含中英文）
+        "C:/Windows/Fonts/simhei.ttf", // 黑体
+        "C:/Windows/Fonts/simsun.ttc", // 宋体
+    };
+
+    bool font_loaded = false;
+    for (const char *font_path : font_candidates) {
+        if (io.Fonts->AddFontFromFileTTF(font_path,
+                                         18.0f,
+                                         &font_cfg,
+                                         io.Fonts->GetGlyphRangesChineseFull()) != nullptr) {
+            font_loaded = true;
+            break;
+        }
+    }
+    if (!font_loaded) {
+        io.Fonts->AddFontDefault();
+    }
+    io.FontGlobalScale = 1.0f;
+
     ImGuiStyle &style = ImGui::GetStyle();
-    style.Colors[ImGuiCol_Text] = ImVec4(1, 1, 1, 1);
-    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.08f, 0.08f, 0.08f, 1);
+    style.Alpha = 1.0f;
+    style.DisabledAlpha = 0.72f;
+    style.Colors[ImGuiCol_Text] = ImVec4(0.96f, 0.96f, 0.96f, 1.0f);
+    style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.62f, 0.62f, 0.62f, 1.0f);
+    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.08f, 0.08f, 0.08f, 0.94f);
+    style.Colors[ImGuiCol_ChildBg] = ImVec4(0.10f, 0.10f, 0.10f, 0.70f);
+    style.Colors[ImGuiCol_PopupBg] = ImVec4(0.10f, 0.10f, 0.10f, 0.96f);
+
     ImGui_ImplSDL3_InitForSDLRenderer(g_runtime.window, g_runtime.renderer);
     ImGui_ImplSDLRenderer3_Init(g_runtime.renderer);
 

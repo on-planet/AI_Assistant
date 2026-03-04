@@ -776,6 +776,18 @@ EditorInputBindingBridge BuildEditorInputBindingBridge(AppRuntime &runtime) {
         .adjust_selected_param = [](float delta) { AdjustSelectedParam(delta); },
         .reset_selected_param = []() { ResetSelectedParam(); },
         .reset_all_params = []() { ResetAllParams(); },
+        .toggle_edit_mode = [&runtime]() {
+            runtime.edit_mode = !runtime.edit_mode;
+            if (runtime.edit_mode) {
+                EnsureSelectedPartIndexValid(runtime);
+                SetEditorStatus(runtime, "edit mode ON", 1.5f);
+            } else {
+                EndDragging();
+                EndGizmoDrag();
+                runtime.gizmo_hover_handle = GizmoHandle::None;
+                SetEditorStatus(runtime, "edit mode OFF", 1.5f);
+            }
+        },
         .toggle_manual_param_mode = []() { ToggleManualParamMode(); },
         .save_model = []() { SaveEditedModelJsonToDisk(); },
         .undo_edit = []() { UndoLastEdit(); },
@@ -808,8 +820,8 @@ EditorInputBindingBridge BuildEditorInputBindingBridge(AppRuntime &runtime) {
 
 }  // namespace
 
-k2d::EditorInputCallbacks BuildEditorInputCallbacks() {
-    return BuildEditorInputCallbacksFromRuntime(g_runtime, BuildEditorInputBindingBridge(g_runtime));
+k2d::EditorInputCallbacks BuildEditorInputCallbacks(AppRuntime &runtime) {
+    return BuildEditorInputCallbacksFromRuntime(runtime, BuildEditorInputBindingBridge(runtime));
 }
 
 void AppLifecycleRun(AppLifecycleContext &ctx) {
@@ -825,7 +837,7 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
         .debug_fps_accum_frames = &runtime.debug_fps_accum_frames,
         .handle_event = [&runtime](const SDL_Event &event) {
             HandleAppRuntimeEvent(runtime, event, AppEventHandlerBridge{
-                .build_editor_input_callbacks = []() { return BuildEditorInputCallbacks(); },
+                .build_editor_input_callbacks = [&runtime]() { return BuildEditorInputCallbacks(runtime); },
                 .toggle_edit_mode = [&runtime]() {
                     runtime.edit_mode = !runtime.edit_mode;
                     if (runtime.edit_mode) {

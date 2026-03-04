@@ -6,7 +6,8 @@ void DispatchEditorInputEvent(const SDL_Event &event, const EditorInputCallbacks
     switch (event.type) {
         case SDL_EVENT_MOUSE_BUTTON_DOWN: {
             if (callbacks.on_mouse_button_down) {
-                const bool shift_pressed = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
+                const bool *keys = SDL_GetKeyboardState(nullptr);
+                const bool shift_pressed = keys && keys[SDL_SCANCODE_LSHIFT];
                 callbacks.on_mouse_button_down(event.button.x, event.button.y, shift_pressed, event.button.button);
             }
             break;

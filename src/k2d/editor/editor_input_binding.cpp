@@ -7,14 +7,14 @@
 namespace k2d {
 
 EditorInputCallbacks BuildEditorInputCallbacksFromRuntime(AppRuntime &runtime,
-                                                          const EditorInputBindingBridge &bridge) {
+                                                          EditorInputBindingBridge bridge) {
     const auto ctx = AppInputControllerContext{
         .running = &runtime.running,
         .show_debug_stats = &runtime.show_debug_stats,
         .gui_enabled = &runtime.gui_enabled,
         .edit_mode = &runtime.edit_mode,
         .manual_param_mode = &runtime.manual_param_mode,
-        .toggle_edit_mode = []() {},
+        .toggle_edit_mode = bridge.toggle_edit_mode,
         .toggle_manual_param_mode = bridge.toggle_manual_param_mode,
         .cycle_selected_part = bridge.cycle_selected_part,
         .adjust_selected_param = bridge.adjust_selected_param,
@@ -23,7 +23,7 @@ EditorInputCallbacks BuildEditorInputCallbacksFromRuntime(AppRuntime &runtime,
         .save_model = bridge.save_model,
         .undo_edit = bridge.undo_edit,
         .redo_edit = bridge.redo_edit,
-        .on_mouse_button_down = [&](float mx, float my, bool shift_pressed, Uint8 button) {
+        .on_mouse_button_down = [&runtime, bridge](float mx, float my, bool shift_pressed, Uint8 button) {
             if (button == SDL_BUTTON_LEFT) {
                 bridge.EnsureSelectedPartIndexValid();
                 if (!shift_pressed && runtime.selected_part_index >= 0 &&
@@ -48,11 +48,11 @@ EditorInputCallbacks BuildEditorInputCallbacksFromRuntime(AppRuntime &runtime,
                 bridge.BeginDragPivot(mx, my);
             }
         },
-        .on_mouse_button_up = [&]() {
+        .on_mouse_button_up = [bridge]() {
             bridge.EndDragging();
             bridge.EndGizmoDrag();
         },
-        .on_mouse_motion = [&](float mx, float my) {
+        .on_mouse_motion = [&runtime, bridge](float mx, float my) {
             bridge.OnHeadPatMouseMotion(mx, my);
 
             if (runtime.gizmo_dragging) {

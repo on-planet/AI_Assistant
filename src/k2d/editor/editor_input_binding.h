@@ -25,6 +25,7 @@ struct EditorInputBindingBridge {
     FloatArgFn adjust_selected_param;
     VoidFn reset_selected_param;
     VoidFn reset_all_params;
+    VoidFn toggle_edit_mode;
     VoidFn toggle_manual_param_mode;
     VoidFn save_model;
     VoidFn undo_edit;
@@ -98,6 +99,6 @@ struct EditorInputBindingBridge {
 };
 
 EditorInputCallbacks BuildEditorInputCallbacksFromRuntime(AppRuntime &runtime,
-                                                          const EditorInputBindingBridge &bridge);
+                                                          EditorInputBindingBridge bridge);
 
 }  // namespace k2d

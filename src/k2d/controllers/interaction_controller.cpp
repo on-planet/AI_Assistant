@@ -188,6 +188,26 @@ void HandleHeadPatMouseMotion(InteractionControllerState &state,
     state.head_pat_hovering = hovering_head;
 }
 
+void HandleHeadPatMouseDown(InteractionControllerState &state,
+                            const InteractionControllerContext &ctx,
+                            float mouse_x,
+                            float mouse_y) {
+    if (!ctx.model_loaded || !ctx.model || !ctx.pick_top_part_at) {
+        return;
+    }
+
+    const int picked = ctx.pick_top_part_at(mouse_x, mouse_y);
+    if (picked < 0 || picked >= static_cast<int>(ctx.model->parts.size())) {
+        return;
+    }
+
+    const ModelPart &part = ctx.model->parts[static_cast<std::size_t>(picked)];
+    if (IsHeadPartId(part.id)) {
+        TriggerHeadPatReaction(state);
+        state.head_pat_hovering = true;
+    }
+}
+
 void UpdateHeadPatReaction(InteractionControllerState &state,
                            const InteractionControllerContext &ctx,
                            float dt_sec) {

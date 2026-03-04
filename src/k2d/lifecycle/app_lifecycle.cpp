@@ -806,6 +806,18 @@ EditorInputBindingBridge BuildEditorInputBindingBridge(AppRuntime &runtime) {
                 mx,
                 my);
         },
+        .on_head_pat_mouse_down = [&runtime](float mx, float my) {
+            HandleHeadPatMouseDown(
+                runtime.interaction_state,
+                InteractionControllerContext{
+                    .model_loaded = runtime.model_loaded,
+                    .model = &runtime.model,
+                    .pick_top_part_at = [](float x, float y) { return PickTopPartAt(x, y); },
+                    .has_model_params = []() { return HasModelParams(); },
+                },
+                mx,
+                my);
+        },
         .begin_drag_part = [](float mx, float my) { BeginDragPart(mx, my); },
         .begin_drag_pivot = [](float mx, float my) { BeginDragPivot(mx, my); },
         .end_dragging = []() { EndDragging(); },

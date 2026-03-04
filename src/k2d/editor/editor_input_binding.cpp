@@ -25,6 +25,7 @@ EditorInputCallbacks BuildEditorInputCallbacksFromRuntime(AppRuntime &runtime,
         .redo_edit = bridge.redo_edit,
         .on_mouse_button_down = [&runtime, bridge](float mx, float my, bool shift_pressed, Uint8 button) {
             if (button == SDL_BUTTON_LEFT) {
+                bridge.OnHeadPatMouseDown(mx, my);
                 bridge.EnsureSelectedPartIndexValid();
                 if (!shift_pressed && runtime.selected_part_index >= 0 &&
                     runtime.selected_part_index < static_cast<int>(runtime.model.parts.size())) {

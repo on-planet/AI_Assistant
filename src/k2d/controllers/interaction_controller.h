@@ -62,6 +62,11 @@ void HandleHeadPatMouseMotion(InteractionControllerState &state,
                               float mouse_x,
                               float mouse_y);
 
+void HandleHeadPatMouseDown(InteractionControllerState &state,
+                            const InteractionControllerContext &ctx,
+                            float mouse_x,
+                            float mouse_y);
+
 void UpdateHeadPatReaction(InteractionControllerState &state,
                            const InteractionControllerContext &ctx,
                            float dt_sec);

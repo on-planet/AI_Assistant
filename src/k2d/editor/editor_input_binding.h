@@ -34,6 +34,7 @@ struct EditorInputBindingBridge {
     PickTopPartAtFn pick_top_part_at;
     HasModelParamsFn has_model_params;
     MouseFn on_head_pat_mouse_motion;
+    MouseFn on_head_pat_mouse_down;
 
     MouseFn begin_drag_part;
     MouseFn begin_drag_pivot;
@@ -52,6 +53,12 @@ struct EditorInputBindingBridge {
     void OnHeadPatMouseMotion(float mx, float my) const {
         if (on_head_pat_mouse_motion) {
             on_head_pat_mouse_motion(mx, my);
+        }
+    }
+
+    void OnHeadPatMouseDown(float mx, float my) const {
+        if (on_head_pat_mouse_down) {
+            on_head_pat_mouse_down(mx, my);
         }
     }
 

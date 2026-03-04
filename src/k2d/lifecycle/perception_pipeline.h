@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <future>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -89,6 +90,30 @@ private:
         std::string error;
         int elapsed_ms = 0;
     };
+
+    struct AsyncScenePacket {
+        bool ready = false;
+        bool ok = false;
+        SceneClassificationResult result;
+        std::string error;
+    };
+
+    std::future<void> scene_future_;
+    std::atomic<bool> scene_running_{false};
+    std::mutex scene_mutex_;
+    AsyncScenePacket scene_packet_;
+
+    struct AsyncFacePacket {
+        bool ready = false;
+        bool ok = false;
+        FaceEmotionResult result;
+        std::string error;
+    };
+
+    std::future<void> face_future_;
+    std::atomic<bool> face_running_{false};
+    std::mutex face_mutex_;
+    AsyncFacePacket face_packet_;
 
     std::future<void> ocr_future_;
     std::atomic<bool> ocr_running_{false};

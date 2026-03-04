@@ -168,6 +168,16 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
 }
 
 void PerceptionPipeline::Shutdown(PerceptionPipelineState &state) noexcept {
+    if (scene_future_.valid()) {
+        scene_future_.wait();
+    }
+    scene_running_.store(false, std::memory_order_release);
+
+    if (face_future_.valid()) {
+        face_future_.wait();
+    }
+    face_running_.store(false, std::memory_order_release);
+
     if (ocr_future_.valid()) {
         ocr_future_.wait();
     }
@@ -206,13 +216,43 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
     }
 
     if (state.scene_classifier_enabled && state.scene_classifier_ready) {
-        std::string scene_err;
-        SceneClassificationResult scene_out{};
-        if (scene_classifier_.Classify(frame, scene_out, &scene_err)) {
-            state.scene_result = std::move(scene_out);
-            state.scene_classifier_last_error.clear();
-        } else if (!scene_err.empty()) {
-            state.scene_classifier_last_error = scene_err;
+        if (scene_future_.valid() &&
+            scene_future_.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+            scene_future_.get();
+            scene_running_.store(false, std::memory_order_release);
+        }
+
+        AsyncScenePacket scene_packet;
+        bool has_scene_packet = false;
+        {
+            std::lock_guard<std::mutex> lk(scene_mutex_);
+            if (scene_packet_.ready) {
+                scene_packet = std::move(scene_packet_);
+                scene_packet_ = AsyncScenePacket{};
+                has_scene_packet = true;
+            }
+        }
+
+        if (has_scene_packet) {
+            if (scene_packet.ok) {
+                state.scene_result = std::move(scene_packet.result);
+                state.scene_classifier_last_error.clear();
+            } else if (!scene_packet.error.empty()) {
+                state.scene_classifier_last_error = scene_packet.error;
+            }
+        }
+
+        if (!scene_running_.load(std::memory_order_acquire)) {
+            ScreenCaptureFrame scene_frame = frame;
+            scene_running_.store(true, std::memory_order_release);
+            scene_future_ = std::async(std::launch::async, [this, scene_frame = std::move(scene_frame)]() mutable {
+                AsyncScenePacket local{};
+                local.ready = true;
+                local.ok = scene_classifier_.Classify(scene_frame, local.result, &local.error);
+
+                std::lock_guard<std::mutex> lk(scene_mutex_);
+                scene_packet_ = std::move(local);
+            });
         }
     }
 
@@ -364,13 +404,42 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
     }
 
     if (state.camera_facemesh_enabled && state.camera_facemesh_ready) {
-        FaceEmotionResult face_out{};
-        std::string face_err;
-        if (camera_facemesh_service_.RecognizeFromCamera(face_out, &face_err)) {
-            state.face_emotion_result = std::move(face_out);
-            state.camera_facemesh_last_error.clear();
-        } else if (!face_err.empty()) {
-            state.camera_facemesh_last_error = face_err;
+        if (face_future_.valid() &&
+            face_future_.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+            face_future_.get();
+            face_running_.store(false, std::memory_order_release);
+        }
+
+        AsyncFacePacket face_packet;
+        bool has_face_packet = false;
+        {
+            std::lock_guard<std::mutex> lk(face_mutex_);
+            if (face_packet_.ready) {
+                face_packet = std::move(face_packet_);
+                face_packet_ = AsyncFacePacket{};
+                has_face_packet = true;
+            }
+        }
+
+        if (has_face_packet) {
+            if (face_packet.ok) {
+                state.face_emotion_result = std::move(face_packet.result);
+                state.camera_facemesh_last_error.clear();
+            } else if (!face_packet.error.empty()) {
+                state.camera_facemesh_last_error = face_packet.error;
+            }
+        }
+
+        if (!face_running_.load(std::memory_order_acquire)) {
+            face_running_.store(true, std::memory_order_release);
+            face_future_ = std::async(std::launch::async, [this]() {
+                AsyncFacePacket local{};
+                local.ready = true;
+                local.ok = camera_facemesh_service_.RecognizeFromCamera(local.result, &local.error);
+
+                std::lock_guard<std::mutex> lk(face_mutex_);
+                face_packet_ = std::move(local);
+            });
         }
 
         state.blackboard.face_emotion.face_detected = state.face_emotion_result.face_detected;

@@ -331,6 +331,7 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
 
         if (has_new_ocr_packet) {
             std::string norm_summary = state.ocr_result.summary;
+            std::transform(norm_summary.begin(), norm_summary.end(), norm_summary.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
             const std::vector<std::pair<std::string, std::string>> dict = {
                 {"visual studio code", "vscode"}, {"vs code", "vscode"}, {"clion", "clion"},
                 {"read me", "readme"}, {"help", "help"}, {"settings", "settings"},

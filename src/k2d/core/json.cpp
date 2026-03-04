@@ -316,13 +316,61 @@ private:
                     case 'r': str += '\r'; break;
                     case 't': str += '\t'; break;
                     case 'u': {
-                        // Minimal unicode support: just skip 4 hex digits for now
-                        // or implement proper UTF-8 encoding if needed.
-                        // For this skeleton, we'll try to parse 4 hex chars.
                         if (pos_ + 4 > text_.size()) return std::nullopt;
-                        // TODO: Implement proper unicode to UTF-8 conversion
+
+                        auto hex_val = [](char ch) -> int {
+                            if (ch >= '0' && ch <= '9') return ch - '0';
+                            if (ch >= 'a' && ch <= 'f') return 10 + (ch - 'a');
+                            if (ch >= 'A' && ch <= 'F') return 10 + (ch - 'A');
+                            return -1;
+                        };
+
+                        auto parse_u16 = [&](std::size_t p, std::uint32_t &out_cp) -> bool {
+                            int h0 = hex_val(text_[p + 0]);
+                            int h1 = hex_val(text_[p + 1]);
+                            int h2 = hex_val(text_[p + 2]);
+                            int h3 = hex_val(text_[p + 3]);
+                            if (h0 < 0 || h1 < 0 || h2 < 0 || h3 < 0) return false;
+                            out_cp = static_cast<std::uint32_t>((h0 << 12) | (h1 << 8) | (h2 << 4) | h3);
+                            return true;
+                        };
+
+                        std::uint32_t cp = 0;
+                        if (!parse_u16(pos_, cp)) return std::nullopt;
                         pos_ += 4;
-                        str += '?'; // Placeholder for simplify
+
+                        // 处理 UTF-16 代理对
+                        if (cp >= 0xD800 && cp <= 0xDBFF) {
+                            if (pos_ + 6 > text_.size()) return std::nullopt;
+                            if (text_[pos_] != '\\' || text_[pos_ + 1] != 'u') return std::nullopt;
+                            std::uint32_t low = 0;
+                            if (!parse_u16(pos_ + 2, low)) return std::nullopt;
+                            if (low < 0xDC00 || low > 0xDFFF) return std::nullopt;
+                            pos_ += 6;
+                            cp = 0x10000u + (((cp - 0xD800u) << 10) | (low - 0xDC00u));
+                        } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
+                            return std::nullopt;
+                        }
+
+                        auto append_utf8 = [&](std::uint32_t codepoint) {
+                            if (codepoint <= 0x7F) {
+                                str += static_cast<char>(codepoint);
+                            } else if (codepoint <= 0x7FF) {
+                                str += static_cast<char>(0xC0 | (codepoint >> 6));
+                                str += static_cast<char>(0x80 | (codepoint & 0x3F));
+                            } else if (codepoint <= 0xFFFF) {
+                                str += static_cast<char>(0xE0 | (codepoint >> 12));
+                                str += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+                                str += static_cast<char>(0x80 | (codepoint & 0x3F));
+                            } else {
+                                str += static_cast<char>(0xF0 | (codepoint >> 18));
+                                str += static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F));
+                                str += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+                                str += static_cast<char>(0x80 | (codepoint & 0x3F));
+                            }
+                        };
+
+                        append_utf8(cp);
                         break;
                     }
                     default: return std::nullopt;

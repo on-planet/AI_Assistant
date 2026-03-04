@@ -59,6 +59,8 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
             ImGui::Text("Verts: %d  Tris: %d",
                         runtime.model.debug_stats.vertex_count,
                         runtime.model.debug_stats.triangle_count);
+            ImGui::Separator();
+            ImGui::Checkbox("Runtime Debug GUI", &runtime.gui_enabled);
         }
         ImGui::End();
     }

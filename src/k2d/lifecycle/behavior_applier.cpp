@@ -200,30 +200,21 @@ void ApplyBehaviorOutput(const BehaviorOutput &out, const BehaviorApplyContext &
         }
     }
 
+    // 运行时 GUI 选项（show_debug_stats/manual_param_mode）以本地用户操作为准。
+    // 这里不再接受插件输出覆盖，避免调试面板勾选后被每帧回写。
     const auto debug_w_it = out.param_weights.find("runtime.show_debug_stats");
     const auto debug_t_it = out.param_targets.find("runtime.show_debug_stats");
     if (debug_w_it != out.param_weights.end() && debug_t_it != out.param_targets.end()) {
-        if (!IsFinite(debug_w_it->second) || !IsFinite(debug_t_it->second)) {
-            if (should_log("plugin.invalid.runtime.debug.nan")) {
-                SDL_Log("Plugin runtime.show_debug_stats ignored: weight/target is NaN/Inf");
-            }
-        } else if (debug_w_it->second > 0.0f && ctx.show_debug_stats) {
-            *ctx.show_debug_stats = debug_t_it->second >= 0.5f;
+        if ((!IsFinite(debug_w_it->second) || !IsFinite(debug_t_it->second)) && should_log("plugin.invalid.runtime.debug.nan")) {
+            SDL_Log("Plugin runtime.show_debug_stats ignored: weight/target is NaN/Inf");
         }
     }
 
     const auto manual_w_it = out.param_weights.find("runtime.manual_param_mode");
     const auto manual_t_it = out.param_targets.find("runtime.manual_param_mode");
     if (manual_w_it != out.param_weights.end() && manual_t_it != out.param_targets.end()) {
-        if (!IsFinite(manual_w_it->second) || !IsFinite(manual_t_it->second)) {
-            if (should_log("plugin.invalid.runtime.manual.nan")) {
-                SDL_Log("Plugin runtime.manual_param_mode ignored: weight/target is NaN/Inf");
-            }
-        } else if (manual_w_it->second > 0.0f && ctx.manual_param_mode) {
-            *ctx.manual_param_mode = manual_t_it->second >= 0.5f;
-            if (ctx.sync_animation_channel_state) {
-                ctx.sync_animation_channel_state(ctx.sync_animation_channel_state_user_data);
-            }
+        if ((!IsFinite(manual_w_it->second) || !IsFinite(manual_t_it->second)) && should_log("plugin.invalid.runtime.manual.nan")) {
+            SDL_Log("Plugin runtime.manual_param_mode ignored: weight/target is NaN/Inf");
         }
     }
 }

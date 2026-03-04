@@ -175,6 +175,10 @@ struct OcrService::Impl {
     int rec_w = 320;
     int det_input_size = 640;
 
+    // 复用预处理缓冲，减少每次 Recognize 的堆分配抖动。
+    std::vector<float> det_input_buffer;
+    std::vector<float> rec_input_buffer;
+
     std::vector<std::string> rec_keys;
 };
 
@@ -271,7 +275,10 @@ bool OcrService::Recognize(const ScreenCaptureFrame &frame,
     // 后续可在此补充 DB 后处理 + 文本框裁切 + CTC 解码。
     const int det_h = std::clamp(impl_->det_input_size, 160, 1280);
     const int det_w = det_h;
-    std::vector<float> det_input(1ull * 3ull * static_cast<std::size_t>(det_h) * static_cast<std::size_t>(det_w), 0.0f);
+    const std::size_t det_count = 1ull * 3ull * static_cast<std::size_t>(det_h) * static_cast<std::size_t>(det_w);
+    impl_->det_input_buffer.resize(det_count);
+    std::fill(impl_->det_input_buffer.begin(), impl_->det_input_buffer.end(), 0.0f);
+    auto &det_input = impl_->det_input_buffer;
 
     auto sample_rgb01 = [&](int x, int y, int c) -> float {
         x = std::clamp(x, 0, frame.width - 1);
@@ -333,7 +340,10 @@ bool OcrService::Recognize(const ScreenCaptureFrame &frame,
 
         DetBox box = MakeBoxFromDetPeak(det_ptr, map_h, map_w, frame.width, frame.height);
 
-        std::vector<float> rec_input(1ull * 3ull * static_cast<std::size_t>(impl_->rec_h) * static_cast<std::size_t>(impl_->rec_w), 0.0f);
+        const std::size_t rec_count = 1ull * 3ull * static_cast<std::size_t>(impl_->rec_h) * static_cast<std::size_t>(impl_->rec_w);
+        impl_->rec_input_buffer.resize(rec_count);
+        std::fill(impl_->rec_input_buffer.begin(), impl_->rec_input_buffer.end(), 0.0f);
+        auto &rec_input = impl_->rec_input_buffer;
         const std::size_t rec_plane = static_cast<std::size_t>(impl_->rec_h) * static_cast<std::size_t>(impl_->rec_w);
         for (int y = 0; y < impl_->rec_h; ++y) {
             const float syf = static_cast<float>(box.y) +

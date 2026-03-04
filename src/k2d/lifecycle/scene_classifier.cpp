@@ -164,6 +164,9 @@ struct SceneClassifier::Impl {
 
     int input_h = 224;
     int input_w = 224;
+
+    // 复用预处理缓冲，减少每次 Classify 的堆分配抖动。
+    std::vector<float> input_buffer;
 };
 
 bool SceneClassifier::Init(const std::string &model_path,
@@ -252,7 +255,10 @@ bool SceneClassifier::Classify(const ScreenCaptureFrame &frame,
 
     const int target_h = impl_->input_h;
     const int target_w = impl_->input_w;
-    std::vector<float> input(1ull * 3ull * static_cast<std::size_t>(target_h) * static_cast<std::size_t>(target_w), 0.0f);
+    const std::size_t input_count = 1ull * 3ull * static_cast<std::size_t>(target_h) * static_cast<std::size_t>(target_w);
+    impl_->input_buffer.resize(input_count);
+    std::fill(impl_->input_buffer.begin(), impl_->input_buffer.end(), 0.0f);
+    auto &input = impl_->input_buffer;
 
     // 与常见 CLIP 图像预处理对齐：
     // 1) 保持纵横比，将短边缩放到约 256（当输入为 224 时）

@@ -99,6 +99,10 @@ public:
         ready_ = false;
         width_ = 0;
         height_ = 0;
+        staging_width_ = 0;
+        staging_height_ = 0;
+        staging_format_ = DXGI_FORMAT_UNKNOWN;
+        staging_tex_.Reset();
         duplication_.Reset();
         context_.Reset();
         device_.Reset();
@@ -137,17 +141,27 @@ public:
         staging_desc.Usage = D3D11_USAGE_STAGING;
         staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
 
-        ComPtr<ID3D11Texture2D> staging_tex;
-        hr = device_->CreateTexture2D(&staging_desc, nullptr, staging_tex.GetAddressOf());
-        if (FAILED(hr)) {
-            release_guard();
-            return SetHrError(out_error, "CreateTexture2D(staging)", hr);
+        const bool need_recreate_staging =
+            !staging_tex_ ||
+            staging_width_ != static_cast<int>(src_desc.Width) ||
+            staging_height_ != static_cast<int>(src_desc.Height) ||
+            staging_format_ != src_desc.Format;
+        if (need_recreate_staging) {
+            staging_tex_.Reset();
+            hr = device_->CreateTexture2D(&staging_desc, nullptr, staging_tex_.GetAddressOf());
+            if (FAILED(hr)) {
+                release_guard();
+                return SetHrError(out_error, "CreateTexture2D(staging)", hr);
+            }
+            staging_width_ = static_cast<int>(src_desc.Width);
+            staging_height_ = static_cast<int>(src_desc.Height);
+            staging_format_ = src_desc.Format;
         }
 
-        context_->CopyResource(staging_tex.Get(), src_tex.Get());
+        context_->CopyResource(staging_tex_.Get(), src_tex.Get());
 
         D3D11_MAPPED_SUBRESOURCE mapped{};
-        hr = context_->Map(staging_tex.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+        hr = context_->Map(staging_tex_.Get(), 0, D3D11_MAP_READ, 0, &mapped);
         if (FAILED(hr)) {
             release_guard();
             return SetHrError(out_error, "Map", hr);
@@ -165,7 +179,7 @@ public:
                         row_bytes);
         }
 
-        context_->Unmap(staging_tex.Get(), 0);
+        context_->Unmap(staging_tex_.Get(), 0);
         release_guard();
         return true;
     }
@@ -180,6 +194,11 @@ private:
     bool ready_ = false;
     int width_ = 0;
     int height_ = 0;
+
+    ComPtr<ID3D11Texture2D> staging_tex_;
+    int staging_width_ = 0;
+    int staging_height_ = 0;
+    DXGI_FORMAT staging_format_ = DXGI_FORMAT_UNKNOWN;
 };
 
 class WgcScreenCapture final : public IScreenCaptureBackend {

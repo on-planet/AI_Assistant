@@ -16,6 +16,7 @@
 #include "k2d/editor/editor_gizmo.h"
 #include "k2d/editor/editor_input.h"
 #include "k2d/editor/editor_controller.h"
+#include "k2d/editor/editor_input_binding.h"
 #include "k2d/rendering/app_renderer.h"
 #include "k2d/controllers/app_bootstrap.h"
 #include "k2d/controllers/window_controller.h"
@@ -29,8 +30,13 @@
 #include "k2d/lifecycle/reminder_service.h"
 #include "k2d/lifecycle/perception_pipeline.h"
 #include "k2d/lifecycle/systems/app_systems.h"
+#include "k2d/lifecycle/systems/runtime_tick_entry.h"
+#include "k2d/lifecycle/events/app_event_handler.h"
 #include "k2d/lifecycle/ui/app_debug_ui.h"
 #include "k2d/lifecycle/ui/reminder_panel.h"
+#include "k2d/lifecycle/ui/runtime_render_entry.h"
+#include "k2d/lifecycle/utils/app_text_utils.h"
+#include "k2d/lifecycle/services/task_category_service.h"
 #include "k2d/lifecycle/asr/cloud_asr_provider.h"
 #include "k2d/lifecycle/asr/hybrid_asr_provider.h"
 #include "k2d/lifecycle/asr/offline_asr_provider.h"
@@ -55,10 +61,15 @@ namespace {
 
 void ApplyPivotDelta(ModelPart *part, float delta_x, float delta_y);
 void EnsureSelectedPartIndexValid();
+void EnsureSelectedPartIndexValid(AppRuntime &runtime);
 void EnsureSelectedParamIndexValid();
+void EnsureSelectedParamIndexValid(AppRuntime &runtime);
 void SyncAnimationChannelState();
+void SyncAnimationChannelState(AppRuntime &runtime);
 void SetEditorStatus(std::string text, float ttl_sec = 2.0f);
+void SetEditorStatus(AppRuntime &runtime, std::string text, float ttl_sec = 2.0f);
 void SetClickThrough(bool enabled);
+void SetClickThrough(AppRuntime &runtime, bool enabled);
 
 void SDLCALL MicAudioInputCallback(void *userdata, SDL_AudioStream *stream, int additional_amount, int total_amount) {
     (void)total_amount;
@@ -84,47 +95,73 @@ void SDLCALL MicAudioInputCallback(void *userdata, SDL_AudioStream *stream, int 
     }
 }
 
-ModelReloadServiceContext BuildModelReloadServiceContext() {
+ModelReloadServiceContext BuildModelReloadServiceContext(AppRuntime &runtime) {
     ModelReloadServiceContext reload_ctx{};
-    reload_ctx.dev_hot_reload_enabled = g_runtime.dev_hot_reload_enabled;
-    reload_ctx.hot_reload_poll_accum_sec = &g_runtime.hot_reload_poll_accum_sec;
-    reload_ctx.model_loaded = &g_runtime.model_loaded;
-    reload_ctx.model = &g_runtime.model;
-    reload_ctx.renderer = g_runtime.renderer;
-    reload_ctx.model_time = &g_runtime.model_time;
-    reload_ctx.selected_part_index = &g_runtime.selected_part_index;
-    reload_ctx.model_last_write_time = &g_runtime.model_last_write_time;
-    reload_ctx.model_last_write_time_valid = &g_runtime.model_last_write_time_valid;
-    reload_ctx.ensure_selected_part_index_valid = [](void *) { EnsureSelectedPartIndexValid(); };
-    reload_ctx.ensure_selected_param_index_valid = [](void *) { EnsureSelectedParamIndexValid(); };
-    reload_ctx.sync_animation_channel_state = [](void *) { SyncAnimationChannelState(); };
-    reload_ctx.set_editor_status = [](const std::string &text, float ttl_sec, void *) {
-        SetEditorStatus(text, ttl_sec);
+    reload_ctx.dev_hot_reload_enabled = runtime.dev_hot_reload_enabled;
+    reload_ctx.hot_reload_poll_accum_sec = &runtime.hot_reload_poll_accum_sec;
+    reload_ctx.model_loaded = &runtime.model_loaded;
+    reload_ctx.model = &runtime.model;
+    reload_ctx.renderer = runtime.renderer;
+    reload_ctx.model_time = &runtime.model_time;
+    reload_ctx.selected_part_index = &runtime.selected_part_index;
+    reload_ctx.model_last_write_time = &runtime.model_last_write_time;
+    reload_ctx.model_last_write_time_valid = &runtime.model_last_write_time_valid;
+    reload_ctx.ensure_selected_part_index_valid = [](void *userdata) {
+        auto *rt = static_cast<AppRuntime *>(userdata);
+        if (rt) EnsureSelectedPartIndexValid(*rt);
     };
+    reload_ctx.ensure_selected_part_index_valid_user_data = &runtime;
+    reload_ctx.ensure_selected_param_index_valid = [](void *userdata) {
+        auto *rt = static_cast<AppRuntime *>(userdata);
+        if (rt) EnsureSelectedParamIndexValid(*rt);
+    };
+    reload_ctx.ensure_selected_param_index_valid_user_data = &runtime;
+    reload_ctx.sync_animation_channel_state = [](void *userdata) {
+        auto *rt = static_cast<AppRuntime *>(userdata);
+        if (rt) SyncAnimationChannelState(*rt);
+    };
+    reload_ctx.sync_animation_channel_state_user_data = &runtime;
+    reload_ctx.set_editor_status = [](const std::string &text, float ttl_sec, void *userdata) {
+        auto *rt = static_cast<AppRuntime *>(userdata);
+        if (rt) SetEditorStatus(*rt, text, ttl_sec);
+    };
+    reload_ctx.set_editor_status_user_data = &runtime;
     return reload_ctx;
 }
 
-BehaviorApplyContext BuildBehaviorApplyContext() {
+BehaviorApplyContext BuildBehaviorApplyContext(AppRuntime &runtime) {
     BehaviorApplyContext apply_ctx{};
-    apply_ctx.model_loaded = g_runtime.model_loaded;
-    apply_ctx.model = &g_runtime.model;
-    apply_ctx.plugin_param_blend_mode = g_runtime.plugin_param_blend_mode;
-    apply_ctx.window = g_runtime.window;
-    apply_ctx.show_debug_stats = &g_runtime.show_debug_stats;
-    apply_ctx.manual_param_mode = &g_runtime.manual_param_mode;
-    apply_ctx.set_click_through = [](bool enabled, void *) { SetClickThrough(enabled); };
-    apply_ctx.sync_animation_channel_state = [](void *) { SyncAnimationChannelState(); };
+    apply_ctx.model_loaded = runtime.model_loaded;
+    apply_ctx.model = &runtime.model;
+    apply_ctx.plugin_param_blend_mode = runtime.plugin_param_blend_mode;
+    apply_ctx.window = runtime.window;
+    apply_ctx.show_debug_stats = &runtime.show_debug_stats;
+    apply_ctx.manual_param_mode = &runtime.manual_param_mode;
+    apply_ctx.set_click_through = [](bool enabled, void *userdata) {
+        auto *rt = static_cast<AppRuntime *>(userdata);
+        if (rt) SetClickThrough(*rt, enabled);
+    };
+    apply_ctx.set_click_through_user_data = &runtime;
+    apply_ctx.sync_animation_channel_state = [](void *userdata) {
+        auto *rt = static_cast<AppRuntime *>(userdata);
+        if (rt) SyncAnimationChannelState(*rt);
+    };
+    apply_ctx.sync_animation_channel_state_user_data = &runtime;
     return apply_ctx;
 }
 
 void SetClickThrough(bool enabled) {
-    g_runtime.click_through = enabled;
+    SetClickThrough(g_runtime, enabled);
+}
 
-    if (g_runtime.entry_click_through) {
-        SDL_SetTrayEntryChecked(g_runtime.entry_click_through, enabled);
+void SetClickThrough(AppRuntime &runtime, bool enabled) {
+    runtime.click_through = enabled;
+
+    if (runtime.entry_click_through) {
+        SDL_SetTrayEntryChecked(runtime.entry_click_through, enabled);
     }
 
-    k2d::ApplyWindowShape(g_runtime.window, g_runtime.window_w, g_runtime.window_h, g_runtime.interactive_rect, enabled);
+    k2d::ApplyWindowShape(runtime.window, runtime.window_w, runtime.window_h, runtime.interactive_rect, enabled);
 }
 
 void ToggleWindowVisibility() {
@@ -166,10 +203,14 @@ k2d::ParamControllerContext BuildParamControllerContext() {
 }
 
 void SyncAnimationChannelState() {
-    if (!g_runtime.model_loaded) {
+    SyncAnimationChannelState(g_runtime);
+}
+
+void SyncAnimationChannelState(AppRuntime &runtime) {
+    if (!runtime.model_loaded) {
         return;
     }
-    g_runtime.model.animation_channels_enabled = !g_runtime.manual_param_mode;
+    runtime.model.animation_channels_enabled = !runtime.manual_param_mode;
 }
 
 bool HasModelParams() {
@@ -177,6 +218,10 @@ bool HasModelParams() {
 }
 
 void EnsureSelectedParamIndexValid() {
+    EnsureSelectedParamIndexValid(g_runtime);
+}
+
+void EnsureSelectedParamIndexValid(AppRuntime &) {
     k2d::EnsureSelectedParamIndexValid(BuildParamControllerContext());
 }
 
@@ -205,8 +250,12 @@ bool HasModelParts() {
 }
 
 void SetEditorStatus(std::string text, float ttl_sec) {
-    g_runtime.editor_status = std::move(text);
-    g_runtime.editor_status_ttl = std::max(0.0f, ttl_sec);
+    SetEditorStatus(g_runtime, std::move(text), ttl_sec);
+}
+
+void SetEditorStatus(AppRuntime &runtime, std::string text, float ttl_sec) {
+    runtime.editor_status = std::move(text);
+    runtime.editor_status_ttl = std::max(0.0f, ttl_sec);
 }
 
 float QuantizeToGrid(float v, float grid) {
@@ -222,178 +271,6 @@ const char *AxisConstraintName(AxisConstraint c) {
     }
 }
 
-const char *TaskPrimaryCategoryName(TaskPrimaryCategory c) {
-    switch (c) {
-        case TaskPrimaryCategory::Work: return "work";
-        case TaskPrimaryCategory::Game: return "game";
-        default: return "unknown";
-    }
-}
-
-const char *TaskSecondaryCategoryName(TaskSecondaryCategory c) {
-    switch (c) {
-        case TaskSecondaryCategory::WorkCoding: return "coding";
-        case TaskSecondaryCategory::WorkDebugging: return "debugging";
-        case TaskSecondaryCategory::WorkReadingDocs: return "reading_docs";
-        case TaskSecondaryCategory::WorkMeetingNotes: return "meeting_notes";
-        case TaskSecondaryCategory::GameLobby: return "lobby";
-        case TaskSecondaryCategory::GameMatch: return "match";
-        case TaskSecondaryCategory::GameSettlement: return "settlement";
-        case TaskSecondaryCategory::GameMenu: return "menu";
-        default: return "unknown";
-    }
-}
-
-std::string MakeUtf8SafeLabel(const std::string &s) {
-    if (s.empty()) return s;
-
-    std::string out;
-    out.reserve(s.size());
-
-    bool has_invalid = false;
-    const auto *p = reinterpret_cast<const unsigned char *>(s.data());
-    const std::size_t n = s.size();
-
-    for (std::size_t i = 0; i < n;) {
-        const unsigned char c = p[i];
-        if (c <= 0x7F) {
-            out.push_back(static_cast<char>(c));
-            ++i;
-            continue;
-        }
-
-        int need = 0;
-        std::uint32_t cp = 0;
-        if (c >= 0xC2 && c <= 0xDF) {
-            need = 1;
-            cp = c & 0x1Fu;
-        } else if (c >= 0xE0 && c <= 0xEF) {
-            need = 2;
-            cp = c & 0x0Fu;
-        } else if (c >= 0xF0 && c <= 0xF4) {
-            need = 3;
-            cp = c & 0x07u;
-        } else {
-            has_invalid = true;
-            ++i;
-            continue;
-        }
-
-        if (i + static_cast<std::size_t>(need) >= n) {
-            has_invalid = true;
-            break;
-        }
-
-        bool ok = true;
-        for (int k = 1; k <= need; ++k) {
-            const unsigned char cc = p[i + static_cast<std::size_t>(k)];
-            if ((cc & 0xC0u) != 0x80u) {
-                ok = false;
-                break;
-            }
-            cp = (cp << 6u) | (cc & 0x3Fu);
-        }
-
-        if (!ok) {
-            has_invalid = true;
-            ++i;
-            continue;
-        }
-
-        if ((need == 1 && cp < 0x80u) ||
-            (need == 2 && cp < 0x800u) ||
-            (need == 3 && cp < 0x10000u) ||
-            (cp >= 0xD800u && cp <= 0xDFFFu) ||
-            (cp > 0x10FFFFu)) {
-            has_invalid = true;
-            ++i;
-            continue;
-        }
-
-        out.append(s, i, static_cast<std::size_t>(need + 1));
-        i += static_cast<std::size_t>(need + 1);
-    }
-
-    if (has_invalid) {
-        return "[invalid-utf8]";
-    }
-    return out;
-}
-
-std::string MakeImguiAsciiSafe(const std::string &s) {
-    if (s.empty()) return s;
-    std::string out;
-    out.reserve(s.size());
-    for (unsigned char ch : s) {
-        if (ch >= 32 && ch <= 126) {
-            out.push_back(static_cast<char>(ch));
-        } else {
-            out.push_back('_');
-        }
-    }
-    if (out.find_first_not_of('_') == std::string::npos) {
-        return "[non-ascii-label]";
-    }
-    return out;
-}
-
-void InferTaskCategory(const SystemContextSnapshot &ctx,
-                       const OcrResult &ocr,
-                       const SceneClassificationResult &scene,
-                       TaskPrimaryCategory &out_primary,
-                       TaskSecondaryCategory &out_secondary) {
-    auto to_lower = [](std::string s) {
-        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char ch) {
-            return static_cast<char>(std::tolower(ch));
-        });
-        return s;
-    };
-
-    std::string text = ctx.process_name + "\n" + ctx.window_title + "\n" + ctx.url_hint + "\n" + ocr.summary + "\n" + scene.label;
-    text = to_lower(text);
-
-    out_primary = TaskPrimaryCategory::Unknown;
-    out_secondary = TaskSecondaryCategory::Unknown;
-
-    const bool has_game_hint =
-        text.find("game") != std::string::npos ||
-        text.find("steam") != std::string::npos ||
-        text.find("unity") != std::string::npos ||
-        text.find("ue4") != std::string::npos ||
-        text.find("unreal") != std::string::npos ||
-        text.find("lobby") != std::string::npos ||
-        text.find("match") != std::string::npos ||
-        text.find("battle") != std::string::npos ||
-        text.find("menu") != std::string::npos ||
-        text.find("settlement") != std::string::npos ||
-        text.find("lobby") != std::string::npos ||
-        text.find("match") != std::string::npos;
-
-    if (has_game_hint) {
-        out_primary = TaskPrimaryCategory::Game;
-        if (text.find("result") != std::string::npos || text.find("settlement") != std::string::npos) {
-            out_secondary = TaskSecondaryCategory::GameSettlement;
-        } else if (text.find("lobby") != std::string::npos) {
-            out_secondary = TaskSecondaryCategory::GameLobby;
-        } else if (text.find("menu") != std::string::npos) {
-            out_secondary = TaskSecondaryCategory::GameMenu;
-        } else {
-            out_secondary = TaskSecondaryCategory::GameMatch;
-        }
-        return;
-    }
-
-    out_primary = TaskPrimaryCategory::Work;
-    if (text.find("debug") != std::string::npos || text.find("gdb") != std::string::npos) {
-        out_secondary = TaskSecondaryCategory::WorkDebugging;
-    } else if (text.find("readme") != std::string::npos || text.find("docs") != std::string::npos || text.find("wiki") != std::string::npos) {
-        out_secondary = TaskSecondaryCategory::WorkReadingDocs;
-    } else if (text.find("meeting") != std::string::npos || text.find("minutes") != std::string::npos) {
-        out_secondary = TaskSecondaryCategory::WorkMeetingNotes;
-    } else {
-        out_secondary = TaskSecondaryCategory::WorkCoding;
-    }
-}
 
 const char *EditorPropName(EditorProp p) {
     switch (p) {
@@ -561,13 +438,17 @@ void AdjustSelectedEditorProp(float delta) {
 }
 
 void EnsureSelectedPartIndexValid() {
-    if (!HasModelParts()) {
-        g_runtime.selected_part_index = -1;
+    EnsureSelectedPartIndexValid(g_runtime);
+}
+
+void EnsureSelectedPartIndexValid(AppRuntime &runtime) {
+    if (!(runtime.model_loaded && !runtime.model.parts.empty())) {
+        runtime.selected_part_index = -1;
         return;
     }
-    const int count = static_cast<int>(g_runtime.model.parts.size());
-    if (g_runtime.selected_part_index < 0 || g_runtime.selected_part_index >= count) {
-        g_runtime.selected_part_index = 0;
+    const int count = static_cast<int>(runtime.model.parts.size());
+    if (runtime.selected_part_index < 0 || runtime.selected_part_index >= count) {
+        runtime.selected_part_index = 0;
     }
 }
 
@@ -887,642 +768,120 @@ void SaveEditedModelJsonToDisk() {
 }
 
 
-void RenderFrame() {
-    k2d::RenderAppFrame(k2d::AppRenderContext{
-        .renderer = g_runtime.renderer,
-        .model_loaded = g_runtime.model_loaded,
-        .model = &g_runtime.model,
-        .demo_texture = g_runtime.demo_texture,
-        .demo_texture_w = g_runtime.demo_texture_w,
-        .demo_texture_h = g_runtime.demo_texture_h,
-        .show_debug_stats = g_runtime.show_debug_stats,
-        .manual_param_mode = g_runtime.manual_param_mode,
-        .selected_param_index = g_runtime.selected_param_index,
-        .edit_mode = g_runtime.edit_mode,
-        .selected_part_index = g_runtime.selected_part_index,
-        .gizmo_hover_handle = g_runtime.gizmo_hover_handle,
-        .gizmo_active_handle = g_runtime.gizmo_active_handle,
-        .editor_status = g_runtime.editor_status.c_str(),
-        .editor_status_ttl = g_runtime.editor_status_ttl,
-        .window_h = g_runtime.window_h,
-        .debug_fps = g_runtime.debug_fps,
-        .debug_frame_ms = g_runtime.debug_frame_ms,
-        .has_model_parts = []() { return HasModelParts(); },
-        .has_model_params = []() { return HasModelParams(); },
+
+EditorInputBindingBridge BuildEditorInputBindingBridge(AppRuntime &runtime) {
+    return EditorInputBindingBridge{
         .ensure_selected_part_index_valid = []() { EnsureSelectedPartIndexValid(); },
-        .ensure_selected_param_index_valid = []() { EnsureSelectedParamIndexValid(); },
-        .compute_part_aabb = [](const ModelPart &part, SDL_FRect *out_rect) {
-            return ComputePartAABB(part, out_rect);
-        },
-    });
-}
-
-}  // namespace
-
-k2d::EditorInputCallbacks BuildEditorInputCallbacks() {
-    const auto ctx = k2d::AppInputControllerContext{
-        .running = &g_runtime.running,
-        .show_debug_stats = &g_runtime.show_debug_stats,
-        .gui_enabled = &g_runtime.gui_enabled,
-        .edit_mode = &g_runtime.edit_mode,
-        .manual_param_mode = &g_runtime.manual_param_mode,
-        .toggle_edit_mode = []() {
-            g_runtime.edit_mode = !g_runtime.edit_mode;
-            if (g_runtime.edit_mode) {
-                EnsureSelectedPartIndexValid();
-                SetEditorStatus("edit mode ON", 1.5f);
-            } else {
-                EndDragging();
-                EndGizmoDrag();
-                g_runtime.gizmo_hover_handle = GizmoHandle::None;
-                SetEditorStatus("edit mode OFF", 1.5f);
-            }
-        },
-        .toggle_manual_param_mode = []() { ToggleManualParamMode(); },
         .cycle_selected_part = [](bool shift) { CycleSelectedPart(shift ? -1 : 1); },
         .adjust_selected_param = [](float delta) { AdjustSelectedParam(delta); },
         .reset_selected_param = []() { ResetSelectedParam(); },
         .reset_all_params = []() { ResetAllParams(); },
+        .toggle_manual_param_mode = []() { ToggleManualParamMode(); },
         .save_model = []() { SaveEditedModelJsonToDisk(); },
         .undo_edit = []() { UndoLastEdit(); },
         .redo_edit = []() { RedoLastEdit(); },
-        .on_mouse_button_down = [](float mx, float my, bool shift_pressed, Uint8 button) {
-            if (button == SDL_BUTTON_LEFT) {
-                EnsureSelectedPartIndexValid();
-                if (!shift_pressed && g_runtime.selected_part_index >= 0 &&
-                    g_runtime.selected_part_index < static_cast<int>(g_runtime.model.parts.size())) {
-                    const ModelPart &selected = g_runtime.model.parts[static_cast<std::size_t>(g_runtime.selected_part_index)];
-                    const GizmoHandle handle = k2d::PickGizmoHandle(selected, mx, my);
-                    g_runtime.gizmo_hover_handle = handle;
-                    if (handle != GizmoHandle::None) {
-                        EndDragging();
-                        BeginGizmoDrag(selected, handle, mx, my);
-                        return;
-                    }
-                }
-                EndGizmoDrag();
-                if (shift_pressed) {
-                    BeginDragPivot(mx, my);
-                } else {
-                    BeginDragPart(mx, my);
-                }
-            } else if (button == SDL_BUTTON_RIGHT) {
-                EndGizmoDrag();
-                BeginDragPivot(mx, my);
-            }
-        },
-        .on_mouse_button_up = []() {
-            EndDragging();
-            EndGizmoDrag();
-        },
-        .on_mouse_motion = [](float mx, float my) {
+        .pick_top_part_at = [](float x, float y) { return PickTopPartAt(x, y); },
+        .has_model_params = []() { return HasModelParams(); },
+        .on_head_pat_mouse_motion = [&runtime](float mx, float my) {
             HandleHeadPatMouseMotion(
-                g_runtime.interaction_state,
+                runtime.interaction_state,
                 InteractionControllerContext{
-                    .model_loaded = g_runtime.model_loaded,
-                    .model = &g_runtime.model,
+                    .model_loaded = runtime.model_loaded,
+                    .model = &runtime.model,
                     .pick_top_part_at = [](float x, float y) { return PickTopPartAt(x, y); },
                     .has_model_params = []() { return HasModelParams(); },
                 },
                 mx,
                 my);
-
-            if (g_runtime.gizmo_dragging) {
-                HandleGizmoDragMotion(mx, my);
-            } else {
-                HandleEditorDragMotion(mx, my);
-                EnsureSelectedPartIndexValid();
-                if (g_runtime.selected_part_index >= 0 &&
-                    g_runtime.selected_part_index < static_cast<int>(g_runtime.model.parts.size())) {
-                    const ModelPart &selected = g_runtime.model.parts[static_cast<std::size_t>(g_runtime.selected_part_index)];
-                    g_runtime.gizmo_hover_handle = k2d::PickGizmoHandle(selected, mx, my);
-                } else {
-                    g_runtime.gizmo_hover_handle = GizmoHandle::None;
-                }
-            }
         },
+        .begin_drag_part = [](float mx, float my) { BeginDragPart(mx, my); },
+        .begin_drag_pivot = [](float mx, float my) { BeginDragPivot(mx, my); },
+        .end_dragging = []() { EndDragging(); },
+        .begin_gizmo_drag = [](const ModelPart &part, GizmoHandle handle, float mx, float my) {
+            BeginGizmoDrag(part, handle, mx, my);
+        },
+        .end_gizmo_drag = []() { EndGizmoDrag(); },
+        .handle_gizmo_drag_motion = [](float mx, float my) { HandleGizmoDragMotion(mx, my); },
+        .handle_editor_drag_motion = [](float mx, float my) { HandleEditorDragMotion(mx, my); },
     };
+}
 
-    return k2d::BuildEditorInputCallbacks(ctx);
+}  // namespace
+
+k2d::EditorInputCallbacks BuildEditorInputCallbacks() {
+    return BuildEditorInputCallbacksFromRuntime(g_runtime, BuildEditorInputBindingBridge(g_runtime));
 }
 
 void AppLifecycleRun(AppLifecycleContext &ctx) {
+    AppRuntime &runtime = ctx.runtime ? *ctx.runtime : g_runtime;
     k2d::RunAppLoop(k2d::AppLoopContext{
-        .running = &g_runtime.running,
-        .window_visible = &g_runtime.window_visible,
-        .model_time = &g_runtime.model_time,
-        .editor_status_ttl = &g_runtime.editor_status_ttl,
-        .debug_frame_ms = &g_runtime.debug_frame_ms,
-        .debug_fps = &g_runtime.debug_fps,
-        .debug_fps_accum_sec = &g_runtime.debug_fps_accum_sec,
-        .debug_fps_accum_frames = &g_runtime.debug_fps_accum_frames,
-        .handle_event = [](const SDL_Event &event) {
-            ImGui_ImplSDL3_ProcessEvent(&event);
-            if (event.type == SDL_EVENT_QUIT) {
-                g_runtime.running = false;
-            } else if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
-                g_runtime.running = false;
-            } else if (event.type == SDL_EVENT_WINDOW_RESIZED) {
-                g_runtime.window_w = event.window.data1;
-                g_runtime.window_h = event.window.data2;
-                g_runtime.interactive_rect = k2d::ComputeInteractiveRect(g_runtime.window_w, g_runtime.window_h);
-                k2d::ApplyWindowShape(g_runtime.window, g_runtime.window_w, g_runtime.window_h, g_runtime.interactive_rect, g_runtime.click_through);
-            } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE) {
-                g_runtime.running = false;
-            } else {
-                if (!g_runtime.edit_mode) {
-                    const bool imgui_wants_mouse = ImGui::GetIO().WantCaptureMouse;
-                    if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
-                        if (!imgui_wants_mouse) {
-                            g_runtime.dragging_model_whole = true;
-                            g_runtime.dragging_model_last_x = event.button.x;
-                            g_runtime.dragging_model_last_y = event.button.y;
-                        }
-                    } else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT) {
-                        g_runtime.dragging_model_whole = false;
-                    } else if (event.type == SDL_EVENT_MOUSE_MOTION && g_runtime.dragging_model_whole && g_runtime.model_loaded) {
-                        if (imgui_wants_mouse) {
-                            g_runtime.dragging_model_whole = false;
-                        } else {
-                            const float dx = event.motion.x - g_runtime.dragging_model_last_x;
-                            const float dy = event.motion.y - g_runtime.dragging_model_last_y;
-                            g_runtime.dragging_model_last_x = event.motion.x;
-                            g_runtime.dragging_model_last_y = event.motion.y;
-
-                            for (auto &part : g_runtime.model.parts) {
-                                if (part.parent_index < 0) {
-                                    part.base_pos_x += dx;
-                                    part.base_pos_y += dy;
-                                }
-                            }
-                        }
+        .running = &runtime.running,
+        .window_visible = &runtime.window_visible,
+        .model_time = &runtime.model_time,
+        .editor_status_ttl = &runtime.editor_status_ttl,
+        .debug_frame_ms = &runtime.debug_frame_ms,
+        .debug_fps = &runtime.debug_fps,
+        .debug_fps_accum_sec = &runtime.debug_fps_accum_sec,
+        .debug_fps_accum_frames = &runtime.debug_fps_accum_frames,
+        .handle_event = [&runtime](const SDL_Event &event) {
+            HandleAppRuntimeEvent(runtime, event, AppEventHandlerBridge{
+                .build_editor_input_callbacks = []() { return BuildEditorInputCallbacks(); },
+                .toggle_edit_mode = [&runtime]() {
+                    runtime.edit_mode = !runtime.edit_mode;
+                    if (runtime.edit_mode) {
+                        EnsureSelectedPartIndexValid(runtime);
+                        SetEditorStatus(runtime, "edit mode ON", 1.5f);
+                    } else {
+                        EndDragging();
+                        EndGizmoDrag();
+                        runtime.gizmo_hover_handle = GizmoHandle::None;
+                        SetEditorStatus(runtime, "edit mode OFF", 1.5f);
                     }
-                }
-
-                const auto non_edit_ctx = k2d::AppInputControllerContext{
-                    .running = &g_runtime.running,
-                    .show_debug_stats = &g_runtime.show_debug_stats,
-                    .gui_enabled = &g_runtime.gui_enabled,
-                    .edit_mode = &g_runtime.edit_mode,
-                    .manual_param_mode = &g_runtime.manual_param_mode,
-                    .toggle_edit_mode = []() {
-                        g_runtime.edit_mode = !g_runtime.edit_mode;
-                        if (g_runtime.edit_mode) {
-                            EnsureSelectedPartIndexValid();
-                            SetEditorStatus("edit mode ON", 1.5f);
-                        } else {
-                            EndDragging();
-                            EndGizmoDrag();
-                            g_runtime.gizmo_hover_handle = GizmoHandle::None;
-                            SetEditorStatus("edit mode OFF", 1.5f);
-                        }
-                    },
-                    .toggle_manual_param_mode = []() { ToggleManualParamMode(); },
-                    .cycle_selected_part = [](bool shift) { CycleSelectedPart(shift ? -1 : 1); },
-                    .adjust_selected_param = [](float delta) { AdjustSelectedParam(delta); },
-                    .reset_selected_param = []() { ResetSelectedParam(); },
-                    .reset_all_params = []() { ResetAllParams(); },
-                };
-                k2d::HandleAppInputEvent(event, g_runtime.edit_mode, BuildEditorInputCallbacks(), non_edit_ctx);
-            }
+                },
+                .toggle_manual_param_mode = []() { ToggleManualParamMode(); },
+                .cycle_selected_part = [](bool shift) { CycleSelectedPart(shift ? -1 : 1); },
+                .adjust_selected_param = [](float delta) { AdjustSelectedParam(delta); },
+                .reset_selected_param = []() { ResetSelectedParam(); },
+                .reset_all_params = []() { ResetAllParams(); },
+            });
         },
-        .on_update = [](float dt) {
-            if (g_runtime.model_loaded) {
-                auto reload_ctx = BuildModelReloadServiceContext();
-                TryHotReloadModel(reload_ctx, dt);
-                UpdateHeadPatReaction(
-                    g_runtime.interaction_state,
-                    InteractionControllerContext{
-                        .model_loaded = g_runtime.model_loaded,
-                        .model = &g_runtime.model,
-                        .pick_top_part_at = [](float x, float y) { return PickTopPartAt(x, y); },
-                        .has_model_params = []() { return HasModelParams(); },
-                    },
-                    dt);
-                UpdateModelRuntime(&g_runtime.model, g_runtime.model_time, dt);
-            }
-
-            if (g_runtime.model_loaded) {
-                // 本地状态机输出
-                BehaviorOutput local_out{};
-                BuildInteractionBehaviorOutput(
-                    g_runtime.interaction_state,
-                    InteractionControllerContext{
-                        .model_loaded = g_runtime.model_loaded,
-                        .model = &g_runtime.model,
-                        .pick_top_part_at = [](float x, float y) { return PickTopPartAt(x, y); },
-                        .has_model_params = []() { return HasModelParams(); },
-                    },
-                    dt,
-                    local_out);
-
-                BehaviorOutput plugin_out{};
-                bool has_plugin_out = false;
-                if (g_runtime.plugin_ready) {
-                    PerceptionInput in{};
-                    in.time_sec = static_cast<double>(g_runtime.model_time);
-                    in.audio_level = 0.0f;
-                    in.user_presence = g_runtime.perception_state.face_emotion_result.face_detected ? 1.0f : (g_runtime.window_visible ? 1.0f : 0.0f);
-                    in.vision.user_presence = in.user_presence;
-                    in.vision.head_yaw_deg = 0.0f;
-                    in.vision.head_pitch_deg = 0.0f;
-                    in.vision.head_roll_deg = 0.0f;
-                    in.vision.gaze_x = 0.0f;
-                    in.vision.gaze_y = 0.0f;
-                    in.scene_label = g_runtime.perception_state.scene_result.label;
-                    in.task_label = TaskSecondaryCategoryName(g_runtime.task_secondary);
-                    g_runtime.inference_adapter->SubmitInput(in);
-                    has_plugin_out = g_runtime.inference_adapter->TryConsumeLatestOutput(plugin_out, nullptr);
-                }
-
-                // 统一 mixer：本地行为 + 插件行为同入口融合后再应用
-                BehaviorMixResult mix_result{};
-                std::vector<BehaviorMixSource> mix_sources;
-                mix_sources.push_back(BehaviorMixSource{.name = "local_fsm", .output = &local_out, .global_weight = 1.0f});
-                if (has_plugin_out) {
-                    mix_sources.push_back(BehaviorMixSource{.name = "plugin", .output = &plugin_out, .global_weight = 1.0f});
-                }
-
-                if (MixBehaviorOutputs(mix_sources, &mix_result)) {
-                    auto apply_ctx = BuildBehaviorApplyContext();
-                    ApplyBehaviorOutput(mix_result.mixed, apply_ctx);
-                }
-            }
-
-            TickAppSystems(g_runtime, dt);
-            InferTaskCategory(g_runtime.perception_state.system_context_snapshot,
-                              g_runtime.perception_state.ocr_result,
-                              g_runtime.perception_state.scene_result,
-                              g_runtime.task_primary,
-                              g_runtime.task_secondary);
+        .on_update = [&runtime](float dt) {
+            RunRuntimeTickEntry(runtime, dt, RuntimeTickBridge{
+                .pick_top_part_at = [](float x, float y) { return PickTopPartAt(x, y); },
+                .has_model_params = []() { return HasModelParams(); },
+                .build_model_reload_context = [&runtime]() { return BuildModelReloadServiceContext(runtime); },
+                .build_behavior_apply_context = [&runtime]() { return BuildBehaviorApplyContext(runtime); },
+                .task_secondary_category_name = [](TaskSecondaryCategory c) { return TaskSecondaryCategoryName(c); },
+                .infer_task_category_inplace = [&runtime]() {
+                    InferTaskCategory(runtime.perception_state.system_context_snapshot,
+                                      runtime.perception_state.ocr_result,
+                                      runtime.perception_state.scene_result,
+                                      runtime.task_primary,
+                                      runtime.task_secondary);
+                },
+            });
         },
-        .on_render = []() {
-            ImGui_ImplSDLRenderer3_NewFrame();
-            ImGui_ImplSDL3_NewFrame();
-            ImGui::NewFrame();
-
-            RenderFrame();
-
-            if (g_runtime.show_debug_stats) {
-                ImGui::SetNextWindowBgAlpha(0.35f);
-                ImGuiWindowFlags fps_flags = ImGuiWindowFlags_NoDecoration |
-                                             ImGuiWindowFlags_AlwaysAutoResize |
-                                             ImGuiWindowFlags_NoSavedSettings |
-                                             ImGuiWindowFlags_NoFocusOnAppearing |
-                                             ImGuiWindowFlags_NoNav;
-                ImGui::SetNextWindowPos(ImVec2(12.0f, 12.0f), ImGuiCond_Always);
-                if (ImGui::Begin("FPS Overlay", nullptr, fps_flags)) {
-                    ImGui::Text("FPS: %.1f", g_runtime.debug_fps);
-                    ImGui::Text("Frame: %.2f ms", g_runtime.debug_frame_ms);
-                    ImGui::Text("Parts: %d/%d",
-                                g_runtime.model.debug_stats.drawn_part_count,
-                                g_runtime.model.debug_stats.part_count);
-                    ImGui::Text("Verts: %d  Tris: %d",
-                                g_runtime.model.debug_stats.vertex_count,
-                                g_runtime.model.debug_stats.triangle_count);
-                }
-                ImGui::End();
-            }
-
-            if (g_runtime.gui_enabled) {
-                ImGui::SetNextWindowPos(ImVec2(12.0f, 120.0f), ImGuiCond_FirstUseEver);
-                ImGui::Begin("Runtime Debug");
-                RenderAppDebugUi(g_runtime);
-
-                ImGui::SeparatorText("Model Hierarchy");
-                RenderModelHierarchyTree(g_runtime.model, g_runtime.selected_part_index);
-
-                ImGui::SeparatorText("Task Category");
-                ImGui::Text("Primary: %s", TaskPrimaryCategoryName(g_runtime.task_primary));
-                ImGui::Text("Secondary: %s", TaskSecondaryCategoryName(g_runtime.task_secondary));
-
-                if (ImGui::Button("Close Program")) {
-                    g_runtime.running = false;
-                }
-                ImGui::SameLine();
-                ImGui::TextDisabled("(Esc)");
-
-                RenderReminderPanel(g_runtime);
-
-                ImGui::End();
-            }
-
-            ImGui::Render();
-            ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), g_runtime.renderer);
-            SDL_RenderPresent(g_runtime.renderer);
+        .on_render = [&runtime]() {
+            RunRuntimeRenderEntry(runtime, RuntimeRenderBridge{
+                .has_model_parts = []() { return HasModelParts(); },
+                .has_model_params = []() { return HasModelParams(); },
+                .ensure_selected_part_index_valid = [&runtime]() { EnsureSelectedPartIndexValid(runtime); },
+                .ensure_selected_param_index_valid = [&runtime]() { EnsureSelectedParamIndexValid(runtime); },
+                .compute_part_aabb = [](const ModelPart &part, SDL_FRect *out_rect) {
+                    return ComputePartAABB(part, out_rect);
+                },
+                .render_model_hierarchy_tree = [&runtime]() {
+                    RenderModelHierarchyTree(runtime.model, runtime.selected_part_index);
+                },
+                .task_primary_category_name = [&runtime]() { return TaskPrimaryCategoryName(runtime.task_primary); },
+                .task_secondary_category_name = [&runtime]() { return TaskSecondaryCategoryName(runtime.task_secondary); },
+            });
         },
-        .on_editor_status_expired = []() {
-            g_runtime.editor_status.clear();
+        .on_editor_status_expired = [&runtime]() {
+            runtime.editor_status.clear();
         },
     });
-    (void)ctx;
 }
-
-bool AppLifecycleInit(AppLifecycleContext &ctx) {
-    (void)ctx.argc;
-    (void)ctx.argv;
-
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_AUDIO)) {
-        SDL_Log("SDL_Init failed: %s", SDL_GetError());
-        ctx.exit_code = 1;
-        return false;
-    }
-
-    const SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE;
-
-    const AppRuntimeConfig runtime_cfg = LoadRuntimeConfig();
-
-    g_runtime.window = SDL_CreateWindow("Overlay",
-                                        runtime_cfg.window_width,
-                                        runtime_cfg.window_height,
-                                        flags);
-    if (!g_runtime.window) {
-        SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
-        SDL_Quit();
-        ctx.exit_code = 1;
-        return false;
-    }
-
-    g_runtime.renderer = SDL_CreateRenderer(g_runtime.window, nullptr);
-    if (!g_runtime.renderer) {
-        SDL_Log("SDL_CreateRenderer failed: %s", SDL_GetError());
-        SDL_DestroyWindow(g_runtime.window);
-        g_runtime.window = nullptr;
-        SDL_Quit();
-        ctx.exit_code = 1;
-        return false;
-    }
-
-    if (!SDL_SetWindowOpacity(g_runtime.window, 1.0f)) {
-        SDL_Log("SDL_SetWindowOpacity failed: %s", SDL_GetError());
-    }
-
-    g_runtime.click_through = runtime_cfg.click_through;
-    g_runtime.window_visible = runtime_cfg.window_visible;
-    g_runtime.show_debug_stats = runtime_cfg.show_debug_stats;
-    g_runtime.manual_param_mode = runtime_cfg.manual_param_mode;
-    g_runtime.dev_hot_reload_enabled = runtime_cfg.dev_hot_reload_enabled;
-    g_runtime.plugin_param_blend_mode = runtime_cfg.plugin_param_blend_mode;
-
-    SDL_GetWindowSize(g_runtime.window, &g_runtime.window_w, &g_runtime.window_h);
-    g_runtime.interactive_rect = k2d::ComputeInteractiveRect(g_runtime.window_w, g_runtime.window_h);
-    k2d::ApplyWindowShape(g_runtime.window, g_runtime.window_w, g_runtime.window_h, g_runtime.interactive_rect, g_runtime.click_through);
-
-    if (!SDL_SetWindowHitTest(g_runtime.window, WindowHitTest, nullptr)) {
-        SDL_Log("SDL_SetWindowHitTest failed: %s", SDL_GetError());
-    }
-
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGui::StyleColorsDark();
-    ImGuiStyle &style = ImGui::GetStyle();
-    style.Colors[ImGuiCol_Text] = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
-    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.08f, 0.08f, 0.08f, 1.0f);
-
-    if (!ImGui_ImplSDL3_InitForSDLRenderer(g_runtime.window, g_runtime.renderer)) {
-        SDL_Log("ImGui_ImplSDL3_InitForSDLRenderer failed");
-    }
-    if (!ImGui_ImplSDLRenderer3_Init(g_runtime.renderer)) {
-        SDL_Log("ImGui_ImplSDLRenderer3_Init failed");
-    }
-
-    SDL_AudioSpec desired{};
-    desired.format = SDL_AUDIO_F32;
-    desired.channels = 1;
-    desired.freq = 16000;
-
-    g_runtime.mic_device_id = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_RECORDING, &desired);
-    if (g_runtime.mic_device_id != 0) {
-        SDL_AudioSpec obtained{};
-        int sample_frames = 0;
-        if (SDL_GetAudioDeviceFormat(g_runtime.mic_device_id, &obtained, &sample_frames)) {
-            g_runtime.mic_obtained_spec = obtained;
-        }
-
-        SDL_AudioStream *mic_stream = SDL_CreateAudioStream(&desired, &desired);
-        if (mic_stream && SDL_BindAudioStream(g_runtime.mic_device_id, mic_stream)) {
-            SDL_SetAudioStreamGetCallback(mic_stream, MicAudioInputCallback, &g_runtime);
-            SDL_ResumeAudioDevice(g_runtime.mic_device_id);
-            SDL_Log("Mic capture ready: 16k mono f32");
-        } else {
-            SDL_Log("Mic stream bind failed, fallback to placeholder audio");
-            if (mic_stream) {
-                SDL_DestroyAudioStream(mic_stream);
-            }
-            SDL_CloseAudioDevice(g_runtime.mic_device_id);
-            g_runtime.mic_device_id = 0;
-        }
-    } else {
-        SDL_Log("Mic open failed: %s", SDL_GetError());
-    }
-
-    ctx.exit_code = 0;
-    return true;
-}
-
-bool AppLifecycleBootstrap(AppLifecycleContext &ctx) {
-    AppBootstrapResult bootstrap = BootstrapModelAndResources(g_runtime.renderer);
-
-    g_runtime.model_loaded = bootstrap.model_loaded;
-    if (bootstrap.runtime_config.default_model_candidates.empty()) {
-        bootstrap.runtime_config.default_model_candidates = {
-            "assets/model_01/model.json",
-            "../assets/model_01/model.json",
-            "../../assets/model_01/model.json",
-        };
-    }
-    if (g_runtime.model_loaded) {
-        g_runtime.model = bootstrap.model;
-        SDL_Log("%s", bootstrap.model_load_log.c_str());
-        g_runtime.selected_param_index = 0;
-        SyncAnimationChannelState();
-
-        std::error_code ec;
-        const auto write_time = std::filesystem::last_write_time(g_runtime.model.model_path, ec);
-        g_runtime.model_last_write_time_valid = !ec;
-        if (!ec) {
-            g_runtime.model_last_write_time = write_time;
-        }
-        CommitStableModelBackup(g_runtime.model);
-    } else {
-        SDL_Log("%s", bootstrap.model_load_log.c_str());
-    }
-
-    g_runtime.inference_adapter = CreateDefaultInferenceAdapter();
-    {
-        PluginRuntimeConfig plugin_cfg{};
-        plugin_cfg.show_debug_stats = g_runtime.show_debug_stats;
-        plugin_cfg.manual_param_mode = g_runtime.manual_param_mode;
-        plugin_cfg.click_through = g_runtime.click_through;
-        plugin_cfg.window_opacity = 1.0f;
-
-        PluginHostCallbacks host{};
-        host.log = [](void *, const char *msg) {
-            SDL_Log("[PluginHost] %s", msg ? msg : "");
-        };
-        host.user_data = nullptr;
-
-        PluginWorkerConfig worker_cfg{};
-        worker_cfg.update_hz = 60;
-        worker_cfg.frame_budget_ms = 1;
-
-        std::string plugin_err;
-        g_runtime.plugin_ready = g_runtime.inference_adapter &&
-                                 g_runtime.inference_adapter->Init(plugin_cfg, host, worker_cfg, &plugin_err);
-        if (!g_runtime.plugin_ready) {
-            SDL_Log("Inference adapter init failed: %s", plugin_err.c_str());
-        }
-    }
-
-    {
-        std::string reminder_err;
-        const std::vector<std::string> reminder_db_candidates = {
-            "assets/reminders.db",
-            "../assets/reminders.db",
-            "../../assets/reminders.db",
-        };
-
-        g_runtime.reminder_ready = false;
-        for (const auto &db_path : reminder_db_candidates) {
-            std::string try_err;
-            if (g_runtime.reminder_service.Init(db_path, &try_err)) {
-                g_runtime.reminder_ready = true;
-                g_runtime.reminder_last_error.clear();
-                SDL_Log("Reminder service init ok: %s", db_path.c_str());
-                break;
-            }
-            reminder_err = try_err;
-        }
-
-        if (!g_runtime.reminder_ready) {
-            g_runtime.reminder_last_error = reminder_err;
-            SDL_Log("Reminder service init failed: %s", reminder_err.c_str());
-        } else {
-            g_runtime.reminder_upcoming = g_runtime.reminder_service.ListActive(32, nullptr);
-        }
-    }
-
-    {
-        std::string perception_err;
-        g_runtime.perception_pipeline.Init(g_runtime.perception_state, &perception_err);
-    }
-
-    {
-        std::unique_ptr<IAsrProvider> offline = std::make_unique<OfflineAsrProvider>("assets/whisper/ggml-base.bin");
-        std::unique_ptr<IAsrProvider> cloud = std::make_unique<CloudAsrProvider>("https://api.openai.com/v1/audio/transcriptions", "YOUR_API_KEY");
-        g_runtime.asr_provider = std::make_unique<HybridAsrProvider>(std::move(offline), std::move(cloud));
-
-        std::string asr_err;
-        g_runtime.asr_ready = g_runtime.asr_provider->Init(&asr_err);
-        if (!g_runtime.asr_ready) {
-            g_runtime.asr_last_error = asr_err;
-            SDL_Log("ASR provider init failed: %s", asr_err.c_str());
-        } else {
-            g_runtime.asr_last_error.clear();
-            SDL_Log("ASR provider init ok: %s", g_runtime.asr_provider->Name());
-        }
-    }
-
-    g_runtime.demo_texture = bootstrap.demo_texture;
-    g_runtime.demo_texture_w = bootstrap.demo_texture_w;
-    g_runtime.demo_texture_h = bootstrap.demo_texture_h;
-    if (!g_runtime.demo_texture) {
-        SDL_Log("Failed to load test.png: %s", bootstrap.demo_texture_error.c_str());
-    }
-
-    SDL_Surface *tray_icon = k2d::CreateTrayIconSurface();
-    g_runtime.tray = SDL_CreateTray(tray_icon, "SDL Overlay");
-    if (tray_icon) {
-        SDL_DestroySurface(tray_icon);
-    }
-
-    if (g_runtime.tray) {
-        SDL_TrayMenu *menu = SDL_CreateTrayMenu(g_runtime.tray);
-        if (menu) {
-            g_runtime.entry_click_through = SDL_InsertTrayEntryAt(menu, -1, "Click-Through", SDL_TRAYENTRY_CHECKBOX);
-            if (g_runtime.entry_click_through) {
-                SDL_SetTrayEntryChecked(g_runtime.entry_click_through, g_runtime.click_through);
-                SDL_SetTrayEntryCallback(g_runtime.entry_click_through, TrayToggleClickThrough, nullptr);
-            }
-
-            g_runtime.entry_show_hide = SDL_InsertTrayEntryAt(menu,
-                                                              -1,
-                                                              g_runtime.window_visible ? "Hide Window" : "Show Window",
-                                                              SDL_TRAYENTRY_BUTTON);
-            if (g_runtime.entry_show_hide) {
-                SDL_SetTrayEntryCallback(g_runtime.entry_show_hide, TrayToggleVisibility, nullptr);
-            }
-
-            SDL_InsertTrayEntryAt(menu, -1, nullptr, 0);
-
-            SDL_TrayEntry *entry_quit = SDL_InsertTrayEntryAt(menu, -1, "Quit", SDL_TRAYENTRY_BUTTON);
-            if (entry_quit) {
-                SDL_SetTrayEntryCallback(entry_quit, TrayQuit, nullptr);
-            }
-        }
-    } else {
-        SDL_Log("SDL_CreateTray failed: %s", SDL_GetError());
-    }
-
-    if (!g_runtime.window_visible && g_runtime.window) {
-        SDL_HideWindow(g_runtime.window);
-    }
-
-    ctx.exit_code = 0;
-    return true;
-}
-
-void AppLifecycleTeardown(AppLifecycleContext &ctx) {
-    ImGui_ImplSDLRenderer3_Shutdown();
-    ImGui_ImplSDL3_Shutdown();
-    ImGui::DestroyContext();
-
-    g_runtime.reminder_service.Shutdown();
-    g_runtime.reminder_ready = false;
-
-    if (g_runtime.inference_adapter) {
-        g_runtime.inference_adapter->Shutdown();
-        g_runtime.inference_adapter.reset();
-    }
-    g_runtime.plugin_ready = false;
-
-    g_runtime.perception_pipeline.Shutdown(g_runtime.perception_state);
-
-    if (g_runtime.mic_device_id != 0) {
-        SDL_CloseAudioDevice(g_runtime.mic_device_id);
-        g_runtime.mic_device_id = 0;
-    }
-
-    if (g_runtime.asr_provider) {
-        g_runtime.asr_provider->Shutdown();
-        g_runtime.asr_provider.reset();
-    }
-    g_runtime.asr_ready = false;
-
-    if (g_runtime.tray) {
-        SDL_DestroyTray(g_runtime.tray);
-        g_runtime.tray = nullptr;
-    }
-
-    DestroyModelRuntime(&g_runtime.model);
-
-    if (g_runtime.demo_texture) {
-        SDL_DestroyTexture(g_runtime.demo_texture);
-        g_runtime.demo_texture = nullptr;
-    }
-
-    if (g_runtime.renderer) {
-        SDL_DestroyRenderer(g_runtime.renderer);
-        g_runtime.renderer = nullptr;
-    }
-    if (g_runtime.window) {
-        SDL_DestroyWindow(g_runtime.window);
-        g_runtime.window = nullptr;
-    }
-    SDL_Quit();
-    ctx.exit_code = 0;
-}
-
 
 }  // namespace k2d
 

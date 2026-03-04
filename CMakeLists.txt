@@ -57,6 +57,7 @@ add_executable(AI_assistant WIN32
     src/k2d/editor/editor_gizmo.cpp
     src/k2d/editor/editor_input.cpp
     src/k2d/editor/editor_controller.cpp
+    src/k2d/editor/editor_input_binding.cpp
     src/k2d/rendering/app_renderer.cpp
     src/k2d/controllers/app_bootstrap.cpp
     src/k2d/controllers/window_controller.cpp
@@ -66,6 +67,8 @@ add_executable(AI_assistant WIN32
     src/k2d/controllers/interaction_controller.cpp
     src/k2d/capture/screen_capture_dxgi.cpp
     src/k2d/lifecycle/camera_facemesh_service.cpp
+    src/k2d/lifecycle/utils/app_text_utils.cpp
+    src/k2d/lifecycle/services/task_category_service.cpp
     src/k2d/lifecycle/asr/offline_asr_provider.cpp
     src/k2d/lifecycle/asr/cloud_asr_provider.cpp
     src/k2d/lifecycle/asr/hybrid_asr_provider.cpp
@@ -75,6 +78,10 @@ add_executable(AI_assistant WIN32
     src/k2d/lifecycle/ui/app_debug_ui.cpp
     src/k2d/lifecycle/ui/reminder_panel.cpp
     src/k2d/lifecycle/orchestrator/app_orchestrator.cpp
+    src/k2d/lifecycle/bootstrap/app_bootstrap_steps.cpp
+    src/k2d/lifecycle/events/app_event_handler.cpp
+    src/k2d/lifecycle/systems/runtime_tick_entry.cpp
+    src/k2d/lifecycle/ui/runtime_render_entry.cpp
 )
 
 target_link_libraries(AI_assistant PRIVATE SDL3::SDL3 "${ONNXRUNTIME_LIB}" ${OpenCV_LIBS} d3d11 dxgi windowsapp runtimeobject)

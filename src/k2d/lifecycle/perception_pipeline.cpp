@@ -265,7 +265,8 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
         }
 
         if (!ocr_running_.load(std::memory_order_acquire)) {
-            ScreenCaptureFrame ocr_frame = frame;
+            // 避免在主线程深拷贝整帧 BGRA（可能数 MB~十几 MB），减少 OCR 触发瞬间卡顿。
+            ScreenCaptureFrame ocr_frame = std::move(frame);
             OcrSystemContext ocr_context{};
             ocr_context.process_name = state.system_context_snapshot.process_name;
             ocr_context.window_title = state.system_context_snapshot.window_title;

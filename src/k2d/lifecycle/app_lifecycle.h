@@ -2,10 +2,13 @@
 
 namespace k2d {
 
+struct AppRuntime;
+
 struct AppLifecycleContext {
     int argc = 0;
     char **argv = nullptr;
     int exit_code = 0;
+    AppRuntime *runtime = nullptr;
 };
 
 bool AppLifecycleInit(AppLifecycleContext &ctx);

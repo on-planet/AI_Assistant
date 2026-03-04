@@ -1,0 +1,306 @@
+#include "k2d/lifecycle/bootstrap/app_bootstrap_steps.h"
+
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_audio.h>
+#include <SDL3/SDL_tray.h>
+
+#include "imgui.h"
+#include "imgui_impl_sdl3.h"
+#include "imgui_impl_sdlrenderer3.h"
+
+#include "k2d/controllers/app_bootstrap.h"
+#include "k2d/controllers/window_controller.h"
+#include "k2d/lifecycle/app_lifecycle.h"
+#include "k2d/lifecycle/asr/cloud_asr_provider.h"
+#include "k2d/lifecycle/asr/hybrid_asr_provider.h"
+#include "k2d/lifecycle/asr/offline_asr_provider.h"
+#include "k2d/lifecycle/inference_adapter.h"
+#include "k2d/lifecycle/model_reload_service.h"
+#include "k2d/lifecycle/state/app_runtime_state.h"
+
+#include <filesystem>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace k2d {
+
+namespace {
+
+void SyncAnimationChannelState() {
+    if (!g_runtime.model_loaded) {
+        return;
+    }
+    g_runtime.model.animation_channels_enabled = !g_runtime.manual_param_mode;
+}
+
+void SetClickThrough(bool enabled) {
+    g_runtime.click_through = enabled;
+    if (g_runtime.entry_click_through) {
+        SDL_SetTrayEntryChecked(g_runtime.entry_click_through, enabled);
+    }
+    ApplyWindowShape(g_runtime.window, g_runtime.window_w, g_runtime.window_h, g_runtime.interactive_rect, enabled);
+}
+
+void ToggleWindowVisibility() {
+    k2d::ToggleWindowVisibility(g_runtime.window, &g_runtime.window_visible);
+    k2d::UpdateWindowVisibilityLabel(g_runtime.entry_show_hide, g_runtime.window_visible);
+}
+
+void SDLCALL TrayToggleClickThrough(void *, SDL_TrayEntry *) { SetClickThrough(!g_runtime.click_through); }
+void SDLCALL TrayToggleVisibility(void *, SDL_TrayEntry *) { ToggleWindowVisibility(); }
+void SDLCALL TrayQuit(void *, SDL_TrayEntry *) { g_runtime.running = false; }
+
+SDL_HitTestResult SDLCALL WindowHitTest(SDL_Window *, const SDL_Point *area, void *) {
+    return k2d::WindowHitTest(g_runtime.click_through, g_runtime.edit_mode, g_runtime.interactive_rect, area);
+}
+
+void SDLCALL MicAudioInputCallback(void *userdata, SDL_AudioStream *stream, int additional_amount, int) {
+    auto *runtime = static_cast<AppRuntime *>(userdata);
+    if (!runtime || additional_amount <= 0) return;
+
+    std::vector<float> tmp(static_cast<std::size_t>(additional_amount / static_cast<int>(sizeof(float))));
+    const int got = SDL_GetAudioStreamData(stream, tmp.data(), additional_amount);
+    if (got <= 0) return;
+
+    const int n = got / static_cast<int>(sizeof(float));
+    std::lock_guard<std::mutex> lk(runtime->mic_mutex);
+    for (int i = 0; i < n; ++i) runtime->mic_pcm_queue.push_back(tmp[static_cast<std::size_t>(i)]);
+
+    constexpr std::size_t kMaxQueueSamples = 16000 * 20;
+    while (runtime->mic_pcm_queue.size() > kMaxQueueSamples) runtime->mic_pcm_queue.pop_front();
+}
+
+}  // namespace
+
+bool AppLifecycleInitImpl(AppLifecycleContext &ctx) {
+    (void)ctx.argc;
+    (void)ctx.argv;
+
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_AUDIO)) {
+        SDL_Log("SDL_Init failed: %s", SDL_GetError());
+        ctx.exit_code = 1;
+        return false;
+    }
+
+    const AppRuntimeConfig runtime_cfg = LoadRuntimeConfig();
+    g_runtime.window = SDL_CreateWindow("Overlay", runtime_cfg.window_width, runtime_cfg.window_height, SDL_WINDOW_RESIZABLE);
+    if (!g_runtime.window) {
+        SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
+        SDL_Quit();
+        ctx.exit_code = 1;
+        return false;
+    }
+
+    g_runtime.renderer = SDL_CreateRenderer(g_runtime.window, nullptr);
+    if (!g_runtime.renderer) {
+        SDL_Log("SDL_CreateRenderer failed: %s", SDL_GetError());
+        SDL_DestroyWindow(g_runtime.window);
+        g_runtime.window = nullptr;
+        SDL_Quit();
+        ctx.exit_code = 1;
+        return false;
+    }
+
+    SDL_SetWindowOpacity(g_runtime.window, 1.0f);
+
+    g_runtime.click_through = runtime_cfg.click_through;
+    g_runtime.window_visible = runtime_cfg.window_visible;
+    g_runtime.show_debug_stats = runtime_cfg.show_debug_stats;
+    g_runtime.manual_param_mode = runtime_cfg.manual_param_mode;
+    g_runtime.dev_hot_reload_enabled = runtime_cfg.dev_hot_reload_enabled;
+    g_runtime.plugin_param_blend_mode = runtime_cfg.plugin_param_blend_mode;
+
+    SDL_GetWindowSize(g_runtime.window, &g_runtime.window_w, &g_runtime.window_h);
+    g_runtime.interactive_rect = ComputeInteractiveRect(g_runtime.window_w, g_runtime.window_h);
+    ApplyWindowShape(g_runtime.window, g_runtime.window_w, g_runtime.window_h, g_runtime.interactive_rect, g_runtime.click_through);
+    SDL_SetWindowHitTest(g_runtime.window, WindowHitTest, nullptr);
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGui::StyleColorsDark();
+    ImGuiStyle &style = ImGui::GetStyle();
+    style.Colors[ImGuiCol_Text] = ImVec4(1, 1, 1, 1);
+    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.08f, 0.08f, 0.08f, 1);
+    ImGui_ImplSDL3_InitForSDLRenderer(g_runtime.window, g_runtime.renderer);
+    ImGui_ImplSDLRenderer3_Init(g_runtime.renderer);
+
+    SDL_AudioSpec desired{};
+    desired.format = SDL_AUDIO_F32;
+    desired.channels = 1;
+    desired.freq = 16000;
+    g_runtime.mic_device_id = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_RECORDING, &desired);
+    if (g_runtime.mic_device_id != 0) {
+        SDL_AudioSpec obtained{};
+        int sample_frames = 0;
+        if (SDL_GetAudioDeviceFormat(g_runtime.mic_device_id, &obtained, &sample_frames)) g_runtime.mic_obtained_spec = obtained;
+
+        SDL_AudioStream *mic_stream = SDL_CreateAudioStream(&desired, &desired);
+        if (mic_stream && SDL_BindAudioStream(g_runtime.mic_device_id, mic_stream)) {
+            SDL_SetAudioStreamGetCallback(mic_stream, MicAudioInputCallback, &g_runtime);
+            SDL_ResumeAudioDevice(g_runtime.mic_device_id);
+        } else {
+            if (mic_stream) SDL_DestroyAudioStream(mic_stream);
+            SDL_CloseAudioDevice(g_runtime.mic_device_id);
+            g_runtime.mic_device_id = 0;
+        }
+    }
+
+    ctx.exit_code = 0;
+    return true;
+}
+
+bool AppLifecycleBootstrapImpl(AppLifecycleContext &ctx) {
+    AppBootstrapResult bootstrap = BootstrapModelAndResources(g_runtime.renderer);
+    g_runtime.model_loaded = bootstrap.model_loaded;
+
+    if (g_runtime.model_loaded) {
+        g_runtime.model = bootstrap.model;
+        g_runtime.selected_param_index = 0;
+        SyncAnimationChannelState();
+
+        std::error_code ec;
+        const auto write_time = std::filesystem::last_write_time(g_runtime.model.model_path, ec);
+        g_runtime.model_last_write_time_valid = !ec;
+        if (!ec) g_runtime.model_last_write_time = write_time;
+        CommitStableModelBackup(g_runtime.model);
+    }
+
+    g_runtime.inference_adapter = CreateDefaultInferenceAdapter();
+    {
+        PluginRuntimeConfig plugin_cfg{};
+        plugin_cfg.show_debug_stats = g_runtime.show_debug_stats;
+        plugin_cfg.manual_param_mode = g_runtime.manual_param_mode;
+        plugin_cfg.click_through = g_runtime.click_through;
+        plugin_cfg.window_opacity = 1.0f;
+
+        PluginHostCallbacks host{};
+        host.log = [](void *, const char *msg) { SDL_Log("[PluginHost] %s", msg ? msg : ""); };
+
+        PluginWorkerConfig worker_cfg{};
+        worker_cfg.update_hz = 60;
+        worker_cfg.frame_budget_ms = 1;
+
+        std::string plugin_err;
+        g_runtime.plugin_ready = g_runtime.inference_adapter && g_runtime.inference_adapter->Init(plugin_cfg, host, worker_cfg, &plugin_err);
+    }
+
+    {
+        std::string reminder_err;
+        for (const auto &db_path : {std::string("assets/reminders.db"), std::string("../assets/reminders.db"), std::string("../../assets/reminders.db")}) {
+            std::string try_err;
+            if (g_runtime.reminder_service.Init(db_path, &try_err)) {
+                g_runtime.reminder_ready = true;
+                g_runtime.reminder_last_error.clear();
+                break;
+            }
+            reminder_err = try_err;
+        }
+        if (!g_runtime.reminder_ready) g_runtime.reminder_last_error = reminder_err;
+        else g_runtime.reminder_upcoming = g_runtime.reminder_service.ListActive(32, nullptr);
+    }
+
+    {
+        std::string perception_err;
+        g_runtime.perception_pipeline.Init(g_runtime.perception_state, &perception_err);
+    }
+
+    {
+        std::unique_ptr<IAsrProvider> offline = std::make_unique<OfflineAsrProvider>("assets/whisper/ggml-base.bin");
+        std::unique_ptr<IAsrProvider> cloud = std::make_unique<CloudAsrProvider>("https://api.openai.com/v1/audio/transcriptions", "YOUR_API_KEY");
+        g_runtime.asr_provider = std::make_unique<HybridAsrProvider>(std::move(offline), std::move(cloud));
+
+        std::string asr_err;
+        g_runtime.asr_ready = g_runtime.asr_provider->Init(&asr_err);
+        if (!g_runtime.asr_ready) g_runtime.asr_last_error = asr_err;
+        else g_runtime.asr_last_error.clear();
+    }
+
+    g_runtime.demo_texture = bootstrap.demo_texture;
+    g_runtime.demo_texture_w = bootstrap.demo_texture_w;
+    g_runtime.demo_texture_h = bootstrap.demo_texture_h;
+
+    SDL_Surface *tray_icon = CreateTrayIconSurface();
+    g_runtime.tray = SDL_CreateTray(tray_icon, "SDL Overlay");
+    if (tray_icon) SDL_DestroySurface(tray_icon);
+
+    if (g_runtime.tray) {
+        SDL_TrayMenu *menu = SDL_CreateTrayMenu(g_runtime.tray);
+        if (menu) {
+            g_runtime.entry_click_through = SDL_InsertTrayEntryAt(menu, -1, "Click-Through", SDL_TRAYENTRY_CHECKBOX);
+            if (g_runtime.entry_click_through) {
+                SDL_SetTrayEntryChecked(g_runtime.entry_click_through, g_runtime.click_through);
+                SDL_SetTrayEntryCallback(g_runtime.entry_click_through, TrayToggleClickThrough, nullptr);
+            }
+
+            g_runtime.entry_show_hide = SDL_InsertTrayEntryAt(menu, -1, g_runtime.window_visible ? "Hide Window" : "Show Window", SDL_TRAYENTRY_BUTTON);
+            if (g_runtime.entry_show_hide) SDL_SetTrayEntryCallback(g_runtime.entry_show_hide, TrayToggleVisibility, nullptr);
+
+            SDL_InsertTrayEntryAt(menu, -1, nullptr, 0);
+            SDL_TrayEntry *entry_quit = SDL_InsertTrayEntryAt(menu, -1, "Quit", SDL_TRAYENTRY_BUTTON);
+            if (entry_quit) SDL_SetTrayEntryCallback(entry_quit, TrayQuit, nullptr);
+        }
+    }
+
+    if (!g_runtime.window_visible && g_runtime.window) SDL_HideWindow(g_runtime.window);
+
+    ctx.exit_code = 0;
+    return true;
+}
+
+void AppLifecycleTeardownImpl(AppLifecycleContext &ctx) {
+    ImGui_ImplSDLRenderer3_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
+    ImGui::DestroyContext();
+
+    g_runtime.reminder_service.Shutdown();
+    g_runtime.reminder_ready = false;
+
+    if (g_runtime.inference_adapter) {
+        g_runtime.inference_adapter->Shutdown();
+        g_runtime.inference_adapter.reset();
+    }
+    g_runtime.plugin_ready = false;
+
+    g_runtime.perception_pipeline.Shutdown(g_runtime.perception_state);
+
+    if (g_runtime.mic_device_id != 0) {
+        SDL_CloseAudioDevice(g_runtime.mic_device_id);
+        g_runtime.mic_device_id = 0;
+    }
+
+    if (g_runtime.asr_provider) {
+        g_runtime.asr_provider->Shutdown();
+        g_runtime.asr_provider.reset();
+    }
+    g_runtime.asr_ready = false;
+
+    if (g_runtime.tray) {
+        SDL_DestroyTray(g_runtime.tray);
+        g_runtime.tray = nullptr;
+    }
+
+    DestroyModelRuntime(&g_runtime.model);
+
+    if (g_runtime.demo_texture) {
+        SDL_DestroyTexture(g_runtime.demo_texture);
+        g_runtime.demo_texture = nullptr;
+    }
+
+    if (g_runtime.renderer) {
+        SDL_DestroyRenderer(g_runtime.renderer);
+        g_runtime.renderer = nullptr;
+    }
+    if (g_runtime.window) {
+        SDL_DestroyWindow(g_runtime.window);
+        g_runtime.window = nullptr;
+    }
+    SDL_Quit();
+    ctx.exit_code = 0;
+}
+
+bool AppLifecycleInit(AppLifecycleContext &ctx) { return AppLifecycleInitImpl(ctx); }
+bool AppLifecycleBootstrap(AppLifecycleContext &ctx) { return AppLifecycleBootstrapImpl(ctx); }
+void AppLifecycleTeardown(AppLifecycleContext &ctx) { AppLifecycleTeardownImpl(ctx); }
+
+}  // namespace k2d

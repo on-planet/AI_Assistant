@@ -94,6 +94,14 @@ void RenderAppDebugUi(AppRuntime &runtime) {
                         ? "(none)"
                         : runtime.perception_state.face_emotion_result.emotion_label.c_str(),
                     runtime.perception_state.face_emotion_result.emotion_score);
+        ImGui::Text("HeadPose Y/P/R (deg): %.2f / %.2f / %.2f",
+                    runtime.perception_state.face_emotion_result.head_yaw_deg,
+                    runtime.perception_state.face_emotion_result.head_pitch_deg,
+                    runtime.perception_state.face_emotion_result.head_roll_deg);
+        ImGui::Text("Eye Open L/R/Avg: %.2f / %.2f / %.2f",
+                    runtime.perception_state.face_emotion_result.eye_open_left,
+                    runtime.perception_state.face_emotion_result.eye_open_right,
+                    runtime.perception_state.face_emotion_result.eye_open_avg);
         ImGui::Text("Keypoints: %d", static_cast<int>(runtime.perception_state.face_emotion_result.keypoints.size()));
         if (!runtime.perception_state.face_emotion_result.keypoints.empty()) {
             const auto &kp = runtime.perception_state.face_emotion_result.keypoints.front();
@@ -158,6 +166,26 @@ void RenderAppDebugUi(AppRuntime &runtime) {
     if (!runtime.perception_state.ocr_last_error.empty()) {
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "OCR Error: %s", runtime.perception_state.ocr_last_error.c_str());
     }
+
+    ImGui::SeparatorText("Face Param Mapping");
+    ImGui::Checkbox("Enable Face->Param Mapping", &runtime.feature_face_param_mapping_enabled);
+    ImGui::SliderFloat("Map Min Confidence", &runtime.face_map_min_confidence, 0.0f, 1.0f, "%.2f");
+    ImGui::SliderFloat("Map Pose Deadzone (deg)", &runtime.face_map_head_pose_deadzone_deg, 0.0f, 15.0f, "%.1f");
+    ImGui::SliderFloat("Map Yaw Max (deg)", &runtime.face_map_yaw_max_deg, 5.0f, 45.0f, "%.1f");
+    ImGui::SliderFloat("Map Pitch Max (deg)", &runtime.face_map_pitch_max_deg, 5.0f, 35.0f, "%.1f");
+    ImGui::SliderFloat("Map EyeOpen Threshold", &runtime.face_map_eye_open_threshold, 0.0f, 0.9f, "%.2f");
+    ImGui::SliderFloat("Map Param Weight", &runtime.face_map_param_weight, 0.0f, 1.0f, "%.2f");
+    ImGui::SliderFloat("Map Smooth Alpha", &runtime.face_map_smooth_alpha, 0.0f, 1.0f, "%.2f");
+
+    ImGui::Text("Gate: %s", runtime.face_map_gate_reason.empty() ? "(none)" : runtime.face_map_gate_reason.c_str());
+    ImGui::Text("Raw Yaw/Pitch/Eye: %.2f / %.2f / %.2f",
+                runtime.face_map_raw_yaw_deg,
+                runtime.face_map_raw_pitch_deg,
+                runtime.face_map_raw_eye_open);
+    ImGui::Text("Mapped HeadYaw/HeadPitch/EyeOpen: %.2f / %.2f / %.2f",
+                runtime.face_map_out_head_yaw,
+                runtime.face_map_out_head_pitch,
+                runtime.face_map_out_eye_open);
 
     ImGui::SeparatorText("ASR");
     ImGui::Text("ASR: %s (%s)", runtime.asr_ready ? "ready" : "not ready", runtime.feature_asr_enabled ? "enabled" : "disabled");

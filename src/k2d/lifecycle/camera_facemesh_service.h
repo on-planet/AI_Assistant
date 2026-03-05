@@ -20,6 +20,14 @@ struct FaceEmotionResult {
     float emotion_score = 0.0f;
     std::vector<float> logits;
     std::vector<FaceKeypoint> keypoints;
+
+    // 头部姿态（角度制）与眼睛开合度（0~1）
+    float head_yaw_deg = 0.0f;
+    float head_pitch_deg = 0.0f;
+    float head_roll_deg = 0.0f;
+    float eye_open_left = 0.0f;
+    float eye_open_right = 0.0f;
+    float eye_open_avg = 0.0f;
 };
 
 // 摄像头/人脸表情服务（当前版本）：

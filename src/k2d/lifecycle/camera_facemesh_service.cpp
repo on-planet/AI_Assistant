@@ -89,6 +89,12 @@ struct CameraFacemeshService::Impl {
     std::vector<FaceKeypoint> last_keypoints;
     std::string last_emotion_label;
     float last_emotion_score = 0.0f;
+    float last_head_yaw_deg = 0.0f;
+    float last_head_pitch_deg = 0.0f;
+    float last_head_roll_deg = 0.0f;
+    float last_eye_open_left = 0.0f;
+    float last_eye_open_right = 0.0f;
+    float last_eye_open_avg = 0.0f;
     int miss_count = 0;
     int max_interp_miss = 5;
     float keypoint_smooth_alpha = 0.35f;   // 越小越平滑
@@ -226,6 +232,12 @@ bool CameraFacemeshService::RecognizeFromFrame(const ScreenCaptureFrame &frame,
             out.emotion_label = impl_->last_emotion_label;
             const float decay = std::pow(0.82f, static_cast<float>(impl_->miss_count));
             out.emotion_score = impl_->last_emotion_score * decay;
+            out.head_yaw_deg = impl_->last_head_yaw_deg;
+            out.head_pitch_deg = impl_->last_head_pitch_deg;
+            out.head_roll_deg = impl_->last_head_roll_deg;
+            out.eye_open_left = impl_->last_eye_open_left;
+            out.eye_open_right = impl_->last_eye_open_right;
+            out.eye_open_avg = impl_->last_eye_open_avg;
             if (out.emotion_score < 0.15f) {
                 out.emotion_label = "neutral";
             }
@@ -266,6 +278,51 @@ bool CameraFacemeshService::RecognizeFromFrame(const ScreenCaptureFrame &frame,
         for (std::size_t i = 0; i < out.keypoints.size(); ++i) {
             out.keypoints[i].x = impl_->last_keypoints[i].x * (1.0f - a) + out.keypoints[i].x * a;
             out.keypoints[i].y = impl_->last_keypoints[i].y * (1.0f - a) + out.keypoints[i].y * a;
+        }
+    }
+
+    {
+        auto find_kp = [&](const char *name) -> const FaceKeypoint * {
+            for (const auto &kp : out.keypoints) {
+                if (kp.name == name) return &kp;
+            }
+            return nullptr;
+        };
+
+        const FaceKeypoint *left_eye = find_kp("left_eye");
+        const FaceKeypoint *right_eye = find_kp("right_eye");
+        const FaceKeypoint *nose = find_kp("nose");
+        const FaceKeypoint *mouth_left = find_kp("mouth_left");
+        const FaceKeypoint *mouth_right = find_kp("mouth_right");
+
+        if (left_eye && right_eye) {
+            const float eye_dx = right_eye->x - left_eye->x;
+            const float eye_dy = right_eye->y - left_eye->y;
+            const float eye_dist = std::max(1e-3f, std::sqrt(eye_dx * eye_dx + eye_dy * eye_dy));
+
+            out.head_roll_deg = std::atan2(eye_dy, eye_dx) * 57.2957795f;
+
+            const float eye_center_x = 0.5f * (left_eye->x + right_eye->x);
+            const float eye_center_y = 0.5f * (left_eye->y + right_eye->y);
+            if (nose) {
+                out.head_yaw_deg = ((nose->x - eye_center_x) / eye_dist) * 35.0f;
+                out.head_pitch_deg = ((nose->y - eye_center_y) / eye_dist) * 30.0f;
+            }
+
+            float left_open = 0.65f;
+            float right_open = 0.65f;
+            if (mouth_left && mouth_right && nose) {
+                const float mouth_center_y = 0.5f * (mouth_left->y + mouth_right->y);
+                const float face_h = std::max(1.0f, mouth_center_y - eye_center_y);
+                const float eye_line_y = eye_center_y;
+                const float nose_line_y = nose->y;
+                const float openness = std::clamp((nose_line_y - eye_line_y) / face_h, 0.0f, 1.0f);
+                left_open = std::clamp(openness * 2.0f, 0.0f, 1.0f);
+                right_open = left_open;
+            }
+            out.eye_open_left = left_open;
+            out.eye_open_right = right_open;
+            out.eye_open_avg = 0.5f * (left_open + right_open);
         }
     }
 
@@ -374,6 +431,14 @@ bool CameraFacemeshService::RecognizeFromFrame(const ScreenCaptureFrame &frame,
             out.keypoints = impl_->last_keypoints;
             out.emotion_label = impl_->last_emotion_label.empty() ? "neutral" : impl_->last_emotion_label;
             out.emotion_score = impl_->last_emotion_score * std::pow(0.75f, static_cast<float>(impl_->miss_count));
+            if (!impl_->last_keypoints.empty()) {
+                out.head_yaw_deg = 0.0f;
+                out.head_pitch_deg = 0.0f;
+                out.head_roll_deg = 0.0f;
+                out.eye_open_left = 0.5f;
+                out.eye_open_right = 0.5f;
+                out.eye_open_avg = 0.5f;
+            }
             if (out_error) out_error->clear();
             return true;
         }

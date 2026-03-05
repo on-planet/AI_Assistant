@@ -168,7 +168,24 @@ struct AppRuntime {
     bool feature_scene_classifier_enabled = true;
     bool feature_ocr_enabled = true;
     bool feature_face_emotion_enabled = true;
+    bool feature_face_param_mapping_enabled = true;
     bool feature_asr_enabled = false;
+
+    float face_map_min_confidence = 0.45f;
+    float face_map_head_pose_deadzone_deg = 2.0f;
+    float face_map_yaw_max_deg = 25.0f;
+    float face_map_pitch_max_deg = 18.0f;
+    float face_map_eye_open_threshold = 0.25f;
+    float face_map_param_weight = 0.65f;
+    float face_map_smooth_alpha = 0.35f;
+
+    std::string face_map_gate_reason = "init";
+    float face_map_raw_yaw_deg = 0.0f;
+    float face_map_raw_pitch_deg = 0.0f;
+    float face_map_raw_eye_open = 0.0f;
+    float face_map_out_head_yaw = 0.0f;
+    float face_map_out_head_pitch = 0.0f;
+    float face_map_out_eye_open = 0.0f;
 
     std::unique_ptr<IAsrProvider> asr_provider;
     bool asr_ready = false;

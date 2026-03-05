@@ -219,11 +219,13 @@ struct AppRuntime {
     double asr_wer_proxy = 0.0;
     std::string asr_last_switch_reason;
 
+    std::uint64_t plugin_total_update_count = 0;
     std::uint64_t plugin_timeout_count = 0;
     std::uint64_t plugin_exception_count = 0;
     std::uint64_t plugin_internal_error_count = 0;
     std::uint64_t plugin_disable_count = 0;
     std::uint64_t plugin_recover_count = 0;
+    double plugin_timeout_rate = 0.0;
     int plugin_current_update_hz = 60;
     bool plugin_auto_disabled = false;
     std::string plugin_last_error;

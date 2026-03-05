@@ -250,10 +250,12 @@ void RenderAppDebugUi(AppRuntime &runtime) {
 
     ImGui::SeparatorText("Plugin Worker");
     ImGui::Text("update_hz: %d", runtime.plugin_current_update_hz);
+    ImGui::Text("total updates: %llu", static_cast<unsigned long long>(runtime.plugin_total_update_count));
     ImGui::Text("timeout/exception/internal: %llu / %llu / %llu",
                 static_cast<unsigned long long>(runtime.plugin_timeout_count),
                 static_cast<unsigned long long>(runtime.plugin_exception_count),
                 static_cast<unsigned long long>(runtime.plugin_internal_error_count));
+    ImGui::Text("timeout rate: %.2f%%", runtime.plugin_timeout_rate * 100.0);
     ImGui::Text("disable/recover: %llu / %llu",
                 static_cast<unsigned long long>(runtime.plugin_disable_count),
                 static_cast<unsigned long long>(runtime.plugin_recover_count));

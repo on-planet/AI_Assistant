@@ -392,6 +392,7 @@ struct PluginWorker::Impl {
     std::uint64_t out_seq = 0;
     std::uint64_t consumed_seq = 0;
 
+    std::uint64_t total_update_count = 0;
     std::uint64_t timeout_count = 0;
     std::uint64_t exception_count = 0;
     std::uint64_t internal_error_count = 0;
@@ -450,6 +451,13 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
     impl_->consecutive_timeout_count = 0;
     impl_->consecutive_failures = 0;
     impl_->auto_disabled = false;
+    impl_->total_update_count = 0;
+    impl_->timeout_count = 0;
+    impl_->exception_count = 0;
+    impl_->internal_error_count = 0;
+    impl_->disable_count = 0;
+    impl_->recover_count = 0;
+    impl_->last_error.clear();
     impl_->running.store(true);
 
     impl_->worker = std::thread([this]() {
@@ -495,6 +503,7 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
 
             {
                 std::lock_guard<std::mutex> lock(impl_->mtx);
+                ++impl_->total_update_count;
                 if (st == PluginStatus::Ok) {
                     impl_->latest_out = out;
                     ++impl_->out_seq;
@@ -595,6 +604,7 @@ PluginWorkerStats PluginWorker::GetStats() const {
     }
     std::lock_guard<std::mutex> lock(impl_->mtx);
     PluginWorkerStats s{};
+    s.total_update_count = impl_->total_update_count;
     s.timeout_count = impl_->timeout_count;
     s.exception_count = impl_->exception_count;
     s.internal_error_count = impl_->internal_error_count;

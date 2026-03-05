@@ -179,6 +179,7 @@ struct PluginWorkerConfig {
 };
 
 struct PluginWorkerStats {
+    std::uint64_t total_update_count = 0;
     std::uint64_t timeout_count = 0;
     std::uint64_t exception_count = 0;
     std::uint64_t internal_error_count = 0;

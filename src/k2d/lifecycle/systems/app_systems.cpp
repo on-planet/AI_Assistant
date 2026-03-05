@@ -149,11 +149,15 @@ void TickAppSystems(AppRuntime &runtime, float dt) {
 
     if (runtime.plugin_ready && runtime.inference_adapter) {
         const PluginWorkerStats stats = runtime.inference_adapter->GetStats();
+        runtime.plugin_total_update_count = stats.total_update_count;
         runtime.plugin_timeout_count = stats.timeout_count;
         runtime.plugin_exception_count = stats.exception_count;
         runtime.plugin_internal_error_count = stats.internal_error_count;
         runtime.plugin_disable_count = stats.disable_count;
         runtime.plugin_recover_count = stats.recover_count;
+        runtime.plugin_timeout_rate = stats.total_update_count > 0
+                                          ? static_cast<double>(stats.timeout_count) / static_cast<double>(stats.total_update_count)
+                                          : 0.0;
         runtime.plugin_current_update_hz = stats.current_update_hz;
         runtime.plugin_auto_disabled = stats.auto_disabled;
         runtime.plugin_last_error = stats.last_error;
@@ -171,6 +175,16 @@ void TickAppSystems(AppRuntime &runtime, float dt) {
         } else {
             ClearRuntimeError(runtime.plugin_error_info);
         }
+    } else {
+        runtime.plugin_total_update_count = 0;
+        runtime.plugin_timeout_count = 0;
+        runtime.plugin_exception_count = 0;
+        runtime.plugin_internal_error_count = 0;
+        runtime.plugin_disable_count = 0;
+        runtime.plugin_recover_count = 0;
+        runtime.plugin_timeout_rate = 0.0;
+        runtime.plugin_current_update_hz = 0;
+        runtime.plugin_auto_disabled = false;
     }
 
     runtime.runtime_observability_log_accum_sec += std::max(0.0f, dt);

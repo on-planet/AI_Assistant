@@ -23,6 +23,7 @@ struct RuntimeRenderBridge {
     ComputePartAabbFn compute_part_aabb;
 
     VoidFn render_model_hierarchy_tree;
+    VoidFn render_resource_tree_inspector;
     NameFn task_primary_category_name;
     NameFn task_secondary_category_name;
 
@@ -37,6 +38,11 @@ struct RuntimeRenderBridge {
     void RenderModelHierarchyTree() const {
         if (render_model_hierarchy_tree) {
             render_model_hierarchy_tree();
+        }
+    }
+    void RenderResourceTreeInspector() const {
+        if (render_resource_tree_inspector) {
+            render_resource_tree_inspector();
         }
     }
 };

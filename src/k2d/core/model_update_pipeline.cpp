@@ -35,7 +35,7 @@ static float MapLinear(float v, float in_a, float in_b, float out_a, float out_b
     return out_a + (out_b - out_a) * t;
 }
 
-static float EvalAnimationChannel(const AnimationChannel &channel, float time_sec) {
+static float EvalAnimationChannelProcedural(const AnimationChannel &channel, float time_sec) {
     const float phase = channel.phase + time_sec * channel.frequency * 6.283185307179586f;
     float signal = 0.0f;
 
@@ -54,6 +54,58 @@ static float EvalAnimationChannel(const AnimationChannel &channel, float time_se
     }
 
     return channel.bias + channel.amplitude * signal;
+}
+
+static float EvalTimelineKeys(const AnimationChannel &channel, float time_sec) {
+    if (channel.keyframes.empty()) {
+        return 0.0f;
+    }
+    if (channel.keyframes.size() == 1) {
+        return channel.keyframes.front().value;
+    }
+
+    const auto &kfs = channel.keyframes;
+    if (time_sec <= kfs.front().time_sec) {
+        return kfs.front().value;
+    }
+    if (time_sec >= kfs.back().time_sec) {
+        return kfs.back().value;
+    }
+
+    for (std::size_t i = 1; i < kfs.size(); ++i) {
+        const TimelineKeyframe &a = kfs[i - 1];
+        const TimelineKeyframe &b = kfs[i];
+        if (time_sec <= b.time_sec) {
+            if (channel.timeline_interp == TimelineInterpolation::Step) {
+                return a.value;
+            }
+            const float span = std::max(1e-6f, b.time_sec - a.time_sec);
+            const float t = std::clamp((time_sec - a.time_sec) / span, 0.0f, 1.0f);
+            if (channel.timeline_interp == TimelineInterpolation::Linear) {
+                return a.value + (b.value - a.value) * t;
+            }
+
+            // Hermite (cubic) with per-key tangents (dv/dt)
+            const float t2 = t * t;
+            const float t3 = t2 * t;
+            const float h00 = 2.0f * t3 - 3.0f * t2 + 1.0f;
+            const float h10 = t3 - 2.0f * t2 + t;
+            const float h01 = -2.0f * t3 + 3.0f * t2;
+            const float h11 = t3 - t2;
+            const float m0 = a.out_tangent * span;
+            const float m1 = b.in_tangent * span;
+            return h00 * a.value + h10 * m0 + h01 * b.value + h11 * m1;
+        }
+    }
+
+    return kfs.back().value;
+}
+
+static float EvalAnimationChannel(const AnimationChannel &channel, float time_sec) {
+    if (!channel.keyframes.empty()) {
+        return EvalTimelineKeys(channel, time_sec);
+    }
+    return EvalAnimationChannelProcedural(channel, time_sec);
 }
 
 float ResolveParamInterpSpeed(const std::string &param_id) {

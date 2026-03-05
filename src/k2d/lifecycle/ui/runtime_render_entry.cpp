@@ -70,8 +70,8 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
         ImGui::Begin("Runtime Debug");
         RenderAppDebugUi(runtime);
 
-        ImGui::SeparatorText("Model Hierarchy");
-        bridge.RenderModelHierarchyTree();
+        ImGui::SeparatorText("Model Hierarchy + Inspector");
+        bridge.RenderResourceTreeInspector();
 
         ImGui::SeparatorText("Task Category");
         ImGui::Text("Primary: %s", bridge.TaskPrimaryCategoryName());

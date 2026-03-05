@@ -25,6 +25,8 @@ struct AppInputControllerContext {
     std::function<void()> reset_all_params;
 
     std::function<void()> save_model;
+    std::function<void()> save_project;
+    std::function<void()> load_project;
     std::function<void()> undo_edit;
     std::function<void()> redo_edit;
 

@@ -43,7 +43,11 @@ const char *EditorPropName(EditorProp p) {
     }
 }
 
-void RenderModelHierarchyTree(ModelRuntime &model, int selected_part_index) {
+void RenderModelHierarchyTree(ModelRuntime &model,
+                              int *selected_part_index,
+                              const char *filter_text,
+                              bool auto_expand_matches,
+                              const std::function<void(int)> &on_select) {
     if (model.parts.empty()) {
         ImGui::TextDisabled("(no parts)");
         return;
@@ -60,6 +64,20 @@ void RenderModelHierarchyTree(ModelRuntime &model, int selected_part_index) {
             p.base_opacity = 1.0f;
         }
     }
+
+    std::string filter = filter_text ? filter_text : "";
+    std::transform(filter.begin(), filter.end(), filter.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+
+    auto matches_filter = [&](const ModelPart &p) {
+        if (filter.empty()) return true;
+        std::string id = p.id;
+        std::transform(id.begin(), id.end(), id.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        return id.find(filter) != std::string::npos;
+    };
 
     std::vector<std::vector<int>> children(model.parts.size());
     std::vector<int> roots;
@@ -89,18 +107,38 @@ void RenderModelHierarchyTree(ModelRuntime &model, int selected_part_index) {
         return pa.id < pb.id;
     });
 
+    auto has_visible_descendant = [&](auto &&self, int idx) -> bool {
+        const auto &p = model.parts[static_cast<std::size_t>(idx)];
+        if (matches_filter(p)) return true;
+        for (int c : children[static_cast<std::size_t>(idx)]) {
+            if (self(self, c)) return true;
+        }
+        return false;
+    };
+
     auto draw_node = [&](auto &&self, int idx) -> void {
         auto &part = model.parts[static_cast<std::size_t>(idx)];
         const auto &sub = children[static_cast<std::size_t>(idx)];
+
+        const bool self_match = matches_filter(part);
+        const bool visible = self_match || has_visible_descendant(has_visible_descendant, idx);
+        if (!visible) {
+            return;
+        }
 
         ImGui::PushID(idx);
 
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth;
         if (sub.empty()) flags |= ImGuiTreeNodeFlags_Leaf;
-        if (idx == selected_part_index) flags |= ImGuiTreeNodeFlags_Selected;
+        if (selected_part_index && idx == *selected_part_index) flags |= ImGuiTreeNodeFlags_Selected;
+        if (auto_expand_matches && !filter.empty() && !sub.empty()) flags |= ImGuiTreeNodeFlags_DefaultOpen;
 
         const std::string label = part.id + "##part_tree";
         const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
+        if (ImGui::IsItemClicked() && selected_part_index) {
+            *selected_part_index = idx;
+            if (on_select) on_select(idx);
+        }
 
         ImGui::SameLine();
         const bool hidden = part.base_opacity <= 0.001f;
@@ -124,6 +162,50 @@ void RenderModelHierarchyTree(ModelRuntime &model, int selected_part_index) {
     for (int r : roots) {
         draw_node(draw_node, r);
     }
+}
+
+void RenderResourceTreeInspector(ModelRuntime &model,
+                                 int *selected_part_index,
+                                 char *filter_text,
+                                 int filter_text_capacity,
+                                 bool *auto_expand_matches,
+                                 const std::function<void(int)> &on_select) {
+    if (filter_text && filter_text_capacity > 0) {
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputTextWithHint("##resource_tree_filter", "Filter parts by id...", filter_text,
+                                 static_cast<std::size_t>(filter_text_capacity));
+    }
+
+    if (auto_expand_matches) {
+        ImGui::Checkbox("Auto Expand Matches", auto_expand_matches);
+    }
+
+    RenderModelHierarchyTree(model,
+                             selected_part_index,
+                             filter_text,
+                             auto_expand_matches ? *auto_expand_matches : true,
+                             on_select);
+
+    if (!selected_part_index || *selected_part_index < 0 ||
+        *selected_part_index >= static_cast<int>(model.parts.size())) {
+        ImGui::SeparatorText("Inspector");
+        ImGui::TextDisabled("No part selected");
+        return;
+    }
+
+    ModelPart &part = model.parts[static_cast<std::size_t>(*selected_part_index)];
+    ImGui::SeparatorText("Inspector");
+    ImGui::Text("Part: %s", part.id.c_str());
+    ImGui::TextDisabled("draw=%d, parent=%d", part.draw_order, part.parent_index);
+
+    ImGui::SliderFloat("Opacity", &part.base_opacity, 0.0f, 1.0f, "%.3f");
+    ImGui::DragFloat2("Position", &part.base_pos_x, 0.1f, -5000.0f, 5000.0f, "%.3f");
+    ImGui::DragFloat2("Pivot", &part.pivot_x, 0.1f, -5000.0f, 5000.0f, "%.3f");
+    ImGui::DragFloat("Rotation", &part.base_rot_deg, 0.1f, -3600.0f, 3600.0f, "%.3f");
+
+    ImGui::DragFloat2("Scale", &part.base_scale_x, 0.01f, 0.01f, 100.0f, "%.3f");
+    part.base_scale_x = std::max(0.01f, part.base_scale_x);
+    part.base_scale_y = std::max(0.01f, part.base_scale_y);
 }
 
 }  // namespace k2d

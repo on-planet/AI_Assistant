@@ -30,6 +30,8 @@ struct EditorInputBindingFactoryDeps {
     std::function<void(AppRuntime &)> toggle_edit_mode;
     std::function<void()> toggle_manual_param_mode;
     std::function<void()> save_model;
+    std::function<void()> save_project;
+    std::function<void()> load_project;
     std::function<void()> undo_edit;
     std::function<void()> redo_edit;
 
@@ -86,6 +88,7 @@ struct RuntimeRenderBridgeFactoryDeps {
     std::function<void(AppRuntime &)> ensure_selected_param_index_valid;
     std::function<bool(const ModelPart &, SDL_FRect *)> compute_part_aabb;
     std::function<void(AppRuntime &)> render_model_hierarchy_tree;
+    std::function<void(AppRuntime &)> render_resource_tree_inspector;
     std::function<const char *(AppRuntime &)> task_primary_category_name;
     std::function<const char *(AppRuntime &)> task_secondary_category_name;
 };

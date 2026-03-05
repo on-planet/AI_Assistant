@@ -140,6 +140,13 @@ static std::optional<AnimationBlendMode> ParseAnimationBlendMode(std::string_vie
     return std::nullopt;
 }
 
+static std::optional<TimelineInterpolation> ParseTimelineInterpolation(std::string_view s) {
+    if (s == "Step" || s == "step") return TimelineInterpolation::Step;
+    if (s == "Linear" || s == "linear") return TimelineInterpolation::Linear;
+    if (s == "Hermite" || s == "hermite") return TimelineInterpolation::Hermite;
+    return std::nullopt;
+}
+
 static float EvalAnimationChannel(const AnimationChannel &channel, float time_sec) {
     const float phase = channel.phase + time_sec * channel.frequency * 6.283185307179586f;
     float signal = 0.0f;
@@ -319,6 +326,29 @@ bool LoadModelRuntime(SDL_Renderer *renderer,
             ch.param_index = p_it->second;
             ch.weight = std::clamp(ch.weight, 0.0f, 1.0f);
             ch.frequency = std::max(0.0f, ch.frequency);
+
+            if (const JsonValue *kfs_v = cv.get("keyframes"); kfs_v && kfs_v->isArray() && kfs_v->asArray()) {
+                if (const std::string interp_str = cv.getString("interp").value_or(std::string("Linear")); !interp_str.empty()) {
+                    ch.timeline_interp = ParseTimelineInterpolation(interp_str).value_or(TimelineInterpolation::Linear);
+                }
+
+                for (const JsonValue &kv : *kfs_v->asArray()) {
+                    if (!kv.isObject()) continue;
+                    const float t = static_cast<float>(kv.getNumber("time").value_or(0.0));
+                    const float v = static_cast<float>(kv.getNumber("value").value_or(0.0));
+                    const float tin = static_cast<float>(kv.getNumber("inTangent").value_or(0.0));
+                    const float tout = static_cast<float>(kv.getNumber("outTangent").value_or(0.0));
+                    ch.keyframes.push_back(TimelineKeyframe{
+                        .time_sec = t,
+                        .value = v,
+                        .in_tangent = tin,
+                        .out_tangent = tout,
+                    });
+                }
+                std::sort(ch.keyframes.begin(), ch.keyframes.end(), [](const TimelineKeyframe &a, const TimelineKeyframe &b) {
+                    return a.time_sec < b.time_sec;
+                });
+            }
 
             out_model->animation_channels.push_back(std::move(ch));
         }

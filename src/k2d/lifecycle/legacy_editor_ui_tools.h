@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <string>
 
 namespace k2d {
@@ -13,6 +14,17 @@ void SetEditorStatus(AppRuntime &runtime, std::string text, float ttl_sec = 2.0f
 float QuantizeToGrid(float v, float grid);
 const char *AxisConstraintName(AxisConstraint c);
 const char *EditorPropName(EditorProp p);
-void RenderModelHierarchyTree(ModelRuntime &model, int selected_part_index);
+void RenderModelHierarchyTree(ModelRuntime &model,
+                              int *selected_part_index,
+                              const char *filter_text = nullptr,
+                              bool auto_expand_matches = true,
+                              const std::function<void(int)> &on_select = {});
+
+void RenderResourceTreeInspector(ModelRuntime &model,
+                                 int *selected_part_index,
+                                 char *filter_text,
+                                 int filter_text_capacity,
+                                 bool *auto_expand_matches,
+                                 const std::function<void(int)> &on_select = {});
 
 }  // namespace k2d

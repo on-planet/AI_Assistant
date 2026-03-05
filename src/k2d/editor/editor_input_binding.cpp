@@ -21,6 +21,8 @@ EditorInputCallbacks BuildEditorInputCallbacksFromRuntime(AppRuntime &runtime,
         .reset_selected_param = bridge.reset_selected_param,
         .reset_all_params = bridge.reset_all_params,
         .save_model = bridge.save_model,
+        .save_project = bridge.save_project,
+        .load_project = bridge.load_project,
         .undo_edit = bridge.undo_edit,
         .redo_edit = bridge.redo_edit,
         .on_mouse_button_down = [&runtime, bridge](float mx, float my, bool shift_pressed, Uint8 button) {

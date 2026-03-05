@@ -43,6 +43,20 @@ enum class AnimationBlendMode {
     Override,
 };
 
+enum class TimelineInterpolation {
+    Step,
+    Linear,
+    Hermite,
+};
+
+struct TimelineKeyframe {
+    float time_sec = 0.0f;
+    float value = 0.0f;
+    // dv/dt（每秒）
+    float in_tangent = 0.0f;
+    float out_tangent = 0.0f;
+};
+
 struct ModelParameter {
     std::string id;
     FloatParam param;
@@ -61,6 +75,8 @@ struct AnimationChannel {
     float amplitude = 1.0f;
     float bias = 0.0f;
     float phase = 0.0f;
+    TimelineInterpolation timeline_interp = TimelineInterpolation::Linear;
+    std::vector<TimelineKeyframe> keyframes;
 };
 
 struct ModelPart {

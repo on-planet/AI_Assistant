@@ -260,7 +260,7 @@ const char *EditorPropName(EditorProp p) {
 }
 
 void RenderModelHierarchyTree(ModelRuntime &model, int selected_part_index) {
-    k2d::RenderModelHierarchyTree(model, selected_part_index);
+    k2d::RenderModelHierarchyTree(model, &selected_part_index);
 }
 
 void UndoLastEdit() {
@@ -389,7 +389,13 @@ void SaveEditedModelJsonToDisk() {
     k2d::SaveEditedModelJsonToDisk(g_runtime);
 }
 
+void SaveEditorProjectToDisk() {
+    k2d::SaveEditorProjectToDisk(g_runtime);
+}
 
+void LoadEditorProjectFromDisk() {
+    k2d::LoadEditorProjectFromDisk(g_runtime);
+}
 
 EditorInputBindingBridge BuildEditorInputBindingBridge(AppRuntime &runtime) {
     const EditorInputBindingFactoryDeps deps{
@@ -412,6 +418,8 @@ EditorInputBindingBridge BuildEditorInputBindingBridge(AppRuntime &runtime) {
         },
         .toggle_manual_param_mode = []() { ToggleManualParamMode(); },
         .save_model = []() { SaveEditedModelJsonToDisk(); },
+        .save_project = []() { SaveEditorProjectToDisk(); },
+        .load_project = []() { LoadEditorProjectFromDisk(); },
         .undo_edit = []() { UndoLastEdit(); },
         .redo_edit = []() { RedoLastEdit(); },
         .pick_top_part_at = [](AppRuntime &rt, float x, float y) { return k2d::PickTopPartAt(rt, x, y); },
@@ -532,7 +540,20 @@ RuntimeRenderBridge BuildRuntimeRenderBridge(AppRuntime &runtime) {
             return k2d::ComputePartAABB(part, out_rect);
         },
         .render_model_hierarchy_tree = [](AppRuntime &rt) {
-            k2d::RenderModelHierarchyTree(rt.model, rt.selected_part_index);
+            k2d::RenderModelHierarchyTree(rt.model,
+                                          &rt.selected_part_index,
+                                          rt.resource_tree_filter,
+                                          rt.resource_tree_auto_expand_matches);
+        },
+        .render_resource_tree_inspector = [](AppRuntime &rt) {
+            k2d::RenderResourceTreeInspector(rt.model,
+                                             &rt.selected_part_index,
+                                             rt.resource_tree_filter,
+                                             static_cast<int>(sizeof(rt.resource_tree_filter)),
+                                             &rt.resource_tree_auto_expand_matches,
+                                             [&rt](int idx) {
+                                                 rt.selected_part_index = idx;
+                                             });
         },
         .task_primary_category_name = [](AppRuntime &rt) { return TaskPrimaryCategoryName(rt.task_primary); },
         .task_secondary_category_name = [](AppRuntime &rt) { return TaskSecondaryCategoryName(rt.task_secondary); },

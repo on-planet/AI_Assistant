@@ -56,7 +56,7 @@ void RenderPartEditorOverlay(const AppRenderContext &ctx) {
     SDL_RenderDebugText(ctx.renderer,
                         12.0f,
                         124.0f,
-                        "EditKeys: E toggle | LMB Gizmo(X/Y/Rotate/Scale) | Shift+LMB pivot | Tab prev/next | Ctrl+S save");
+                        "EditKeys: E toggle | LMB Gizmo(X/Y/Rotate/Scale) | Shift+LMB pivot | Tab prev/next | Ctrl+S save project | Ctrl+O load project");
 }
 
 void RenderEditorStatus(const AppRenderContext &ctx) {

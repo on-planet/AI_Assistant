@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <ctime>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -394,6 +396,103 @@ void TriggerSingleStepSampling(AppRuntime &runtime) {
         std::max(0.2f, runtime.runtime_observability_log_interval_sec);
 }
 
+std::string DetectParamPrefix(const std::string &param_id) {
+    if (param_id.empty()) return "(empty)";
+    const std::size_t us = param_id.find('_');
+    if (us != std::string::npos && us > 0) {
+        return param_id.substr(0, us);
+    }
+    std::size_t cut = 0;
+    while (cut < param_id.size()) {
+        const unsigned char ch = static_cast<unsigned char>(param_id[cut]);
+        if ((ch >= 'A' && ch <= 'Z' && cut > 0) || (ch >= '0' && ch <= '9')) {
+            break;
+        }
+        ++cut;
+    }
+    if (cut == 0) return "misc";
+    return param_id.substr(0, cut);
+}
+
+std::string DetectParamSemanticGroup(const std::string &param_id) {
+    std::string id_lower = param_id;
+    std::transform(id_lower.begin(), id_lower.end(), id_lower.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+
+    if (id_lower.find("eye") != std::string::npos) return "Eye";
+    if (id_lower.find("brow") != std::string::npos) return "Brow";
+    if (id_lower.find("mouth") != std::string::npos || id_lower.find("lip") != std::string::npos) return "Mouth";
+    if (id_lower.find("head") != std::string::npos || id_lower.find("neck") != std::string::npos) return "Head";
+    if (id_lower.find("hair") != std::string::npos || id_lower.find("bang") != std::string::npos) return "Hair";
+    if (id_lower.find("body") != std::string::npos || id_lower.find("arm") != std::string::npos) return "Body";
+    return "Other";
+}
+
+using ParamGroup = std::pair<std::string, std::vector<int>>;
+
+std::vector<ParamGroup> BuildParamGroups(const AppRuntime &runtime, int group_mode) {
+    std::map<std::string, std::vector<int>, std::less<>> grouped;
+    for (int i = 0; i < static_cast<int>(runtime.model.parameters.size()); ++i) {
+        const auto &p = runtime.model.parameters[static_cast<std::size_t>(i)];
+        const std::string key = (group_mode == 1) ? DetectParamSemanticGroup(p.id) : DetectParamPrefix(p.id);
+        grouped[key].push_back(i);
+    }
+
+    std::vector<ParamGroup> out;
+    out.reserve(grouped.size());
+    for (auto &kv : grouped) {
+        out.emplace_back(kv.first, std::move(kv.second));
+    }
+    return out;
+}
+
+const char *BindingTypeNameUi(BindingType t) {
+    switch (t) {
+        case BindingType::PosX: return "PosX";
+        case BindingType::PosY: return "PosY";
+        case BindingType::RotDeg: return "RotDeg";
+        case BindingType::ScaleX: return "ScaleX";
+        case BindingType::ScaleY: return "ScaleY";
+        case BindingType::Opacity: return "Opacity";
+        default: return "Unknown";
+    }
+}
+
+void UpsertBinding(ModelPart &part, int param_index, BindingType type, float in_min, float in_max, float out_min, float out_max) {
+    for (auto &b : part.bindings) {
+        if (b.param_index == param_index && b.type == type) {
+            b.in_min = in_min;
+            b.in_max = in_max;
+            b.out_min = out_min;
+            b.out_max = out_max;
+            return;
+        }
+    }
+
+    ParamBinding b{};
+    b.param_index = param_index;
+    b.type = type;
+    b.in_min = in_min;
+    b.in_max = in_max;
+    b.out_min = out_min;
+    b.out_max = out_max;
+    part.bindings.push_back(b);
+}
+
+void UpsertTimelineKeyframe(AnimationChannel &ch, float time_sec, float value) {
+    for (auto &kf : ch.keyframes) {
+        if (std::abs(kf.time_sec - time_sec) < 1e-4f) {
+            kf.value = value;
+            return;
+        }
+    }
+    ch.keyframes.push_back(TimelineKeyframe{.time_sec = time_sec, .value = value});
+    std::sort(ch.keyframes.begin(), ch.keyframes.end(), [](const TimelineKeyframe &a, const TimelineKeyframe &b) {
+        return a.time_sec < b.time_sec;
+    });
+}
+
 void RenderOverviewRuntimeHealth(const AppRuntime &runtime) {
     ImGui::SeparatorText("Subsystem Health Lights");
     if (ImGui::BeginTable("overview_health_table", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV)) {
@@ -503,6 +602,197 @@ void RenderAppDebugUi(AppRuntime &runtime) {
 
         std::string overview_error;
         RenderModuleLatestErrorCard(overview_error);
+
+        ImGui::SeparatorText("Param Panel Enhanced (Group/Batch Bind)");
+        if (runtime.model_loaded && !runtime.model.parameters.empty()) {
+            const char *group_modes[] = {"Prefix", "Semantic"};
+            ImGui::Combo("Param Group Mode", &runtime.param_group_mode, group_modes, 2);
+
+            std::vector<ParamGroup> groups = BuildParamGroups(runtime, runtime.param_group_mode);
+            if (!groups.empty()) {
+                runtime.selected_param_group_index = std::clamp(runtime.selected_param_group_index, 0, static_cast<int>(groups.size()) - 1);
+
+                if (ImGui::BeginCombo("Param Group", groups[static_cast<std::size_t>(runtime.selected_param_group_index)].first.c_str())) {
+                    for (int i = 0; i < static_cast<int>(groups.size()); ++i) {
+                        const bool selected = i == runtime.selected_param_group_index;
+                        std::string label = groups[static_cast<std::size_t>(i)].first + " (" +
+                                            std::to_string(groups[static_cast<std::size_t>(i)].second.size()) + ")";
+                        if (ImGui::Selectable(label.c_str(), selected)) {
+                            runtime.selected_param_group_index = i;
+                        }
+                        if (selected) ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                }
+
+                const auto &selected_group = groups[static_cast<std::size_t>(runtime.selected_param_group_index)];
+                ImGui::Text("Group Param Count: %d", static_cast<int>(selected_group.second.size()));
+                if (!selected_group.second.empty()) {
+                    std::string preview;
+                    const int max_preview = std::min(5, static_cast<int>(selected_group.second.size()));
+                    for (int i = 0; i < max_preview; ++i) {
+                        const int idx = selected_group.second[static_cast<std::size_t>(i)];
+                        if (idx >= 0 && idx < static_cast<int>(runtime.model.parameters.size())) {
+                            if (!preview.empty()) preview += ", ";
+                            preview += runtime.model.parameters[static_cast<std::size_t>(idx)].id;
+                        }
+                    }
+                    ImGui::TextWrapped("Preview: %s%s", preview.c_str(), selected_group.second.size() > static_cast<std::size_t>(max_preview) ? " ..." : "");
+                }
+
+                const char *binding_props[] = {"PosX", "PosY", "RotDeg", "ScaleX", "ScaleY", "Opacity"};
+                ImGui::Combo("Bind Property", &runtime.batch_bind_prop_type, binding_props, 6);
+                runtime.batch_bind_prop_type = std::clamp(runtime.batch_bind_prop_type, 0, 5);
+
+                ImGui::SliderFloat("Bind In Min", &runtime.batch_bind_in_min, -2.0f, 2.0f, "%.2f");
+                ImGui::SliderFloat("Bind In Max", &runtime.batch_bind_in_max, -2.0f, 2.0f, "%.2f");
+                ImGui::SliderFloat("Bind Out Min", &runtime.batch_bind_out_min, -180.0f, 180.0f, "%.2f");
+                ImGui::SliderFloat("Bind Out Max", &runtime.batch_bind_out_max, -180.0f, 180.0f, "%.2f");
+
+                const BindingType bt = static_cast<BindingType>(runtime.batch_bind_prop_type);
+                if (ImGui::Button("Apply Batch Bind -> Selected Part")) {
+                    if (runtime.selected_part_index >= 0 &&
+                        runtime.selected_part_index < static_cast<int>(runtime.model.parts.size())) {
+                        auto &part = runtime.model.parts[static_cast<std::size_t>(runtime.selected_part_index)];
+                        for (int param_idx : selected_group.second) {
+                            UpsertBinding(part,
+                                          param_idx,
+                                          bt,
+                                          runtime.batch_bind_in_min,
+                                          runtime.batch_bind_in_max,
+                                          runtime.batch_bind_out_min,
+                                          runtime.batch_bind_out_max);
+                        }
+                        runtime.editor_status = "batch bind applied to selected part: " + part.id +
+                                                " | group=" + selected_group.first +
+                                                " | prop=" + BindingTypeNameUi(bt);
+                        runtime.editor_status_ttl = 2.5f;
+                    } else {
+                        runtime.editor_status = "batch bind failed: no selected part";
+                        runtime.editor_status_ttl = 2.5f;
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Apply Batch Bind -> All Parts")) {
+                    int touched = 0;
+                    for (auto &part : runtime.model.parts) {
+                        for (int param_idx : selected_group.second) {
+                            UpsertBinding(part,
+                                          param_idx,
+                                          bt,
+                                          runtime.batch_bind_in_min,
+                                          runtime.batch_bind_in_max,
+                                          runtime.batch_bind_out_min,
+                                          runtime.batch_bind_out_max);
+                        }
+                        touched += 1;
+                    }
+                    runtime.editor_status = "batch bind applied to all parts=" + std::to_string(touched) +
+                                            " | group=" + selected_group.first +
+                                            " | prop=" + BindingTypeNameUi(bt);
+                    runtime.editor_status_ttl = 2.5f;
+                }
+            }
+        } else {
+            ImGui::TextDisabled("model/parameters unavailable");
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Timeline v1", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Checkbox("Enable Timeline", &runtime.timeline_enabled);
+        runtime.model.animation_channels_enabled = runtime.timeline_enabled;
+
+        ImGui::SliderFloat("Timeline Cursor (s)", &runtime.timeline_cursor_sec, 0.0f, std::max(0.1f, runtime.timeline_duration_sec), "%.2f");
+        ImGui::SliderFloat("Timeline Duration (s)", &runtime.timeline_duration_sec, 0.5f, 30.0f, "%.1f");
+
+        if (runtime.model.parameters.empty()) {
+            ImGui::TextDisabled("no parameters");
+        } else {
+            if (ImGui::Button("Add Channel")) {
+                const int pidx = runtime.selected_param_index >= 0 &&
+                                 runtime.selected_param_index < static_cast<int>(runtime.model.parameters.size())
+                                 ? runtime.selected_param_index
+                                 : 0;
+                AnimationChannel ch{};
+                ch.id = "timeline_" + runtime.model.parameters[static_cast<std::size_t>(pidx)].id;
+                ch.param_index = pidx;
+                ch.enabled = true;
+                ch.weight = 1.0f;
+                ch.blend = AnimationBlendMode::Override;
+                ch.timeline_interp = TimelineInterpolation::Linear;
+                runtime.model.animation_channels.push_back(std::move(ch));
+                runtime.timeline_selected_channel_index = static_cast<int>(runtime.model.animation_channels.size()) - 1;
+            }
+
+            if (!runtime.model.animation_channels.empty()) {
+                runtime.timeline_selected_channel_index = std::clamp(runtime.timeline_selected_channel_index,
+                                                                     0,
+                                                                     static_cast<int>(runtime.model.animation_channels.size()) - 1);
+                auto &ch = runtime.model.animation_channels[static_cast<std::size_t>(runtime.timeline_selected_channel_index)];
+
+                if (ImGui::BeginCombo("Channel", ch.id.c_str())) {
+                    for (int i = 0; i < static_cast<int>(runtime.model.animation_channels.size()); ++i) {
+                        const auto &ci = runtime.model.animation_channels[static_cast<std::size_t>(i)];
+                        const bool sel = i == runtime.timeline_selected_channel_index;
+                        if (ImGui::Selectable(ci.id.c_str(), sel)) {
+                            runtime.timeline_selected_channel_index = i;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+
+                ImGui::Checkbox("Channel Enabled", &ch.enabled);
+                const char *interp_items[] = {"Step", "Linear", "Hermite"};
+                int interp_idx = ch.timeline_interp == TimelineInterpolation::Step ? 0 :
+                                 (ch.timeline_interp == TimelineInterpolation::Linear ? 1 : 2);
+                if (ImGui::Combo("Interpolation", &interp_idx, interp_items, 3)) {
+                    ch.timeline_interp = interp_idx == 0 ? TimelineInterpolation::Step :
+                                       (interp_idx == 1 ? TimelineInterpolation::Linear : TimelineInterpolation::Hermite);
+                }
+
+                int param_idx = std::clamp(ch.param_index, 0, static_cast<int>(runtime.model.parameters.size()) - 1);
+                if (ImGui::BeginCombo("Target Param", runtime.model.parameters[static_cast<std::size_t>(param_idx)].id.c_str())) {
+                    for (int i = 0; i < static_cast<int>(runtime.model.parameters.size()); ++i) {
+                        const bool sel = i == param_idx;
+                        const auto &pid = runtime.model.parameters[static_cast<std::size_t>(i)].id;
+                        if (ImGui::Selectable(pid.c_str(), sel)) {
+                            param_idx = i;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                ch.param_index = param_idx;
+
+                if (ImGui::Button("Add/Update Keyframe At Cursor")) {
+                    const auto &p = runtime.model.parameters[static_cast<std::size_t>(param_idx)].param;
+                    const float v = p.target();
+                    UpsertTimelineKeyframe(ch, runtime.timeline_cursor_sec, v);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Remove Last Keyframe") && !ch.keyframes.empty()) {
+                    ch.keyframes.pop_back();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Delete Channel")) {
+                    runtime.model.animation_channels.erase(runtime.model.animation_channels.begin() + runtime.timeline_selected_channel_index);
+                    runtime.timeline_selected_channel_index = std::max(0, runtime.timeline_selected_channel_index - 1);
+                }
+
+                ImGui::Text("Keyframes: %d", static_cast<int>(ch.keyframes.size()));
+                for (std::size_t i = 0; i < ch.keyframes.size(); ++i) {
+                    auto &kf = ch.keyframes[i];
+                    ImGui::PushID(static_cast<int>(i));
+                    ImGui::Text("t=%.2f v=%.3f", kf.time_sec, kf.value);
+                    if (ch.timeline_interp == TimelineInterpolation::Hermite) {
+                        ImGui::SliderFloat("inTan", &kf.in_tangent, -20.0f, 20.0f, "%.3f");
+                        ImGui::SliderFloat("outTan", &kf.out_tangent, -20.0f, 20.0f, "%.3f");
+                    }
+                    ImGui::PopID();
+                }
+            } else {
+                ImGui::TextDisabled("no channels");
+            }
+        }
     }
 
     if (ImGui::CollapsingHeader("感知", ImGuiTreeNodeFlags_DefaultOpen)) {

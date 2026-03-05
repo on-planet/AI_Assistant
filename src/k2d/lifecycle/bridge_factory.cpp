@@ -21,6 +21,8 @@ EditorInputBindingBridge BuildEditorInputBindingBridge(AppRuntime &runtime,
         },
         .toggle_manual_param_mode = deps.toggle_manual_param_mode,
         .save_model = deps.save_model,
+        .save_project = deps.save_project,
+        .load_project = deps.load_project,
         .undo_edit = deps.undo_edit,
         .redo_edit = deps.redo_edit,
         .pick_top_part_at = [&runtime, deps](float x, float y) {
@@ -117,6 +119,11 @@ RuntimeRenderBridge BuildRuntimeRenderBridge(AppRuntime &runtime,
         .render_model_hierarchy_tree = [&runtime, deps]() {
             if (deps.render_model_hierarchy_tree) {
                 deps.render_model_hierarchy_tree(runtime);
+            }
+        },
+        .render_resource_tree_inspector = [&runtime, deps]() {
+            if (deps.render_resource_tree_inspector) {
+                deps.render_resource_tree_inspector(runtime);
             }
         },
         .task_primary_category_name = [&runtime, deps]() {

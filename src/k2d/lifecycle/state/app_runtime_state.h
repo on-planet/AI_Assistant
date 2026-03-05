@@ -113,6 +113,25 @@ struct AppRuntime {
     bool property_panel_enabled = true;
     int selected_editor_prop = 0;
 
+    // 资源树 + Inspector 联动
+    char resource_tree_filter[128] = "";
+    bool resource_tree_auto_expand_matches = true;
+
+    // 参数面板增强：分组与批量绑定（UI 状态）
+    int param_group_mode = 0; // 0=prefix, 1=semantic
+    int selected_param_group_index = 0;
+    int batch_bind_prop_type = 0; // 对应 BindingType 枚举值
+    float batch_bind_in_min = -1.0f;
+    float batch_bind_in_max = 1.0f;
+    float batch_bind_out_min = -1.0f;
+    float batch_bind_out_max = 1.0f;
+
+    // 时间轴 v1
+    bool timeline_enabled = false;
+    int timeline_selected_channel_index = 0;
+    float timeline_cursor_sec = 0.0f;
+    float timeline_duration_sec = 3.0f;
+
     std::vector<EditCommand> undo_stack;
     std::vector<EditCommand> redo_stack;
 
@@ -134,6 +153,9 @@ struct AppRuntime {
 
     std::string editor_status;
     float editor_status_ttl = 0.0f;
+
+    // 工程级会话文件（project.json）路径
+    std::string current_project_path = "assets/project.json";
 
     float debug_fps = 0.0f;
     float debug_frame_ms = 0.0f;

@@ -18,6 +18,9 @@
 #include "k2d/lifecycle/model_reload_service.h"
 #include "k2d/lifecycle/state/app_runtime_state.h"
 #include "k2d/lifecycle/runtime_config_applier.h"
+#include "k2d/lifecycle/chat/cloud_chat_provider.h"
+#include "k2d/lifecycle/chat/hybrid_chat_provider.h"
+#include "k2d/lifecycle/chat/offline_chat_provider.h"
 
 #include <filesystem>
 #include <memory>
@@ -248,6 +251,23 @@ bool AppLifecycleBootstrapImpl(AppLifecycleContext &ctx) {
         else g_runtime.asr_last_error.clear();
     }
 
+    {
+        std::unique_ptr<IChatProvider> offline = std::make_unique<OfflineChatProvider>("assets/llm/qwen2.5-1.5b-instruct.gguf");
+        std::unique_ptr<IChatProvider> cloud = std::make_unique<CloudChatProvider>(
+            "https://api.openai.com/v1/chat/completions",
+            "YOUR_API_KEY",
+            "gpt-4o-mini");
+        HybridChatConfig chat_cfg{};
+        chat_cfg.prefer_cloud = g_runtime.prefer_cloud_chat;
+        chat_cfg.cloud_fallback_enabled = true;
+        g_runtime.chat_provider = std::make_unique<HybridChatProvider>(std::move(offline), std::move(cloud), chat_cfg);
+
+        std::string chat_err;
+        g_runtime.chat_ready = g_runtime.chat_provider->Init(&chat_err);
+        if (!g_runtime.chat_ready) g_runtime.chat_last_error = chat_err;
+        else g_runtime.chat_last_error.clear();
+    }
+
     g_runtime.demo_texture = bootstrap.demo_texture;
     g_runtime.demo_texture_w = bootstrap.demo_texture_w;
     g_runtime.demo_texture_h = bootstrap.demo_texture_h;
@@ -306,6 +326,12 @@ void AppLifecycleTeardownImpl(AppLifecycleContext &ctx) {
         g_runtime.asr_provider.reset();
     }
     g_runtime.asr_ready = false;
+
+    if (g_runtime.chat_provider) {
+        g_runtime.chat_provider->Shutdown();
+        g_runtime.chat_provider.reset();
+    }
+    g_runtime.chat_ready = false;
 
     if (g_runtime.tray) {
         SDL_DestroyTray(g_runtime.tray);

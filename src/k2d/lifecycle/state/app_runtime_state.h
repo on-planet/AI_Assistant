@@ -22,6 +22,7 @@
 #include "k2d/lifecycle/reminder_service.h"
 #include "k2d/lifecycle/asr/asr_provider.h"
 #include "k2d/lifecycle/asr/vad_segmenter.h"
+#include "k2d/lifecycle/chat/chat_provider.h"
 
 namespace k2d {
 
@@ -174,6 +175,15 @@ struct AppRuntime {
     float asr_poll_accum_sec = 0.0f;
     std::string asr_last_error;
     AsrRecognitionResult asr_last_result;
+
+    std::unique_ptr<IChatProvider> chat_provider;
+    bool chat_ready = false;
+    bool feature_chat_enabled = true;
+    bool prefer_cloud_chat = true;
+    std::string chat_last_error;
+    std::string chat_last_switch_reason;
+    char chat_input[512] = "Hello, introduce yourself";
+    std::string chat_last_answer;
 
     EnergyVadSegmenter asr_vad;
     std::vector<float> asr_audio_buffer;

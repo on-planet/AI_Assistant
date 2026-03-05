@@ -54,6 +54,19 @@ struct PerceptionPipelineState {
     OcrResult ocr_last_stable_result;
     bool ocr_skipped_due_timeout = false;
     int ocr_timeout_ms = 1500;
+    int ocr_det_input_size = 640;
+    float ocr_low_conf_threshold = 0.5f;
+
+    std::int64_t ocr_total_runs = 0;
+    std::int64_t ocr_total_latency_ms = 0;
+    float ocr_avg_latency_ms = 0.0f;
+    std::int64_t ocr_total_raw_lines = 0;
+    std::int64_t ocr_total_kept_lines = 0;
+    std::int64_t ocr_total_dropped_low_conf_lines = 0;
+    float ocr_discard_rate = 0.0f;
+    std::int64_t ocr_conf_low_count = 0;
+    std::int64_t ocr_conf_mid_count = 0;
+    std::int64_t ocr_conf_high_count = 0;
 
     std::string ocr_summary_candidate;
     std::string ocr_summary_stable;

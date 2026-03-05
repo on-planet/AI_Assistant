@@ -115,6 +115,9 @@ void RenderAppDebugUi(AppRuntime &runtime) {
     ImGui::SeparatorText("OCR");
     ImGui::SliderInt("OCR Timeout (ms)", &runtime.perception_state.ocr_timeout_ms, 500, 10000);
     runtime.perception_state.ocr_timeout_ms = std::clamp(runtime.perception_state.ocr_timeout_ms, 500, 10000);
+    ImGui::SliderInt("OCR Det Input", &runtime.perception_state.ocr_det_input_size, 160, 1280);
+    runtime.perception_state.ocr_det_input_size = std::clamp(runtime.perception_state.ocr_det_input_size, 160, 1280);
+
     if (runtime.perception_state.ocr_ready && !runtime.perception_state.ocr_result.summary.empty()) {
         ImGui::TextWrapped("OCR Summary: %s", runtime.perception_state.ocr_result.summary.c_str());
         if (!runtime.perception_state.ocr_result.lines.empty()) {
@@ -123,6 +126,35 @@ void RenderAppDebugUi(AppRuntime &runtime) {
                         runtime.perception_state.ocr_result.lines.front().score);
         }
     }
+
+    ImGui::SeparatorText("OCR Quality Metrics");
+    ImGui::Text("Avg Latency: %.1f ms", runtime.perception_state.ocr_avg_latency_ms);
+    ImGui::Text("Discard Rate: %.2f%%", runtime.perception_state.ocr_discard_rate * 100.0f);
+    ImGui::Text("Kept / Raw Lines: %lld / %lld",
+                static_cast<long long>(runtime.perception_state.ocr_total_kept_lines),
+                static_cast<long long>(runtime.perception_state.ocr_total_raw_lines));
+    ImGui::Text("Dropped Low-Conf Lines: %lld (threshold=%.2f)",
+                static_cast<long long>(runtime.perception_state.ocr_total_dropped_low_conf_lines),
+                runtime.perception_state.ocr_low_conf_threshold);
+
+    const auto conf_total = runtime.perception_state.ocr_conf_low_count +
+                            runtime.perception_state.ocr_conf_mid_count +
+                            runtime.perception_state.ocr_conf_high_count;
+    if (conf_total > 0) {
+        const float low_pct = static_cast<float>(runtime.perception_state.ocr_conf_low_count) * 100.0f /
+                              static_cast<float>(conf_total);
+        const float mid_pct = static_cast<float>(runtime.perception_state.ocr_conf_mid_count) * 100.0f /
+                              static_cast<float>(conf_total);
+        const float high_pct = static_cast<float>(runtime.perception_state.ocr_conf_high_count) * 100.0f /
+                               static_cast<float>(conf_total);
+        ImGui::Text("Confidence Dist [<0.5 / 0.5~0.8 / >=0.8]: %.1f%% / %.1f%% / %.1f%%",
+                    low_pct,
+                    mid_pct,
+                    high_pct);
+    } else {
+        ImGui::Text("Confidence Dist: (no samples)");
+    }
+
     if (!runtime.perception_state.ocr_last_error.empty()) {
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "OCR Error: %s", runtime.perception_state.ocr_last_error.c_str());
     }
@@ -140,6 +172,41 @@ void RenderAppDebugUi(AppRuntime &runtime) {
     ImGui::Text("Cloud Success Ratio: %.2f%%", runtime.asr_cloud_success_ratio * 100.0);
     if (!runtime.asr_last_error.empty()) {
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "ASR Error: %s", runtime.asr_last_error.c_str());
+    }
+
+    ImGui::SeparatorText("Chat");
+    ImGui::Checkbox("Enable Chat", &runtime.feature_chat_enabled);
+    ImGui::Checkbox("Prefer Cloud Chat", &runtime.prefer_cloud_chat);
+    ImGui::Text("Chat: %s", runtime.chat_ready ? "ready" : "not ready");
+    ImGui::InputTextMultiline("##chat_input", runtime.chat_input, sizeof(runtime.chat_input), ImVec2(-1.0f, 72.0f));
+    if (ImGui::Button("Send Chat")) {
+        if (!(runtime.feature_chat_enabled && runtime.chat_ready && runtime.chat_provider)) {
+            runtime.chat_last_error = "chat provider unavailable";
+        } else {
+            ChatRequest req{};
+            req.user_text = runtime.chat_input;
+            req.language = "zh";
+            req.max_tokens = 256;
+            req.temperature = 0.7f;
+
+            ChatResponse rsp{};
+            std::string err;
+            const bool ok = runtime.chat_provider->Generate(req, rsp, &err);
+            if (ok) {
+                runtime.chat_last_answer = std::move(rsp.text);
+                runtime.chat_last_switch_reason = rsp.switch_reason;
+                runtime.chat_last_error.clear();
+            } else {
+                runtime.chat_last_error = err;
+            }
+        }
+    }
+    if (!runtime.chat_last_answer.empty()) {
+        ImGui::TextWrapped("Answer: %s", runtime.chat_last_answer.c_str());
+    }
+    ImGui::Text("Switch Reason: %s", runtime.chat_last_switch_reason.empty() ? "(none)" : runtime.chat_last_switch_reason.c_str());
+    if (!runtime.chat_last_error.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Chat Error: %s", runtime.chat_last_error.c_str());
     }
 
     ImGui::SeparatorText("Task Category");

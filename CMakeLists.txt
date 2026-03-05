@@ -43,6 +43,9 @@ add_executable(AI_assistant WIN32
     src/k2d/lifecycle/perception_pipeline.cpp
     src/k2d/lifecycle/runtime_config_applier.cpp
     src/k2d/lifecycle/legacy_editor_ui_tools.cpp
+    src/k2d/lifecycle/chat/offline_chat_provider.cpp
+    src/k2d/lifecycle/chat/cloud_chat_provider.cpp
+    src/k2d/lifecycle/chat/hybrid_chat_provider.cpp
     external/sqlite/sqlite3.c
     external/imgui/imgui.cpp
     external/imgui/imgui_draw.cpp

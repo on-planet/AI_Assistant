@@ -106,6 +106,7 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
             if (ocr_service_.Init(std::get<0>(cand), std::get<1>(cand), std::get<2>(cand), &try_err)) {
                 state.ocr_ready = true;
                 state.ocr_last_error.clear();
+                state.ocr_det_input_size = ocr_service_.GetDetInputSize();
                 SDL_Log("OCR init ok: det=%s rec=%s keys=%s",
                         std::get<0>(cand).c_str(),
                         std::get<1>(cand).c_str(),
@@ -272,6 +273,10 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
     }
 
     if (state.ocr_enabled && state.ocr_ready) {
+        state.ocr_det_input_size = std::clamp(state.ocr_det_input_size, 160, 1280);
+        state.ocr_low_conf_threshold = std::clamp(state.ocr_low_conf_threshold, 0.0f, 1.0f);
+        ocr_service_.SetDetInputSize(state.ocr_det_input_size);
+
         if (ocr_future_.valid() &&
             ocr_future_.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
             ocr_future_.get();
@@ -298,16 +303,56 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
                 if (!packet.error.empty()) {
                     state.ocr_last_error = packet.error;
                 }
-            } else if (packet.elapsed_ms > state.ocr_timeout_ms) {
-                state.ocr_skipped_due_timeout = true;
-                state.ocr_last_error = "ocr timeout degrade, keep last stable result";
-                if (!state.ocr_last_stable_result.summary.empty() || !state.ocr_last_stable_result.lines.empty()) {
-                    state.ocr_result = state.ocr_last_stable_result;
-                }
             } else {
-                state.ocr_result = std::move(packet.result);
-                state.ocr_last_stable_result = state.ocr_result;
-                state.ocr_last_error.clear();
+                state.ocr_total_runs += 1;
+                state.ocr_total_latency_ms += static_cast<std::int64_t>(std::max(0, packet.elapsed_ms));
+                state.ocr_avg_latency_ms = state.ocr_total_runs > 0
+                                            ? static_cast<float>(static_cast<double>(state.ocr_total_latency_ms) /
+                                                                 static_cast<double>(state.ocr_total_runs))
+                                            : 0.0f;
+
+                OcrResult filtered_result = packet.result;
+                const auto raw_lines = packet.result.lines;
+                filtered_result.lines.clear();
+                filtered_result.lines.reserve(raw_lines.size());
+
+                std::int64_t dropped_low_conf_count = 0;
+                for (const auto &line : raw_lines) {
+                    const float score = std::clamp(line.score, 0.0f, 1.0f);
+                    if (score < 0.5f) {
+                        state.ocr_conf_low_count += 1;
+                    } else if (score < 0.8f) {
+                        state.ocr_conf_mid_count += 1;
+                    } else {
+                        state.ocr_conf_high_count += 1;
+                    }
+
+                    if (score >= state.ocr_low_conf_threshold) {
+                        filtered_result.lines.push_back(line);
+                    } else {
+                        dropped_low_conf_count += 1;
+                    }
+                }
+
+                state.ocr_total_raw_lines += static_cast<std::int64_t>(raw_lines.size());
+                state.ocr_total_kept_lines += static_cast<std::int64_t>(filtered_result.lines.size());
+                state.ocr_total_dropped_low_conf_lines += dropped_low_conf_count;
+                state.ocr_discard_rate = state.ocr_total_raw_lines > 0
+                                             ? static_cast<float>(static_cast<double>(state.ocr_total_dropped_low_conf_lines) /
+                                                                  static_cast<double>(state.ocr_total_raw_lines))
+                                             : 0.0f;
+
+                if (packet.elapsed_ms > state.ocr_timeout_ms) {
+                    state.ocr_skipped_due_timeout = true;
+                    state.ocr_last_error = "ocr timeout degrade, keep last stable result";
+                    if (!state.ocr_last_stable_result.summary.empty() || !state.ocr_last_stable_result.lines.empty()) {
+                        state.ocr_result = state.ocr_last_stable_result;
+                    }
+                } else {
+                    state.ocr_result = std::move(filtered_result);
+                    state.ocr_last_stable_result = state.ocr_result;
+                    state.ocr_last_error.clear();
+                }
             }
         }
 

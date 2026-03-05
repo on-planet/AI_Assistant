@@ -28,62 +28,66 @@ const char *TaskSecondaryCategoryName(TaskSecondaryCategory c) {
     }
 }
 
+namespace {
+
+std::string ToLower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return s;
+}
+
+bool ContainsAny(const std::string &text, const std::vector<std::string> &keywords) {
+    for (const std::string &kw : keywords) {
+        if (kw.empty()) {
+            continue;
+        }
+        if (text.find(ToLower(kw)) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+TaskSecondaryCategory InferSecondaryCategory(const std::string &text,
+                                             TaskPrimaryCategory primary,
+                                             const TaskCategoryConfig &config) {
+    for (const auto &rule : config.secondary_rules) {
+        if (rule.primary != primary || rule.secondary == TaskSecondaryCategory::Unknown) {
+            continue;
+        }
+        if (ContainsAny(text, rule.keywords)) {
+            return rule.secondary;
+        }
+    }
+
+    if (primary == TaskPrimaryCategory::Game) {
+        return config.default_game_secondary != TaskSecondaryCategory::Unknown
+                   ? config.default_game_secondary
+                   : TaskSecondaryCategory::GameMatch;
+    }
+
+    return config.default_work_secondary != TaskSecondaryCategory::Unknown
+               ? config.default_work_secondary
+               : TaskSecondaryCategory::WorkCoding;
+}
+
+}  // namespace
+
 void InferTaskCategory(const SystemContextSnapshot &ctx,
                        const OcrResult &ocr,
                        const SceneClassificationResult &scene,
+                       const TaskCategoryConfig &config,
                        TaskPrimaryCategory &out_primary,
                        TaskSecondaryCategory &out_secondary) {
-    auto to_lower = [](std::string s) {
-        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char ch) {
-            return static_cast<char>(std::tolower(ch));
-        });
-        return s;
-    };
-
     std::string text = ctx.process_name + "\n" + ctx.window_title + "\n" + ctx.url_hint + "\n" + ocr.summary + "\n" + scene.label;
-    text = to_lower(text);
+    text = ToLower(text);
 
-    out_primary = TaskPrimaryCategory::Unknown;
-    out_secondary = TaskSecondaryCategory::Unknown;
+    out_primary = ContainsAny(text, config.game_primary_keywords)
+                      ? TaskPrimaryCategory::Game
+                      : TaskPrimaryCategory::Work;
 
-    const bool has_game_hint =
-        text.find("game") != std::string::npos ||
-        text.find("steam") != std::string::npos ||
-        text.find("unity") != std::string::npos ||
-        text.find("ue4") != std::string::npos ||
-        text.find("unreal") != std::string::npos ||
-        text.find("lobby") != std::string::npos ||
-        text.find("match") != std::string::npos ||
-        text.find("battle") != std::string::npos ||
-        text.find("menu") != std::string::npos ||
-        text.find("settlement") != std::string::npos ||
-        text.find("lobby") != std::string::npos ||
-        text.find("match") != std::string::npos;
-
-    if (has_game_hint) {
-        out_primary = TaskPrimaryCategory::Game;
-        if (text.find("result") != std::string::npos || text.find("settlement") != std::string::npos) {
-            out_secondary = TaskSecondaryCategory::GameSettlement;
-        } else if (text.find("lobby") != std::string::npos) {
-            out_secondary = TaskSecondaryCategory::GameLobby;
-        } else if (text.find("menu") != std::string::npos) {
-            out_secondary = TaskSecondaryCategory::GameMenu;
-        } else {
-            out_secondary = TaskSecondaryCategory::GameMatch;
-        }
-        return;
-    }
-
-    out_primary = TaskPrimaryCategory::Work;
-    if (text.find("debug") != std::string::npos || text.find("gdb") != std::string::npos) {
-        out_secondary = TaskSecondaryCategory::WorkDebugging;
-    } else if (text.find("readme") != std::string::npos || text.find("docs") != std::string::npos || text.find("wiki") != std::string::npos) {
-        out_secondary = TaskSecondaryCategory::WorkReadingDocs;
-    } else if (text.find("meeting") != std::string::npos || text.find("minutes") != std::string::npos) {
-        out_secondary = TaskSecondaryCategory::WorkMeetingNotes;
-    } else {
-        out_secondary = TaskSecondaryCategory::WorkCoding;
-    }
+    out_secondary = InferSecondaryCategory(text, out_primary, config);
 }
 
 }  // namespace k2d

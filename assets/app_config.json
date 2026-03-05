@@ -16,5 +16,53 @@
   },
   "plugin": {
     "paramBlendMode": "override"
+  },
+  "taskCategory": {
+    "gamePrimaryKeywords": [
+      "game",
+      "steam",
+      "unity",
+      "ue4",
+      "unreal",
+      "lobby",
+      "match",
+      "battle",
+      "menu",
+      "settlement"
+    ],
+    "secondaryRules": [
+      {
+        "primary": "game",
+        "secondary": "settlement",
+        "keywords": ["result", "settlement"]
+      },
+      {
+        "primary": "game",
+        "secondary": "lobby",
+        "keywords": ["lobby"]
+      },
+      {
+        "primary": "game",
+        "secondary": "menu",
+        "keywords": ["menu"]
+      },
+      {
+        "primary": "work",
+        "secondary": "debugging",
+        "keywords": ["debug", "gdb"]
+      },
+      {
+        "primary": "work",
+        "secondary": "reading_docs",
+        "keywords": ["readme", "docs", "wiki"]
+      },
+      {
+        "primary": "work",
+        "secondary": "meeting_notes",
+        "keywords": ["meeting", "minutes"]
+      }
+    ],
+    "defaultWorkSecondary": "coding",
+    "defaultGameSecondary": "match"
   }
 }

@@ -514,6 +514,7 @@ RuntimeTickBridge BuildRuntimeTickBridge(AppRuntime &runtime) {
             InferTaskCategory(rt.perception_state.system_context_snapshot,
                               rt.perception_state.ocr_result,
                               rt.perception_state.scene_result,
+                              rt.task_category_config,
                               rt.task_primary,
                               rt.task_secondary);
         },

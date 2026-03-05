@@ -11,6 +11,7 @@ void ApplyRuntimeConfig(AppRuntime &runtime, const AppRuntimeConfig &cfg) {
     runtime.manual_param_mode = cfg.manual_param_mode;
     runtime.dev_hot_reload_enabled = cfg.dev_hot_reload_enabled;
     runtime.plugin_param_blend_mode = cfg.plugin_param_blend_mode;
+    runtime.task_category_config = cfg.task_category;
 }
 
 }  // namespace k2d

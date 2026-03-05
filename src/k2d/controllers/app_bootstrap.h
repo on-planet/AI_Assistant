@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include "k2d/core/model.h"
+#include "k2d/lifecycle/state/task_category_types.h"
 
 #include <string>
 #include <vector>
@@ -30,6 +31,9 @@ struct AppRuntimeConfig {
 
     // default model candidates (from first to last)
     std::vector<std::string> default_model_candidates;
+
+    // task category
+    TaskCategoryConfig task_category;
 };
 
 struct AppBootstrapResult {

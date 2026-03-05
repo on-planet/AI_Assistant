@@ -25,6 +25,7 @@
 #include "k2d/lifecycle/asr/vad_segmenter.h"
 #include "k2d/lifecycle/chat/chat_provider.h"
 #include "k2d/lifecycle/observability/runtime_error_codes.h"
+#include "k2d/lifecycle/state/task_category_types.h"
 
 namespace k2d {
 
@@ -32,24 +33,6 @@ enum class AxisConstraint {
     None,
     XOnly,
     YOnly,
-};
-
-enum class TaskPrimaryCategory {
-    Unknown,
-    Work,
-    Game,
-};
-
-enum class TaskSecondaryCategory {
-    Unknown,
-    WorkCoding,
-    WorkDebugging,
-    WorkReadingDocs,
-    WorkMeetingNotes,
-    GameLobby,
-    GameMatch,
-    GameSettlement,
-    GameMenu,
 };
 
 enum class EditorProp {
@@ -243,6 +226,7 @@ struct AppRuntime {
 
     TaskPrimaryCategory task_primary = TaskPrimaryCategory::Unknown;
     TaskSecondaryCategory task_secondary = TaskSecondaryCategory::Unknown;
+    TaskCategoryConfig task_category_config{};
 };
 
 extern AppRuntime g_runtime;

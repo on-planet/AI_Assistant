@@ -10,6 +10,51 @@
 namespace k2d {
 namespace {
 
+void LoadTaskCategoryKeywords(const JsonValue *arr, std::vector<std::string> &out) {
+    if (!arr || !arr->isArray()) {
+        return;
+    }
+    const auto *items = arr->asArray();
+    if (!items) {
+        return;
+    }
+
+    std::vector<std::string> values;
+    values.reserve(items->size());
+    for (const auto &item : *items) {
+        if (!item.isString()) {
+            continue;
+        }
+        const std::string *s = item.asString();
+        if (!s || s->empty()) {
+            continue;
+        }
+        values.push_back(*s);
+    }
+
+    if (!values.empty()) {
+        out = std::move(values);
+    }
+}
+
+TaskPrimaryCategory ParsePrimaryCategory(const std::string &name) {
+    if (name == "work") return TaskPrimaryCategory::Work;
+    if (name == "game") return TaskPrimaryCategory::Game;
+    return TaskPrimaryCategory::Unknown;
+}
+
+TaskSecondaryCategory ParseSecondaryCategory(const std::string &name) {
+    if (name == "coding") return TaskSecondaryCategory::WorkCoding;
+    if (name == "debugging") return TaskSecondaryCategory::WorkDebugging;
+    if (name == "reading_docs") return TaskSecondaryCategory::WorkReadingDocs;
+    if (name == "meeting_notes") return TaskSecondaryCategory::WorkMeetingNotes;
+    if (name == "lobby") return TaskSecondaryCategory::GameLobby;
+    if (name == "match") return TaskSecondaryCategory::GameMatch;
+    if (name == "settlement") return TaskSecondaryCategory::GameSettlement;
+    if (name == "menu") return TaskSecondaryCategory::GameMenu;
+    return TaskSecondaryCategory::Unknown;
+}
+
 AppRuntimeConfig BuildSafeRuntimeConfig() {
     AppRuntimeConfig cfg;
     cfg.window_width = 800;
@@ -100,6 +145,64 @@ AppRuntimeConfig LoadRuntimeConfigImpl() {
         cfg.manual_param_mode = startup->getBool("manualParamMode").value_or(cfg.manual_param_mode);
         if (auto model = startup->getString("defaultModel"); model.has_value() && !model->empty()) {
             cfg.default_model_candidates.insert(cfg.default_model_candidates.begin(), *model);
+        }
+    }
+
+    if (const JsonValue *task_category = root.get("taskCategory"); task_category && task_category->isObject()) {
+        if (const JsonValue *game_primary_keywords = task_category->get("gamePrimaryKeywords")) {
+            LoadTaskCategoryKeywords(game_primary_keywords, cfg.task_category.game_primary_keywords);
+        }
+
+        if (const JsonValue *default_work = task_category->get("defaultWorkSecondary");
+            default_work && default_work->isString() && default_work->asString()) {
+            const TaskSecondaryCategory parsed = ParseSecondaryCategory(*default_work->asString());
+            if (parsed != TaskSecondaryCategory::Unknown) {
+                cfg.task_category.default_work_secondary = parsed;
+            }
+        }
+
+        if (const JsonValue *default_game = task_category->get("defaultGameSecondary");
+            default_game && default_game->isString() && default_game->asString()) {
+            const TaskSecondaryCategory parsed = ParseSecondaryCategory(*default_game->asString());
+            if (parsed != TaskSecondaryCategory::Unknown) {
+                cfg.task_category.default_game_secondary = parsed;
+            }
+        }
+
+        if (const JsonValue *secondary_rules = task_category->get("secondaryRules");
+            secondary_rules && secondary_rules->isArray() && secondary_rules->asArray()) {
+            std::vector<TaskCategoryKeywordRule> loaded_rules;
+            for (const auto &entry : *secondary_rules->asArray()) {
+                if (!entry.isObject()) {
+                    continue;
+                }
+                const auto primary_name = entry.getString("primary");
+                const auto secondary_name = entry.getString("secondary");
+                if (!primary_name || !secondary_name) {
+                    continue;
+                }
+
+                TaskCategoryKeywordRule rule{};
+                rule.primary = ParsePrimaryCategory(*primary_name);
+                rule.secondary = ParseSecondaryCategory(*secondary_name);
+                if (rule.primary == TaskPrimaryCategory::Unknown ||
+                    rule.secondary == TaskSecondaryCategory::Unknown) {
+                    continue;
+                }
+
+                if (const JsonValue *keywords = entry.get("keywords")) {
+                    LoadTaskCategoryKeywords(keywords, rule.keywords);
+                }
+                if (rule.keywords.empty()) {
+                    continue;
+                }
+
+                loaded_rules.push_back(std::move(rule));
+            }
+
+            if (!loaded_rules.empty()) {
+                cfg.task_category.secondary_rules = std::move(loaded_rules);
+            }
         }
     }
 

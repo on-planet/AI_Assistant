@@ -10,6 +10,7 @@
 #include <atomic>
 #include <fstream>
 #include <sstream>
+#include <cctype>
 
 #include "k2d/core/json.h"
 
@@ -171,7 +172,8 @@ namespace {
 
 class OnnxBehaviorPlugin final : public IBehaviorPlugin {
 public:
-    explicit OnnxBehaviorPlugin(PluginArtifactSpec spec) : spec_(std::move(spec)) {}
+    explicit OnnxBehaviorPlugin(PluginArtifactSpec spec)
+        : spec_(std::move(spec)), route_config_(BuildRouteConfig(spec_)) {}
 
     PluginStatus Init(const PluginRuntimeConfig &runtime_cfg,
                       const PluginHostCallbacks &host,
@@ -213,28 +215,9 @@ public:
         out = BehaviorOutput{};
         const float presence = std::clamp(in.vision.user_presence, 0.0f, 1.0f);
 
-        std::string route = "unknown";
-        if (in.scene_label.find("game") != std::string::npos) {
-            route = "game";
-        } else if (in.scene_label.find("code") != std::string::npos || in.scene_label.find("work") != std::string::npos) {
-            route = "code";
-        } else if (in.scene_label.find("meeting") != std::string::npos) {
-            route = "meeting";
-        }
-
-        float opacity_bias = 0.0f;
-        if (route == "game") {
-            opacity_bias = 0.08f;
-            out.event_scores["plugin.route.game"] = 1.0f;
-        } else if (route == "code") {
-            opacity_bias = 0.03f;
-            out.event_scores["plugin.route.code"] = 1.0f;
-        } else if (route == "meeting") {
-            opacity_bias = -0.05f;
-            out.event_scores["plugin.route.meeting"] = 1.0f;
-        } else {
-            out.event_scores["plugin.route.unknown"] = 1.0f;
-        }
+        const RouteMatch route = ResolveRoute(in);
+        const float opacity_bias = route.opacity_bias;
+        out.event_scores["plugin.route." + route.name] = 1.0f;
 
         out.param_targets["window.opacity"] = std::clamp(base_opacity_ + opacity_bias + presence * 0.05f, 0.05f, 1.0f);
         out.param_weights["window.opacity"] = 1.0f;
@@ -245,7 +228,7 @@ public:
         out.param_targets["runtime.manual_param_mode"] = base_manual_param_mode_ ? 1.0f : 0.0f;
         out.param_weights["runtime.manual_param_mode"] = 1.0f;
         out.event_scores["plugin.models.count"] = static_cast<float>(1 + spec_.extra_onnx_paths.size());
-        out.event_scores["plugin.route.selected"] = (route == "unknown" ? 0.0f : 1.0f);
+        out.event_scores["plugin.route.selected"] = (route.name == route_config_.default_route ? 0.0f : 1.0f);
         out.trigger_blink = (presence > 0.8f);
         return PluginStatus::Ok;
     }
@@ -255,7 +238,57 @@ public:
     }
 
 private:
+    struct RouteMatch {
+        std::string name = "unknown";
+        float opacity_bias = 0.0f;
+    };
+
+    static std::string ToLowerCopy(const std::string &s) {
+        std::string out;
+        out.reserve(s.size());
+        for (char c : s) out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        return out;
+    }
+
+    static bool ContainsAny(const std::string &text_lower, const std::vector<std::string> &keywords) {
+        for (const std::string &kw : keywords) {
+            if (kw.empty()) continue;
+            if (text_lower.find(ToLowerCopy(kw)) != std::string::npos) return true;
+        }
+        return false;
+    }
+
+    static PluginRouteConfig BuildRouteConfig(const PluginArtifactSpec &spec) {
+        if (!spec.route_config.rules.empty()) {
+            PluginRouteConfig cfg = spec.route_config;
+            if (cfg.default_route.empty()) cfg.default_route = "unknown";
+            return cfg;
+        }
+
+        PluginRouteConfig fallback;
+        fallback.default_route = "unknown";
+        return fallback;
+    }
+
+    RouteMatch ResolveRoute(const PerceptionInput &in) const {
+        const std::string scene = ToLowerCopy(in.scene_label);
+        const std::string task = ToLowerCopy(in.task_label);
+
+        for (const PluginRouteRule &rule : route_config_.rules) {
+            if (rule.name.empty()) continue;
+            const bool scene_hit = !rule.scene_keywords.empty() && ContainsAny(scene, rule.scene_keywords);
+            const bool task_hit = !rule.task_keywords.empty() && ContainsAny(task, rule.task_keywords);
+            if (scene_hit || task_hit) {
+                return RouteMatch{.name = rule.name, .opacity_bias = rule.opacity_bias};
+            }
+        }
+
+        return RouteMatch{.name = route_config_.default_route.empty() ? std::string("unknown") : route_config_.default_route,
+                          .opacity_bias = 0.0f};
+    }
+
     PluginArtifactSpec spec_{};
+    PluginRouteConfig route_config_{};
     PluginHostCallbacks host_{};
     bool initialized_ = false;
     bool base_show_debug_stats_ = true;
@@ -304,6 +337,37 @@ std::unique_ptr<IBehaviorPlugin> CreateOnnxBehaviorPluginFromConfig(const std::s
     if (const JsonValue *arr = root_opt->get("extra_onnx"); arr && arr->isArray()) {
         for (const auto &v : *arr->asArray()) {
             if (v.isString()) spec.extra_onnx_paths.push_back(*v.asString());
+        }
+    }
+
+    if (const JsonValue *routing = root_opt->get("routing"); routing && routing->isObject()) {
+        if (auto dr = routing->getString("default_route"); dr.has_value() && !dr->empty()) {
+            spec.route_config.default_route = *dr;
+        }
+
+        if (const JsonValue *rules = routing->get("rules"); rules && rules->isArray() && rules->asArray()) {
+            for (const auto &rv : *rules->asArray()) {
+                if (!rv.isObject()) continue;
+
+                PluginRouteRule rule{};
+                if (auto name = rv.getString("name"); name.has_value()) rule.name = *name;
+                rule.opacity_bias = static_cast<float>(rv.getNumber("opacity_bias").value_or(0.0));
+
+                if (const JsonValue *scene_kw = rv.get("scene_keywords"); scene_kw && scene_kw->isArray() && scene_kw->asArray()) {
+                    for (const auto &kw : *scene_kw->asArray()) {
+                        if (kw.isString() && kw.asString()) rule.scene_keywords.push_back(*kw.asString());
+                    }
+                }
+                if (const JsonValue *task_kw = rv.get("task_keywords"); task_kw && task_kw->isArray() && task_kw->asArray()) {
+                    for (const auto &kw : *task_kw->asArray()) {
+                        if (kw.isString() && kw.asString()) rule.task_keywords.push_back(*kw.asString());
+                    }
+                }
+
+                if (!rule.name.empty()) {
+                    spec.route_config.rules.push_back(std::move(rule));
+                }
+            }
         }
     }
 

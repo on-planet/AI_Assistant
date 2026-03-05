@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace k2d {
 
@@ -140,12 +141,26 @@ private:
     bool initialized_ = false;
 };
 
+struct PluginRouteRule {
+    std::string name;
+    std::vector<std::string> scene_keywords;
+    std::vector<std::string> task_keywords;
+    float opacity_bias = 0.0f;
+};
+
+struct PluginRouteConfig {
+    std::string default_route = "unknown";
+    std::vector<PluginRouteRule> rules;
+};
+
 struct PluginArtifactSpec {
     // 固化 AIPlugin 交付接口：.onnx + config.json
     std::string onnx_path;
     std::string config_path;
     // 可选：多模型协作（专家集）
     std::vector<std::string> extra_onnx_paths;
+    // scene/task 路由表（配置驱动，避免硬编码）
+    PluginRouteConfig route_config;
 };
 
 std::unique_ptr<IBehaviorPlugin> CreateDefaultBehaviorPlugin();

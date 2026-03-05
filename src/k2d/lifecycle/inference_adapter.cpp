@@ -1,6 +1,7 @@
 #include "k2d/lifecycle/inference_adapter.h"
 
 #include <utility>
+#include <vector>
 
 namespace k2d {
 
@@ -57,6 +58,19 @@ const PluginDescriptor &PluginInferenceAdapter::Descriptor() const noexcept {
 }
 
 std::unique_ptr<IInferenceAdapter> CreateDefaultInferenceAdapter() {
+    std::string plugin_err;
+    const std::vector<std::string> config_candidates = {
+        "assets/plugin_behavior_config.json",
+        "../assets/plugin_behavior_config.json",
+        "../../assets/plugin_behavior_config.json",
+    };
+
+    for (const auto &cfg_path : config_candidates) {
+        if (auto plugin = CreateOnnxBehaviorPluginFromConfig(cfg_path, &plugin_err)) {
+            return std::make_unique<PluginInferenceAdapter>(std::move(plugin));
+        }
+    }
+
     return std::make_unique<PluginInferenceAdapter>(CreateDefaultBehaviorPlugin());
 }
 

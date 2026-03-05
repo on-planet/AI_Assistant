@@ -33,6 +33,22 @@ const char *TaskSecondaryCategoryNameUi(TaskSecondaryCategory c) {
     }
 }
 
+void RenderRuntimeErrorInfo(const char *label, const RuntimeErrorInfo &err) {
+    if (err.code == RuntimeErrorCode::Ok) {
+        ImGui::Text("%s: OK", label);
+        return;
+    }
+    ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f),
+                       "%s: %s.%s (#%lld)",
+                       label,
+                       RuntimeErrorDomainName(err.domain),
+                       RuntimeErrorCodeName(err.code),
+                       static_cast<long long>(err.count));
+    if (!err.detail.empty()) {
+        ImGui::TextWrapped("  detail: %s", err.detail.c_str());
+    }
+}
+
 }  // namespace
 
 void RenderRuntimeDebugSummary(const AppRuntime &runtime) {
@@ -126,6 +142,26 @@ void RenderAppDebugUi(AppRuntime &runtime) {
     ImGui::SliderInt("OCR Det Input", &runtime.perception_state.ocr_det_input_size, 160, 1280);
     runtime.perception_state.ocr_det_input_size = std::clamp(runtime.perception_state.ocr_det_input_size, 160, 1280);
 
+    ImGui::SeparatorText("Perception Performance");
+    ImGui::SliderFloat("Capture Poll Interval (s)", &runtime.perception_state.screen_capture_poll_interval_sec, 0.1f, 5.0f, "%.2f");
+    runtime.perception_state.screen_capture_poll_interval_sec =
+        std::clamp(runtime.perception_state.screen_capture_poll_interval_sec, 0.1f, 5.0f);
+    const double capture_total = static_cast<double>(runtime.perception_state.screen_capture_success_count +
+                                                      runtime.perception_state.screen_capture_fail_count);
+    const double capture_success_rate = capture_total > 0.0
+                                            ? static_cast<double>(runtime.perception_state.screen_capture_success_count) / capture_total
+                                            : 0.0;
+    ImGui::Text("Capture Success/Fail: %lld / %lld (%.1f%%)",
+                static_cast<long long>(runtime.perception_state.screen_capture_success_count),
+                static_cast<long long>(runtime.perception_state.screen_capture_fail_count),
+                capture_success_rate * 100.0);
+    ImGui::Text("Scene Avg Latency: %.1f ms (runs=%lld)",
+                runtime.perception_state.scene_avg_latency_ms,
+                static_cast<long long>(runtime.perception_state.scene_total_runs));
+    ImGui::Text("Face Avg Latency: %.1f ms (runs=%lld)",
+                runtime.perception_state.face_avg_latency_ms,
+                static_cast<long long>(runtime.perception_state.face_total_runs));
+
     if (runtime.perception_state.ocr_ready && !runtime.perception_state.ocr_result.summary.empty()) {
         ImGui::TextWrapped("OCR Summary: %s", runtime.perception_state.ocr_result.summary.c_str());
         if (!runtime.perception_state.ocr_result.lines.empty()) {
@@ -202,6 +238,26 @@ void RenderAppDebugUi(AppRuntime &runtime) {
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "ASR Error: %s", runtime.asr_last_error.c_str());
     }
 
+    ImGui::SeparatorText("Plugin Worker");
+    ImGui::Text("update_hz: %d", runtime.plugin_current_update_hz);
+    ImGui::Text("timeout/exception/internal: %llu / %llu / %llu",
+                static_cast<unsigned long long>(runtime.plugin_timeout_count),
+                static_cast<unsigned long long>(runtime.plugin_exception_count),
+                static_cast<unsigned long long>(runtime.plugin_internal_error_count));
+    ImGui::Text("disable/recover: %llu / %llu",
+                static_cast<unsigned long long>(runtime.plugin_disable_count),
+                static_cast<unsigned long long>(runtime.plugin_recover_count));
+    ImGui::Text("auto_disabled: %s", runtime.plugin_auto_disabled ? "true" : "false");
+    if (!runtime.plugin_last_error.empty()) {
+        ImGui::TextWrapped("Plugin Last Error: %s", runtime.plugin_last_error.c_str());
+    }
+
+    ImGui::SeparatorText("Observability Logging");
+    ImGui::Checkbox("Enable Periodic Observability Log", &runtime.runtime_observability_log_enabled);
+    ImGui::SliderFloat("Log Interval (s)", &runtime.runtime_observability_log_interval_sec, 0.2f, 10.0f, "%.1f");
+    runtime.runtime_observability_log_interval_sec =
+        std::clamp(runtime.runtime_observability_log_interval_sec, 0.2f, 10.0f);
+
     ImGui::SeparatorText("Chat");
     ImGui::Checkbox("Enable Chat", &runtime.feature_chat_enabled);
     ImGui::Checkbox("Prefer Cloud Chat", &runtime.prefer_cloud_chat);
@@ -210,6 +266,10 @@ void RenderAppDebugUi(AppRuntime &runtime) {
     if (ImGui::Button("Send Chat")) {
         if (!(runtime.feature_chat_enabled && runtime.chat_ready && runtime.chat_provider)) {
             runtime.chat_last_error = "chat provider unavailable";
+            UpdateRuntimeError(runtime.chat_error_info,
+                               RuntimeErrorDomain::Chat,
+                               RuntimeErrorCode::InternalError,
+                               runtime.chat_last_error);
         } else {
             ChatRequest req{};
             req.user_text = runtime.chat_input;
@@ -224,8 +284,13 @@ void RenderAppDebugUi(AppRuntime &runtime) {
                 runtime.chat_last_answer = std::move(rsp.text);
                 runtime.chat_last_switch_reason = rsp.switch_reason;
                 runtime.chat_last_error.clear();
+                ClearRuntimeError(runtime.chat_error_info);
             } else {
                 runtime.chat_last_error = err;
+                UpdateRuntimeError(runtime.chat_error_info,
+                                   RuntimeErrorDomain::Chat,
+                                   RuntimeErrorCode::InferenceFailed,
+                                   runtime.chat_last_error);
             }
         }
     }
@@ -236,6 +301,17 @@ void RenderAppDebugUi(AppRuntime &runtime) {
     if (!runtime.chat_last_error.empty()) {
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Chat Error: %s", runtime.chat_last_error.c_str());
     }
+
+    ImGui::SeparatorText("Runtime Error Classification");
+    RenderRuntimeErrorInfo("Perception.Capture", runtime.perception_state.capture_error_info);
+    RenderRuntimeErrorInfo("Perception.Scene", runtime.perception_state.scene_error_info);
+    RenderRuntimeErrorInfo("Perception.OCR", runtime.perception_state.ocr_error_info);
+    RenderRuntimeErrorInfo("Perception.SystemContext", runtime.perception_state.system_context_error_info);
+    RenderRuntimeErrorInfo("Perception.FaceMesh", runtime.perception_state.facemesh_error_info);
+    RenderRuntimeErrorInfo("Plugin.Worker", runtime.plugin_error_info);
+    RenderRuntimeErrorInfo("ASR", runtime.asr_error_info);
+    RenderRuntimeErrorInfo("Chat", runtime.chat_error_info);
+    RenderRuntimeErrorInfo("Reminder", runtime.reminder_error_info);
 
     ImGui::SeparatorText("Task Category");
     ImGui::Text("Primary: %s", TaskPrimaryCategoryNameUi(runtime.task_primary));

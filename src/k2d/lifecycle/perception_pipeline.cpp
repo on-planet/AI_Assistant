@@ -6,9 +6,23 @@
 #include <tuple>
 #include <utility>
 
-#include <SDL3/SDL_log.h>
+#include "k2d/core/async_logger.h"
 
 namespace k2d {
+
+namespace {
+
+RuntimeErrorCode ClassifyInitErrorCode(const std::string &err) {
+    const auto has = [&](const char *needle) {
+        return err.find(needle) != std::string::npos;
+    };
+    if (has("not found") || has("not exist") || has("No such file") || has("cannot open")) {
+        return RuntimeErrorCode::ResourceNotFound;
+    }
+    return RuntimeErrorCode::InitFailed;
+}
+
+}  // namespace
 
 bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_error) {
     state = PerceptionPipelineState{};
@@ -18,9 +32,17 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
         state.screen_capture_ready = screen_capture_.Init(&capture_err);
         if (!state.screen_capture_ready) {
             state.screen_capture_last_error = capture_err;
-            SDL_Log("Screen capture init failed: %s", capture_err.c_str());
+            RecordRuntimeError(state.capture_error_info,
+                               RuntimeErrorDomain::PerceptionCapture,
+                               RuntimeErrorCode::InitFailed,
+                               capture_err);
+            LogError("[obs] domain=%s code=%s detail=%s",
+                     RuntimeErrorDomainName(state.capture_error_info.domain),
+                     RuntimeErrorCodeName(state.capture_error_info.code),
+                     state.capture_error_info.detail.c_str());
         } else {
-            SDL_Log("Screen capture init ok: DXGI Desktop Duplication");
+            ClearRuntimeError(state.capture_error_info);
+            LogInfo("[obs] domain=perception.capture code=OK detail=screen_capture_init_ok");
         }
     }
 
@@ -66,7 +88,10 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
             if (scene_classifier_.Init(pair.first, pair.second, &try_err)) {
                 state.scene_classifier_ready = true;
                 state.scene_classifier_last_error.clear();
-                SDL_Log("Scene classifier init ok: model=%s labels=%s", pair.first.c_str(), pair.second.c_str());
+                ClearRuntimeError(state.scene_error_info);
+                LogInfo("[obs] domain=perception.scene code=OK detail=scene_init_ok model=%s labels=%s",
+                        pair.first.c_str(),
+                        pair.second.c_str());
                 break;
             }
             if (sc_err.empty() && !try_err.empty()) {
@@ -79,7 +104,14 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
                 sc_err = "mobileclip model/labels not found in candidate paths";
             }
             state.scene_classifier_last_error = sc_err;
-            SDL_Log("Scene classifier init failed: %s", sc_err.c_str());
+            RecordRuntimeError(state.scene_error_info,
+                               RuntimeErrorDomain::PerceptionScene,
+                               ClassifyInitErrorCode(sc_err),
+                               sc_err);
+            LogError("[obs] domain=%s code=%s detail=%s",
+                     RuntimeErrorDomainName(state.scene_error_info.domain),
+                     RuntimeErrorCodeName(state.scene_error_info.code),
+                     state.scene_error_info.detail.c_str());
         }
     }
 
@@ -107,7 +139,8 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
                 state.ocr_ready = true;
                 state.ocr_last_error.clear();
                 state.ocr_det_input_size = ocr_service_.GetDetInputSize();
-                SDL_Log("OCR init ok: det=%s rec=%s keys=%s",
+                ClearRuntimeError(state.ocr_error_info);
+                LogInfo("[obs] domain=perception.ocr code=OK detail=ocr_init_ok det=%s rec=%s keys=%s",
                         std::get<0>(cand).c_str(),
                         std::get<1>(cand).c_str(),
                         std::get<2>(cand).c_str());
@@ -123,7 +156,14 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
                 ocr_err = "ppocr det/rec/keys not found in candidate paths";
             }
             state.ocr_last_error = ocr_err;
-            SDL_Log("OCR init failed: %s", ocr_err.c_str());
+            RecordRuntimeError(state.ocr_error_info,
+                               RuntimeErrorDomain::PerceptionOcr,
+                               ClassifyInitErrorCode(ocr_err),
+                               ocr_err);
+            LogError("[obs] domain=%s code=%s detail=%s",
+                     RuntimeErrorDomainName(state.ocr_error_info.domain),
+                     RuntimeErrorCodeName(state.ocr_error_info.code),
+                     state.ocr_error_info.detail.c_str());
         }
     }
 
@@ -145,7 +185,10 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
             if (camera_facemesh_service_.Init(cand.first, cand.second, &try_err, 0)) {
                 state.camera_facemesh_ready = true;
                 state.camera_facemesh_last_error.clear();
-                SDL_Log("CameraFacemesh init ok: model=%s labels=%s", cand.first.c_str(), cand.second.c_str());
+                ClearRuntimeError(state.facemesh_error_info);
+                LogInfo("[obs] domain=perception.facemesh code=OK detail=facemesh_init_ok model=%s labels=%s",
+                        cand.first.c_str(),
+                        cand.second.c_str());
                 break;
             }
             if (fm_err.empty() && !try_err.empty()) {
@@ -158,7 +201,14 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
                 fm_err = "facemesh model/labels not found in candidate paths";
             }
             state.camera_facemesh_last_error = fm_err;
-            SDL_Log("CameraFacemesh init failed: %s", fm_err.c_str());
+            RecordRuntimeError(state.facemesh_error_info,
+                               RuntimeErrorDomain::PerceptionFacemesh,
+                               ClassifyInitErrorCode(fm_err),
+                               fm_err);
+            LogError("[obs] domain=%s code=%s detail=%s",
+                     RuntimeErrorDomainName(state.facemesh_error_info.domain),
+                     RuntimeErrorCodeName(state.facemesh_error_info.code),
+                     state.facemesh_error_info.detail.c_str());
         }
     }
 
@@ -201,7 +251,7 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
     }
 
     state.screen_capture_poll_accum_sec += std::max(0.0f, dt);
-    if (state.screen_capture_poll_accum_sec < 3.0f) {
+    if (state.screen_capture_poll_accum_sec < std::max(0.1f, state.screen_capture_poll_interval_sec)) {
         return;
     }
 
@@ -212,9 +262,18 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
     if (!screen_capture_.Capture(frame, &cap_err)) {
         if (!cap_err.empty()) {
             state.screen_capture_last_error = cap_err;
+            RecordRuntimeError(state.capture_error_info,
+                               RuntimeErrorDomain::PerceptionCapture,
+                               RuntimeErrorCode::CaptureFailed,
+                               cap_err);
         }
+        state.screen_capture_fail_count += 1;
         return;
     }
+
+    state.screen_capture_last_error.clear();
+    state.screen_capture_success_count += 1;
+    ClearRuntimeError(state.capture_error_info);
 
     if (state.scene_classifier_enabled && state.scene_classifier_ready) {
         if (scene_future_.valid() &&
@@ -237,10 +296,21 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
         if (has_scene_packet && scene_packet.seq > scene_applied_seq_) {
             scene_applied_seq_ = scene_packet.seq;
             if (scene_packet.ok) {
+                state.scene_total_runs += 1;
+                state.scene_total_latency_ms += static_cast<std::int64_t>(std::max(0, scene_packet.elapsed_ms));
+                state.scene_avg_latency_ms = state.scene_total_runs > 0
+                                             ? static_cast<float>(static_cast<double>(state.scene_total_latency_ms) /
+                                                                  static_cast<double>(state.scene_total_runs))
+                                             : 0.0f;
                 state.scene_result = std::move(scene_packet.result);
                 state.scene_classifier_last_error.clear();
+                ClearRuntimeError(state.scene_error_info);
             } else if (!scene_packet.error.empty()) {
                 state.scene_classifier_last_error = scene_packet.error;
+                RecordRuntimeError(state.scene_error_info,
+                                   RuntimeErrorDomain::PerceptionScene,
+                                   RuntimeErrorCode::InferenceFailed,
+                                   scene_packet.error);
             }
         }
 
@@ -251,7 +321,10 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
                 AsyncScenePacket local{};
                 local.ready = true;
                 local.seq = seq;
+                const auto t0 = std::chrono::steady_clock::now();
                 local.ok = scene_classifier_.Classify(scene_frame, local.result, &local.error);
+                const auto t1 = std::chrono::steady_clock::now();
+                local.elapsed_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
 
                 std::lock_guard<std::mutex> lk(scene_mutex_);
                 if (!scene_packet_.ready || local.seq >= scene_packet_.seq) {
@@ -267,8 +340,13 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
         if (system_context_service_.Capture(context_snapshot, &ctx_err)) {
             state.system_context_snapshot = std::move(context_snapshot);
             state.system_context_last_error.clear();
+            ClearRuntimeError(state.system_context_error_info);
         } else if (!ctx_err.empty()) {
             state.system_context_last_error = ctx_err;
+            RecordRuntimeError(state.system_context_error_info,
+                               RuntimeErrorDomain::PerceptionSystemContext,
+                               RuntimeErrorCode::CaptureFailed,
+                               ctx_err);
         }
     }
 
@@ -302,6 +380,10 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
             if (!packet.ok) {
                 if (!packet.error.empty()) {
                     state.ocr_last_error = packet.error;
+                    RecordRuntimeError(state.ocr_error_info,
+                                       RuntimeErrorDomain::PerceptionOcr,
+                                       RuntimeErrorCode::InferenceFailed,
+                                       packet.error);
                 }
             } else {
                 state.ocr_total_runs += 1;
@@ -345,6 +427,10 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
                 if (packet.elapsed_ms > state.ocr_timeout_ms) {
                     state.ocr_skipped_due_timeout = true;
                     state.ocr_last_error = "ocr timeout degrade, keep last stable result";
+                    RecordRuntimeError(state.ocr_error_info,
+                                       RuntimeErrorDomain::PerceptionOcr,
+                                       RuntimeErrorCode::TimeoutDegraded,
+                                       state.ocr_last_error);
                     if (!state.ocr_last_stable_result.summary.empty() || !state.ocr_last_stable_result.lines.empty()) {
                         state.ocr_result = state.ocr_last_stable_result;
                     }
@@ -352,6 +438,7 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
                     state.ocr_result = std::move(filtered_result);
                     state.ocr_last_stable_result = state.ocr_result;
                     state.ocr_last_error.clear();
+                    ClearRuntimeError(state.ocr_error_info);
                 }
             }
         }
@@ -483,10 +570,21 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
         if (has_face_packet && face_packet.seq > face_applied_seq_) {
             face_applied_seq_ = face_packet.seq;
             if (face_packet.ok) {
+                state.face_total_runs += 1;
+                state.face_total_latency_ms += static_cast<std::int64_t>(std::max(0, face_packet.elapsed_ms));
+                state.face_avg_latency_ms = state.face_total_runs > 0
+                                            ? static_cast<float>(static_cast<double>(state.face_total_latency_ms) /
+                                                                 static_cast<double>(state.face_total_runs))
+                                            : 0.0f;
                 state.face_emotion_result = std::move(face_packet.result);
                 state.camera_facemesh_last_error.clear();
+                ClearRuntimeError(state.facemesh_error_info);
             } else if (!face_packet.error.empty()) {
                 state.camera_facemesh_last_error = face_packet.error;
+                RecordRuntimeError(state.facemesh_error_info,
+                                   RuntimeErrorDomain::PerceptionFacemesh,
+                                   RuntimeErrorCode::InferenceFailed,
+                                   face_packet.error);
             }
         }
 
@@ -497,7 +595,10 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
                 AsyncFacePacket local{};
                 local.ready = true;
                 local.seq = seq;
+                const auto t0 = std::chrono::steady_clock::now();
                 local.ok = camera_facemesh_service_.RecognizeFromCamera(local.result, &local.error);
+                const auto t1 = std::chrono::steady_clock::now();
+                local.elapsed_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
 
                 std::lock_guard<std::mutex> lk(face_mutex_);
                 if (!face_packet_.ready || local.seq >= face_packet_.seq) {

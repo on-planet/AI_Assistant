@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_tray.h>
 
+#include <cstdint>
 #include <deque>
 #include <filesystem>
 #include <memory>
@@ -23,6 +24,7 @@
 #include "k2d/lifecycle/asr/asr_provider.h"
 #include "k2d/lifecycle/asr/vad_segmenter.h"
 #include "k2d/lifecycle/chat/chat_provider.h"
+#include "k2d/lifecycle/observability/runtime_error_codes.h"
 
 namespace k2d {
 
@@ -171,6 +173,10 @@ struct AppRuntime {
     bool feature_face_param_mapping_enabled = true;
     bool feature_asr_enabled = false;
 
+    bool runtime_observability_log_enabled = true;
+    float runtime_observability_log_interval_sec = 3.0f;
+    float runtime_observability_log_accum_sec = 0.0f;
+
     float face_map_min_confidence = 0.45f;
     float face_map_head_pose_deadzone_deg = 2.0f;
     float face_map_yaw_max_deg = 25.0f;
@@ -220,6 +226,20 @@ struct AppRuntime {
     double asr_cloud_success_ratio = 0.0;
     double asr_wer_proxy = 0.0;
     std::string asr_last_switch_reason;
+
+    std::uint64_t plugin_timeout_count = 0;
+    std::uint64_t plugin_exception_count = 0;
+    std::uint64_t plugin_internal_error_count = 0;
+    std::uint64_t plugin_disable_count = 0;
+    std::uint64_t plugin_recover_count = 0;
+    int plugin_current_update_hz = 60;
+    bool plugin_auto_disabled = false;
+    std::string plugin_last_error;
+
+    RuntimeErrorInfo plugin_error_info{};
+    RuntimeErrorInfo asr_error_info{};
+    RuntimeErrorInfo chat_error_info{};
+    RuntimeErrorInfo reminder_error_info{};
 
     TaskPrimaryCategory task_primary = TaskPrimaryCategory::Unknown;
     TaskSecondaryCategory task_secondary = TaskSecondaryCategory::Unknown;

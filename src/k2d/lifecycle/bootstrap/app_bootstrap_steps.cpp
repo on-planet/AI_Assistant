@@ -218,6 +218,16 @@ bool AppLifecycleBootstrapImpl(AppLifecycleContext &ctx) {
 
         std::string plugin_err;
         g_runtime.plugin_ready = g_runtime.inference_adapter && g_runtime.inference_adapter->Init(plugin_cfg, host, worker_cfg, &plugin_err);
+        if (!g_runtime.plugin_ready) {
+            g_runtime.plugin_last_error = plugin_err;
+            UpdateRuntimeError(g_runtime.plugin_error_info,
+                               RuntimeErrorDomain::PluginWorker,
+                               RuntimeErrorCode::InitFailed,
+                               plugin_err.empty() ? std::string("plugin init failed") : plugin_err);
+        } else {
+            g_runtime.plugin_last_error.clear();
+            ClearRuntimeError(g_runtime.plugin_error_info);
+        }
     }
 
     {
@@ -231,8 +241,16 @@ bool AppLifecycleBootstrapImpl(AppLifecycleContext &ctx) {
             }
             reminder_err = try_err;
         }
-        if (!g_runtime.reminder_ready) g_runtime.reminder_last_error = reminder_err;
-        else g_runtime.reminder_upcoming = g_runtime.reminder_service.ListActive(32, nullptr);
+        if (!g_runtime.reminder_ready) {
+            g_runtime.reminder_last_error = reminder_err;
+            UpdateRuntimeError(g_runtime.reminder_error_info,
+                               RuntimeErrorDomain::Reminder,
+                               RuntimeErrorCode::InitFailed,
+                               reminder_err.empty() ? std::string("reminder init failed") : reminder_err);
+        } else {
+            g_runtime.reminder_upcoming = g_runtime.reminder_service.ListActive(32, nullptr);
+            ClearRuntimeError(g_runtime.reminder_error_info);
+        }
     }
 
     {
@@ -247,8 +265,16 @@ bool AppLifecycleBootstrapImpl(AppLifecycleContext &ctx) {
 
         std::string asr_err;
         g_runtime.asr_ready = g_runtime.asr_provider->Init(&asr_err);
-        if (!g_runtime.asr_ready) g_runtime.asr_last_error = asr_err;
-        else g_runtime.asr_last_error.clear();
+        if (!g_runtime.asr_ready) {
+            g_runtime.asr_last_error = asr_err;
+            UpdateRuntimeError(g_runtime.asr_error_info,
+                               RuntimeErrorDomain::Asr,
+                               RuntimeErrorCode::InitFailed,
+                               asr_err.empty() ? std::string("asr init failed") : asr_err);
+        } else {
+            g_runtime.asr_last_error.clear();
+            ClearRuntimeError(g_runtime.asr_error_info);
+        }
     }
 
     {
@@ -264,8 +290,16 @@ bool AppLifecycleBootstrapImpl(AppLifecycleContext &ctx) {
 
         std::string chat_err;
         g_runtime.chat_ready = g_runtime.chat_provider->Init(&chat_err);
-        if (!g_runtime.chat_ready) g_runtime.chat_last_error = chat_err;
-        else g_runtime.chat_last_error.clear();
+        if (!g_runtime.chat_ready) {
+            g_runtime.chat_last_error = chat_err;
+            UpdateRuntimeError(g_runtime.chat_error_info,
+                               RuntimeErrorDomain::Chat,
+                               RuntimeErrorCode::InitFailed,
+                               chat_err.empty() ? std::string("chat init failed") : chat_err);
+        } else {
+            g_runtime.chat_last_error.clear();
+            ClearRuntimeError(g_runtime.chat_error_info);
+        }
     }
 
     g_runtime.demo_texture = bootstrap.demo_texture;

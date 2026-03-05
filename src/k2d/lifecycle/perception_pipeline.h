@@ -14,6 +14,8 @@
 #include "k2d/lifecycle/scene_classifier.h"
 #include "k2d/lifecycle/system_context_service.h"
 
+#include "k2d/lifecycle/observability/runtime_error_codes.h"
+
 namespace k2d {
 
 struct OcrBlackboardData {
@@ -42,11 +44,19 @@ struct PerceptionPipelineState {
 
     bool screen_capture_ready = false;
     float screen_capture_poll_accum_sec = 0.0f;
+    float screen_capture_poll_interval_sec = 3.0f;
     std::string screen_capture_last_error;
+    std::int64_t screen_capture_success_count = 0;
+    std::int64_t screen_capture_fail_count = 0;
+    RuntimeErrorInfo capture_error_info{};
 
     bool scene_classifier_ready = false;
     std::string scene_classifier_last_error;
     SceneClassificationResult scene_result;
+    std::int64_t scene_total_runs = 0;
+    std::int64_t scene_total_latency_ms = 0;
+    float scene_avg_latency_ms = 0.0f;
+    RuntimeErrorInfo scene_error_info{};
 
     bool ocr_ready = false;
     std::string ocr_last_error;
@@ -67,6 +77,7 @@ struct PerceptionPipelineState {
     std::int64_t ocr_conf_low_count = 0;
     std::int64_t ocr_conf_mid_count = 0;
     std::int64_t ocr_conf_high_count = 0;
+    RuntimeErrorInfo ocr_error_info{};
 
     std::string ocr_summary_candidate;
     std::string ocr_summary_stable;
@@ -75,10 +86,15 @@ struct PerceptionPipelineState {
 
     SystemContextSnapshot system_context_snapshot;
     std::string system_context_last_error;
+    RuntimeErrorInfo system_context_error_info{};
 
     bool camera_facemesh_ready = false;
     std::string camera_facemesh_last_error;
     FaceEmotionResult face_emotion_result;
+    std::int64_t face_total_runs = 0;
+    std::int64_t face_total_latency_ms = 0;
+    float face_avg_latency_ms = 0.0f;
+    RuntimeErrorInfo facemesh_error_info{};
 
     PerceptionBlackboard blackboard;
 };
@@ -112,6 +128,7 @@ private:
         std::uint64_t seq = 0;
         SceneClassificationResult result;
         std::string error;
+        int elapsed_ms = 0;
     };
 
     std::future<void> scene_future_;
@@ -125,6 +142,7 @@ private:
         std::uint64_t seq = 0;
         FaceEmotionResult result;
         std::string error;
+        int elapsed_ms = 0;
     };
 
     std::future<void> face_future_;

@@ -4,8 +4,7 @@
 #include <ctime>
 #include <string>
 
-#include <SDL3/SDL_log.h>
-
+#include "k2d/core/async_logger.h"
 #include "k2d/lifecycle/state/app_runtime_state.h"
 #include "k2d/lifecycle/asr/asr_provider.h"
 #include "k2d/lifecycle/asr/vad_segmenter.h"
@@ -31,15 +30,27 @@ void TickAppSystems(AppRuntime &runtime, float dt) {
             auto due_items = runtime.reminder_service.PollDueAndMarkNotified(now_sec, 8, &due_err);
             if (!due_err.empty()) {
                 runtime.reminder_last_error = due_err;
+                UpdateRuntimeError(runtime.reminder_error_info,
+                                   RuntimeErrorDomain::Reminder,
+                                   RuntimeErrorCode::InternalError,
+                                   due_err);
             }
             for (const auto &item : due_items) {
-                SDL_Log("[Reminder] due id=%lld title=%s", static_cast<long long>(item.id), item.title.c_str());
+                LogInfo("[obs] domain=reminder code=OK detail=due id=%lld title=%s",
+                        static_cast<long long>(item.id),
+                        item.title.c_str());
             }
 
             std::string list_err;
             runtime.reminder_upcoming = runtime.reminder_service.ListUpcoming(now_sec, 8, &list_err);
             if (!list_err.empty()) {
                 runtime.reminder_last_error = list_err;
+                UpdateRuntimeError(runtime.reminder_error_info,
+                                   RuntimeErrorDomain::Reminder,
+                                   RuntimeErrorCode::InternalError,
+                                   list_err);
+            } else if (due_err.empty()) {
+                ClearRuntimeError(runtime.reminder_error_info);
             }
         }
     }
@@ -119,10 +130,85 @@ void TickAppSystems(AppRuntime &runtime, float dt) {
                     runtime.asr_last_error.clear();
                 } else {
                     runtime.asr_last_error = asr_err;
-                    SDL_Log("ASR recognize failed: %s", asr_err.c_str());
+                    RuntimeErrorCode asr_code = RuntimeErrorCode::InferenceFailed;
+                    if (result.timeout_detected) {
+                        asr_code = RuntimeErrorCode::TimeoutDegraded;
+                    }
+                    UpdateRuntimeError(runtime.asr_error_info,
+                                       RuntimeErrorDomain::Asr,
+                                       asr_code,
+                                       asr_err);
+                    LogError("[obs] domain=%s code=%s detail=%s",
+                             RuntimeErrorDomainName(runtime.asr_error_info.domain),
+                             RuntimeErrorCodeName(runtime.asr_error_info.code),
+                             runtime.asr_error_info.detail.c_str());
                 }
             }
         }
+    }
+
+    if (runtime.plugin_ready && runtime.inference_adapter) {
+        const PluginWorkerStats stats = runtime.inference_adapter->GetStats();
+        runtime.plugin_timeout_count = stats.timeout_count;
+        runtime.plugin_exception_count = stats.exception_count;
+        runtime.plugin_internal_error_count = stats.internal_error_count;
+        runtime.plugin_disable_count = stats.disable_count;
+        runtime.plugin_recover_count = stats.recover_count;
+        runtime.plugin_current_update_hz = stats.current_update_hz;
+        runtime.plugin_auto_disabled = stats.auto_disabled;
+        runtime.plugin_last_error = stats.last_error;
+
+        if (stats.auto_disabled) {
+            UpdateRuntimeError(runtime.plugin_error_info,
+                               RuntimeErrorDomain::PluginWorker,
+                               RuntimeErrorCode::AutoDisabled,
+                               stats.last_error.empty() ? std::string("plugin auto disabled") : stats.last_error);
+        } else if (stats.internal_error_count > 0 || stats.exception_count > 0 || stats.timeout_count > 0) {
+            UpdateRuntimeError(runtime.plugin_error_info,
+                               RuntimeErrorDomain::PluginWorker,
+                               RuntimeErrorCode::InternalError,
+                               stats.last_error);
+        } else {
+            ClearRuntimeError(runtime.plugin_error_info);
+        }
+    }
+
+    runtime.runtime_observability_log_accum_sec += std::max(0.0f, dt);
+    if (runtime.runtime_observability_log_enabled &&
+        runtime.runtime_observability_log_accum_sec >= std::max(0.2f, runtime.runtime_observability_log_interval_sec)) {
+        runtime.runtime_observability_log_accum_sec = 0.0f;
+
+        LogInfo("[obs][metrics] fps=%.2f frame_ms=%.2f capture_ok=%lld capture_fail=%lld scene_ms=%.1f ocr_ms=%.1f face_ms=%.1f asr_rtf=%.3f plugin_hz=%d plugin_auto_disabled=%s",
+                runtime.debug_fps,
+                runtime.debug_frame_ms,
+                static_cast<long long>(runtime.perception_state.screen_capture_success_count),
+                static_cast<long long>(runtime.perception_state.screen_capture_fail_count),
+                runtime.perception_state.scene_avg_latency_ms,
+                runtime.perception_state.ocr_avg_latency_ms,
+                runtime.perception_state.face_avg_latency_ms,
+                runtime.asr_rtf,
+                runtime.plugin_current_update_hz,
+                runtime.plugin_auto_disabled ? "true" : "false");
+
+        const auto log_err = [](const RuntimeErrorInfo &err) {
+            if (err.code != RuntimeErrorCode::Ok) {
+                LogError("[obs][error] domain=%s code=%s count=%lld detail=%s",
+                         RuntimeErrorDomainName(err.domain),
+                         RuntimeErrorCodeName(err.code),
+                         static_cast<long long>(err.count),
+                         err.detail.c_str());
+            }
+        };
+
+        log_err(runtime.perception_state.capture_error_info);
+        log_err(runtime.perception_state.scene_error_info);
+        log_err(runtime.perception_state.ocr_error_info);
+        log_err(runtime.perception_state.system_context_error_info);
+        log_err(runtime.perception_state.facemesh_error_info);
+        log_err(runtime.plugin_error_info);
+        log_err(runtime.asr_error_info);
+        log_err(runtime.chat_error_info);
+        log_err(runtime.reminder_error_info);
     }
 }
 

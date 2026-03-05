@@ -32,7 +32,10 @@ void HandleAppRuntimeEvent(AppRuntime &runtime, const SDL_Event &event, const Ap
 
     if (!runtime.edit_mode) {
         const bool imgui_wants_mouse = ImGui::GetIO().WantCaptureMouse;
+
         if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
+            // 点击反应不依赖 ImGui 捕获，避免运行态点击模型时被 UI 捕获状态吞掉。
+            bridge.OnHeadPatMouseDown(event.button.x, event.button.y);
             if (!imgui_wants_mouse) {
                 runtime.dragging_model_whole = true;
                 runtime.dragging_model_last_x = event.button.x;

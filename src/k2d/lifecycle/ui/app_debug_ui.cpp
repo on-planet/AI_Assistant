@@ -46,7 +46,16 @@ void RenderAppDebugUi(AppRuntime &runtime) {
     RenderRuntimeDebugSummary(runtime);
 
     ImGui::Checkbox("Show Debug Stats", &runtime.show_debug_stats);
-    ImGui::Checkbox("Manual Param Mode", &runtime.manual_param_mode);
+    if (ImGui::Checkbox("Manual Param Mode", &runtime.manual_param_mode)) {
+        if (runtime.model_loaded) {
+            runtime.model.animation_channels_enabled = !runtime.manual_param_mode;
+            if (runtime.manual_param_mode) {
+                for (ModelParameter &p : runtime.model.parameters) {
+                    p.param.SetTarget(p.param.value());
+                }
+            }
+        }
+    }
     ImGui::Checkbox("GUI Enabled", &runtime.gui_enabled);
     ImGui::Checkbox("Hair Spring", &runtime.model.enable_hair_spring);
     ImGui::Checkbox("Simple Mask", &runtime.model.enable_simple_mask);

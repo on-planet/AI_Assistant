@@ -237,6 +237,15 @@ void ResolveLocalPartStates(ModelRuntime *model, float time_sec, float dt_sec) {
         model->spring_initialized = false;
     }
 
+    if (!model->enable_hair_spring) {
+        std::fill(model->spring_offset_x.begin(), model->spring_offset_x.end(), 0.0f);
+        std::fill(model->spring_offset_y.begin(), model->spring_offset_y.end(), 0.0f);
+        std::fill(model->spring_vel_x.begin(), model->spring_vel_x.end(), 0.0f);
+        std::fill(model->spring_vel_y.begin(), model->spring_vel_y.end(), 0.0f);
+        model->spring_initialized = false;
+        return;
+    }
+
     auto head_it = model->part_index.find("HeadBase");
     if (head_it == model->part_index.end()) {
         return;

@@ -867,6 +867,30 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
                 .adjust_selected_param = [](float delta) { AdjustSelectedParam(delta); },
                 .reset_selected_param = []() { ResetSelectedParam(); },
                 .reset_all_params = []() { ResetAllParams(); },
+                .on_head_pat_mouse_motion = [&runtime](float mx, float my) {
+                    HandleHeadPatMouseMotion(
+                        runtime.interaction_state,
+                        InteractionControllerContext{
+                            .model_loaded = runtime.model_loaded,
+                            .model = &runtime.model,
+                            .pick_top_part_at = [](float x, float y) { return PickTopPartAt(x, y); },
+                            .has_model_params = []() { return HasModelParams(); },
+                        },
+                        mx,
+                        my);
+                },
+                .on_head_pat_mouse_down = [&runtime](float mx, float my) {
+                    HandleHeadPatMouseDown(
+                        runtime.interaction_state,
+                        InteractionControllerContext{
+                            .model_loaded = runtime.model_loaded,
+                            .model = &runtime.model,
+                            .pick_top_part_at = [](float x, float y) { return PickTopPartAt(x, y); },
+                            .has_model_params = []() { return HasModelParams(); },
+                        },
+                        mx,
+                        my);
+                },
             });
         },
         .on_update = [&runtime](float dt) {

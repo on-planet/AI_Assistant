@@ -17,6 +17,22 @@ bool IsHeadPartId(const std::string &id) {
     return lower.find("head") != std::string::npos;
 }
 
+bool IsHeadPartOrAncestor(const ModelRuntime &model, int part_index) {
+    const int max_steps = static_cast<int>(model.parts.size());
+    int idx = part_index;
+    for (int step = 0; step < max_steps; ++step) {
+        if (idx < 0 || idx >= static_cast<int>(model.parts.size())) {
+            break;
+        }
+        const ModelPart &part = model.parts[static_cast<std::size_t>(idx)];
+        if (IsHeadPartId(part.id)) {
+            return true;
+        }
+        idx = part.parent_index;
+    }
+    return false;
+}
+
 void TriggerHeadPatReaction(InteractionControllerState &state) {
     state.head_pat_react_ttl = 0.35f;
 }
@@ -176,16 +192,7 @@ void HandleHeadPatMouseMotion(InteractionControllerState &state,
     }
 
     const int picked = ctx.pick_top_part_at(mouse_x, mouse_y);
-    bool hovering_head = false;
-    if (picked >= 0 && picked < static_cast<int>(ctx.model->parts.size())) {
-        const ModelPart &part = ctx.model->parts[static_cast<std::size_t>(picked)];
-        hovering_head = IsHeadPartId(part.id);
-    }
-
-    if (hovering_head && !state.head_pat_hovering) {
-        TriggerHeadPatReaction(state);
-    }
-    state.head_pat_hovering = hovering_head;
+    state.head_pat_hovering = IsHeadPartOrAncestor(*ctx.model, picked);
 }
 
 void HandleHeadPatMouseDown(InteractionControllerState &state,
@@ -201,11 +208,9 @@ void HandleHeadPatMouseDown(InteractionControllerState &state,
         return;
     }
 
-    const ModelPart &part = ctx.model->parts[static_cast<std::size_t>(picked)];
-    if (IsHeadPartId(part.id)) {
-        TriggerHeadPatReaction(state);
-        state.head_pat_hovering = true;
-    }
+    // 点击任意命中的模型部件都触发反应，避免仅靠 head 命名约束导致点击无效。
+    TriggerHeadPatReaction(state);
+    state.head_pat_hovering = IsHeadPartOrAncestor(*ctx.model, picked);
 }
 
 void UpdateHeadPatReaction(InteractionControllerState &state,

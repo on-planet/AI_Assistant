@@ -589,8 +589,14 @@ void UpdateModelRuntime(ModelRuntime *model, float time_sec, float dt_sec) {
     ApplyWorldDeforms(model, dt_sec);
 }
 
-void RenderModelRuntime(SDL_Renderer *renderer, const ModelRuntime *model) {
+void RenderModelRuntime(SDL_Renderer *renderer,
+                        const ModelRuntime *model,
+                        float view_pan_x,
+                        float view_pan_y,
+                        float view_zoom) {
     if (!renderer || !model) return;
+
+    const float zoom = std::clamp(view_zoom, 0.1f, 10.0f);
 
     model->debug_stats.part_count = static_cast<int>(model->parts.size());
     model->debug_stats.drawn_part_count = 0;
@@ -610,13 +616,13 @@ void RenderModelRuntime(SDL_Renderer *renderer, const ModelRuntime *model) {
             if (idx >= 0 && idx < static_cast<int>(model->parts.size())) {
                 const ModelPart &head = model->parts[static_cast<std::size_t>(idx)];
                 if (head.deformed_positions.size() >= 2) {
-                    float min_x = head.deformed_positions[0];
-                    float min_y = head.deformed_positions[1];
+                    float min_x = head.deformed_positions[0] * zoom + view_pan_x;
+                    float min_y = head.deformed_positions[1] * zoom + view_pan_y;
                     float max_x = min_x;
                     float max_y = min_y;
                     for (std::size_t i = 0; i + 1 < head.deformed_positions.size(); i += 2) {
-                        const float x = head.deformed_positions[i];
-                        const float y = head.deformed_positions[i + 1];
+                        const float x = head.deformed_positions[i] * zoom + view_pan_x;
+                        const float y = head.deformed_positions[i + 1] * zoom + view_pan_y;
                         min_x = std::min(min_x, x);
                         min_y = std::min(min_y, y);
                         max_x = std::max(max_x, x);
@@ -645,8 +651,8 @@ void RenderModelRuntime(SDL_Renderer *renderer, const ModelRuntime *model) {
         vertices.resize(vc);
         for (std::size_t i = 0; i < vc; ++i) {
             const std::size_t k = i * 2;
-            vertices[i].position.x = part.deformed_positions[k];
-            vertices[i].position.y = part.deformed_positions[k + 1];
+            vertices[i].position.x = part.deformed_positions[k] * zoom + view_pan_x;
+            vertices[i].position.y = part.deformed_positions[k + 1] * zoom + view_pan_y;
             vertices[i].tex_coord.x = part.mesh.uvs[k];
             vertices[i].tex_coord.y = part.mesh.uvs[k + 1];
             vertices[i].color.r = part.color.r;

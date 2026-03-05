@@ -167,7 +167,11 @@ void DestroyModelRuntime(ModelRuntime *model);
 
 void UpdateModelRuntime(ModelRuntime *model, float time_sec, float dt_sec);
 
-void RenderModelRuntime(SDL_Renderer *renderer, const ModelRuntime *model);
+void RenderModelRuntime(SDL_Renderer *renderer,
+                        const ModelRuntime *model,
+                        float view_pan_x = 0.0f,
+                        float view_pan_y = 0.0f,
+                        float view_zoom = 1.0f);
 
 bool SaveModelRuntimeJson(const ModelRuntime &model,
                           const char *output_json_path,

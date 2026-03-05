@@ -32,6 +32,11 @@ struct AppRenderContext {
     float editor_status_ttl = 0.0f;
     int window_h = 0;
 
+    // 编辑器视图（用于画布平移/缩放）。
+    float view_pan_x = 0.0f;
+    float view_pan_y = 0.0f;
+    float view_zoom = 1.0f;
+
     float debug_fps = 0.0f;
     float debug_frame_ms = 0.0f;
 

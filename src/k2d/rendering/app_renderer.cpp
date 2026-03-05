@@ -132,7 +132,11 @@ void RenderAppFrame(const AppRenderContext &ctx) {
     SDL_RenderClear(ctx.renderer);
 
     if (ctx.model_loaded) {
-        RenderModelRuntime(ctx.renderer, ctx.model);
+        RenderModelRuntime(ctx.renderer,
+                           ctx.model,
+                           ctx.view_pan_x,
+                           ctx.view_pan_y,
+                           ctx.view_zoom);
     } else if (ctx.demo_texture) {
         SDL_FRect dest_rect;
         dest_rect.x = 50.0f;

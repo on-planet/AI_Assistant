@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <deque>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -92,6 +93,14 @@ struct AppRuntime {
     float drag_start_pos_y = 0.0f;
     float drag_start_pivot_x = 0.0f;
     float drag_start_pivot_y = 0.0f;
+
+    // 编辑器画布视图（pan/zoom），不直接修改模型变换数据。
+    float editor_view_pan_x = 0.0f;
+    float editor_view_pan_y = 0.0f;
+    float editor_view_zoom = 1.0f;
+    bool editor_view_dragging = false;
+    float editor_view_drag_last_x = 0.0f;
+    float editor_view_drag_last_y = 0.0f;
 
     AxisConstraint axis_constraint = AxisConstraint::None;
     bool snap_enabled = false;
@@ -240,7 +249,12 @@ struct AppRuntime {
     TaskCategoryConfig task_category_config{};
 };
 
+using RuntimeToViewFn = std::function<void(const AppRuntime &, float world_x, float world_y, float *out_view_x, float *out_view_y)>;
+using ViewToRuntimeFn = std::function<void(const AppRuntime &, float view_x, float view_y, float *out_world_x, float *out_world_y)>;
+
 extern AppRuntime g_runtime;
 extern EditorControllerState g_editor_state;
+extern RuntimeToViewFn g_runtime_to_view;
+extern ViewToRuntimeFn g_view_to_runtime;
 
 }  // namespace k2d

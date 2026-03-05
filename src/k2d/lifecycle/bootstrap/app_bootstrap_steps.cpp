@@ -17,6 +17,7 @@
 #include "k2d/lifecycle/inference_adapter.h"
 #include "k2d/lifecycle/model_reload_service.h"
 #include "k2d/lifecycle/state/app_runtime_state.h"
+#include "k2d/lifecycle/runtime_config_applier.h"
 
 #include <filesystem>
 #include <memory>
@@ -104,12 +105,7 @@ bool AppLifecycleInitImpl(AppLifecycleContext &ctx) {
 
     SDL_SetWindowOpacity(g_runtime.window, 1.0f);
 
-    g_runtime.click_through = runtime_cfg.click_through;
-    g_runtime.window_visible = runtime_cfg.window_visible;
-    g_runtime.show_debug_stats = runtime_cfg.show_debug_stats;
-    g_runtime.manual_param_mode = runtime_cfg.manual_param_mode;
-    g_runtime.dev_hot_reload_enabled = runtime_cfg.dev_hot_reload_enabled;
-    g_runtime.plugin_param_blend_mode = runtime_cfg.plugin_param_blend_mode;
+    ApplyRuntimeConfig(g_runtime, runtime_cfg);
 
     SDL_GetWindowSize(g_runtime.window, &g_runtime.window_w, &g_runtime.window_h);
     g_runtime.interactive_rect = ComputeInteractiveRect(g_runtime.window_w, g_runtime.window_h);

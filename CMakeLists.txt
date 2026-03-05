@@ -41,6 +41,8 @@ add_executable(AI_assistant WIN32
     src/k2d/lifecycle/ocr_service.cpp
     src/k2d/lifecycle/system_context_service.cpp
     src/k2d/lifecycle/perception_pipeline.cpp
+    src/k2d/lifecycle/runtime_config_applier.cpp
+    src/k2d/lifecycle/legacy_editor_ui_tools.cpp
     external/sqlite/sqlite3.c
     external/imgui/imgui.cpp
     external/imgui/imgui_draw.cpp
@@ -82,6 +84,10 @@ add_executable(AI_assistant WIN32
     src/k2d/lifecycle/events/app_event_handler.cpp
     src/k2d/lifecycle/systems/runtime_tick_entry.cpp
     src/k2d/lifecycle/ui/runtime_render_entry.cpp
+    src/k2d/lifecycle/editor/editor_interaction_facade.cpp
+    src/k2d/lifecycle/editor/editor_session_service.cpp
+    src/k2d/lifecycle/bridge_factory.cpp
+    src/k2d/lifecycle/state/runtime_state_ops.cpp
 )
 
 target_link_libraries(AI_assistant PRIVATE SDL3::SDL3 "${ONNXRUNTIME_LIB}" ${OpenCV_LIBS} d3d11 dxgi windowsapp runtimeobject)

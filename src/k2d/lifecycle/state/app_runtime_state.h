@@ -168,7 +168,16 @@ struct AppRuntime {
     float face_map_param_weight = 0.65f;
     float face_map_smooth_alpha = 0.35f;
 
+    // 传感器异常时的 fallback 姿态模板（归一化参数空间）
+    bool face_map_sensor_fallback_enabled = true;
+    float face_map_sensor_fallback_head_yaw = 0.0f;
+    float face_map_sensor_fallback_head_pitch = -0.08f;
+    float face_map_sensor_fallback_eye_open = 0.38f;
+    float face_map_sensor_fallback_weight = 1.0f;
+
     std::string face_map_gate_reason = "init";
+    std::string face_map_sensor_fallback_reason = "none";
+    bool face_map_sensor_fallback_active = false;
     float face_map_raw_yaw_deg = 0.0f;
     float face_map_raw_pitch_deg = 0.0f;
     float face_map_raw_eye_open = 0.0f;

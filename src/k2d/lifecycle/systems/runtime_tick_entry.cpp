@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <cmath>
+#include <string>
 
 #include "k2d/controllers/interaction_controller.h"
 #include "k2d/core/model.h"
@@ -35,6 +36,8 @@ void RunRuntimeTickEntry(AppRuntime &runtime, float dt, const RuntimeTickBridge 
         auto &fm = runtime.perception_state.face_emotion_result;
 
         runtime.face_map_gate_reason = "ok";
+        runtime.face_map_sensor_fallback_active = false;
+        runtime.face_map_sensor_fallback_reason = "none";
         runtime.face_map_raw_yaw_deg = fm.head_yaw_deg;
         runtime.face_map_raw_pitch_deg = fm.head_pitch_deg;
         runtime.face_map_raw_eye_open = fm.eye_open_avg;
@@ -48,12 +51,33 @@ void RunRuntimeTickEntry(AppRuntime &runtime, float dt, const RuntimeTickBridge 
         const float smooth_alpha = std::clamp(runtime.face_map_smooth_alpha, 0.0f, 1.0f);
 
         bool gate_ok = true;
+        bool fallback_requested = false;
+        const char *fallback_reason = "none";
+
         if (!fm.face_detected) {
             runtime.face_map_gate_reason = "no_face";
             gate_ok = false;
+            fallback_requested = true;
+            fallback_reason = "no_face";
         } else if (fm.emotion_score < min_conf) {
             runtime.face_map_gate_reason = "low_conf";
             gate_ok = false;
+            fallback_requested = true;
+            fallback_reason = "low_conf";
+        }
+
+        if (!std::isfinite(fm.head_yaw_deg) || !std::isfinite(fm.head_pitch_deg) || !std::isfinite(fm.eye_open_avg)) {
+            runtime.face_map_gate_reason = "nan_input";
+            gate_ok = false;
+            fallback_requested = true;
+            fallback_reason = "nan_input";
+        }
+
+        if (runtime.perception_state.facemesh_error_info.code != RuntimeErrorCode::Ok) {
+            fallback_requested = true;
+            if (std::string(fallback_reason) == "none") {
+                fallback_reason = "facemesh_error";
+            }
         }
 
         float mapped_yaw = 0.0f;
@@ -73,6 +97,24 @@ void RunRuntimeTickEntry(AppRuntime &runtime, float dt, const RuntimeTickBridge 
             mapped_pitch = std::clamp(pitch_dz / pitch_max_deg, -1.0f, 1.0f);
         } else {
             mapped_eye = 0.0f;
+        }
+
+        if (fallback_requested) {
+            if (runtime.face_map_sensor_fallback_enabled) {
+                const float fw = std::clamp(runtime.face_map_sensor_fallback_weight, 0.0f, 1.0f);
+                const float fyaw = std::clamp(runtime.face_map_sensor_fallback_head_yaw, -1.0f, 1.0f);
+                const float fpitch = std::clamp(runtime.face_map_sensor_fallback_head_pitch, -1.0f, 1.0f);
+                const float feye = std::clamp(runtime.face_map_sensor_fallback_eye_open, 0.0f, 1.0f);
+
+                mapped_yaw = mapped_yaw * (1.0f - fw) + fyaw * fw;
+                mapped_pitch = mapped_pitch * (1.0f - fw) + fpitch * fw;
+                mapped_eye = mapped_eye * (1.0f - fw) + feye * fw;
+
+                runtime.face_map_sensor_fallback_active = fw > 0.0f;
+                runtime.face_map_sensor_fallback_reason = fallback_reason;
+            } else {
+                runtime.face_map_sensor_fallback_reason = "disabled";
+            }
         }
 
         runtime.face_map_out_head_yaw = runtime.face_map_out_head_yaw * (1.0f - smooth_alpha) + mapped_yaw * smooth_alpha;

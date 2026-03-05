@@ -213,7 +213,17 @@ void RenderAppDebugUi(AppRuntime &runtime) {
     ImGui::SliderFloat("Map Param Weight", &runtime.face_map_param_weight, 0.0f, 1.0f, "%.2f");
     ImGui::SliderFloat("Map Smooth Alpha", &runtime.face_map_smooth_alpha, 0.0f, 1.0f, "%.2f");
 
+    ImGui::SeparatorText("Sensor Fallback Template");
+    ImGui::Checkbox("Enable Sensor Fallback", &runtime.face_map_sensor_fallback_enabled);
+    ImGui::SliderFloat("Fallback HeadYaw (norm)", &runtime.face_map_sensor_fallback_head_yaw, -1.0f, 1.0f, "%.2f");
+    ImGui::SliderFloat("Fallback HeadPitch (norm)", &runtime.face_map_sensor_fallback_head_pitch, -1.0f, 1.0f, "%.2f");
+    ImGui::SliderFloat("Fallback EyeOpen (norm)", &runtime.face_map_sensor_fallback_eye_open, 0.0f, 1.0f, "%.2f");
+    ImGui::SliderFloat("Fallback Blend Weight", &runtime.face_map_sensor_fallback_weight, 0.0f, 1.0f, "%.2f");
+
     ImGui::Text("Gate: %s", runtime.face_map_gate_reason.empty() ? "(none)" : runtime.face_map_gate_reason.c_str());
+    ImGui::Text("Fallback Active: %s", runtime.face_map_sensor_fallback_active ? "true" : "false");
+    ImGui::Text("Fallback Reason: %s",
+                runtime.face_map_sensor_fallback_reason.empty() ? "(none)" : runtime.face_map_sensor_fallback_reason.c_str());
     ImGui::Text("Raw Yaw/Pitch/Eye: %.2f / %.2f / %.2f",
                 runtime.face_map_raw_yaw_deg,
                 runtime.face_map_raw_pitch_deg,

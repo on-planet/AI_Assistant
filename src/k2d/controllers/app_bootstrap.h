@@ -29,6 +29,13 @@ struct AppRuntimeConfig {
     bool dev_hot_reload_enabled = true;
     PluginParamBlendMode plugin_param_blend_mode = PluginParamBlendMode::Override;
 
+    // face->param mapping sensor fallback template
+    bool face_map_sensor_fallback_enabled = true;
+    float face_map_sensor_fallback_head_yaw = 0.0f;
+    float face_map_sensor_fallback_head_pitch = -0.08f;
+    float face_map_sensor_fallback_eye_open = 0.38f;
+    float face_map_sensor_fallback_weight = 1.0f;
+
     // default model candidates (from first to last)
     std::vector<std::string> default_model_candidates;
 

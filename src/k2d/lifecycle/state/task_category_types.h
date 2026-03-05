@@ -33,23 +33,32 @@ struct TaskCategoryConfig {
     std::vector<std::string> game_primary_keywords = {
         "game",
         "steam",
+        "epic",
+        "riot",
+        "battlenet",
+        "xbox",
+        "playstation",
         "unity",
         "ue4",
+        "ue5",
         "unreal",
         "lobby",
+        "matchmaking",
         "match",
         "battle",
         "menu",
-        "settlement",
+        "scoreboard",
+        "minimap",
     };
 
     std::vector<TaskCategoryKeywordRule> secondary_rules = {
-        {TaskPrimaryCategory::Game, TaskSecondaryCategory::GameSettlement, {"result", "settlement"}},
-        {TaskPrimaryCategory::Game, TaskSecondaryCategory::GameLobby, {"lobby"}},
-        {TaskPrimaryCategory::Game, TaskSecondaryCategory::GameMenu, {"menu"}},
-        {TaskPrimaryCategory::Work, TaskSecondaryCategory::WorkDebugging, {"debug", "gdb"}},
-        {TaskPrimaryCategory::Work, TaskSecondaryCategory::WorkReadingDocs, {"readme", "docs", "wiki"}},
-        {TaskPrimaryCategory::Work, TaskSecondaryCategory::WorkMeetingNotes, {"meeting", "minutes"}},
+        {TaskPrimaryCategory::Game, TaskSecondaryCategory::GameSettlement, {"result", "settlement", "victory", "defeat", "mvp", "scoreboard", "summary"}},
+        {TaskPrimaryCategory::Game, TaskSecondaryCategory::GameLobby, {"lobby", "queue", "party", "ready", "matchmaking", "character select"}},
+        {TaskPrimaryCategory::Game, TaskSecondaryCategory::GameMenu, {"menu", "settings", "inventory", "store", "loadout", "battle pass", "mission select"}},
+        {TaskPrimaryCategory::Game, TaskSecondaryCategory::GameMatch, {"round", "objective", "kill", "assist", "ammo", "crosshair"}},
+        {TaskPrimaryCategory::Work, TaskSecondaryCategory::WorkDebugging, {"debug", "gdb", "lldb", "breakpoint", "traceback", "exception", "stacktrace", "assert", "crash"}},
+        {TaskPrimaryCategory::Work, TaskSecondaryCategory::WorkReadingDocs, {"readme", "docs", "wiki", "manual", "handbook", "api reference", "specification", "tutorial"}},
+        {TaskPrimaryCategory::Work, TaskSecondaryCategory::WorkMeetingNotes, {"meeting", "minutes", "agenda", "standup", "sync", "zoom", "teams", "feishu"}},
     };
 
     TaskSecondaryCategory default_work_secondary = TaskSecondaryCategory::WorkCoding;

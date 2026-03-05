@@ -17,49 +17,71 @@
   "plugin": {
     "paramBlendMode": "override"
   },
+  "faceMapping": {
+    "sensorFallbackTemplate": {
+      "enabled": true,
+      "headYaw": 0.0,
+      "headPitch": -0.08,
+      "eyeOpen": 0.38,
+      "weight": 1.0
+    }
+  },
   "taskCategory": {
     "gamePrimaryKeywords": [
       "game",
       "steam",
+      "epic",
+      "riot",
+      "battlenet",
+      "xbox",
+      "playstation",
       "unity",
       "ue4",
+      "ue5",
       "unreal",
       "lobby",
+      "matchmaking",
       "match",
       "battle",
       "menu",
-      "settlement"
+      "scoreboard",
+      "minimap"
     ],
     "secondaryRules": [
       {
         "primary": "game",
         "secondary": "settlement",
-        "keywords": ["result", "settlement"]
+        "keywords": ["result", "settlement", "victory", "defeat", "mvp", "scoreboard", "summary", "赛后", "结算"]
       },
       {
         "primary": "game",
         "secondary": "lobby",
-        "keywords": ["lobby"]
+        "keywords": ["lobby", "queue", "party", "ready", "matchmaking", "character select", "组队", "排队", "大厅"]
       },
       {
         "primary": "game",
         "secondary": "menu",
-        "keywords": ["menu"]
+        "keywords": ["menu", "settings", "inventory", "store", "loadout", "battle pass", "mission select", "设置", "商店", "背包"]
+      },
+      {
+        "primary": "game",
+        "secondary": "match",
+        "keywords": ["round", "objective", "kill", "assist", "ammo", "crosshair", "对局", "击杀", "回合"]
       },
       {
         "primary": "work",
         "secondary": "debugging",
-        "keywords": ["debug", "gdb"]
+        "keywords": ["debug", "gdb", "lldb", "breakpoint", "traceback", "exception", "stacktrace", "assert", "crash", "调试", "断点", "异常"]
       },
       {
         "primary": "work",
         "secondary": "reading_docs",
-        "keywords": ["readme", "docs", "wiki"]
+        "keywords": ["readme", "docs", "wiki", "manual", "handbook", "api reference", "specification", "tutorial", "文档", "手册", "教程"]
       },
       {
         "primary": "work",
         "secondary": "meeting_notes",
-        "keywords": ["meeting", "minutes"]
+        "keywords": ["meeting", "minutes", "agenda", "standup", "sync", "zoom", "teams", "feishu", "会议", "纪要", "议程"]
       }
     ],
     "defaultWorkSecondary": "coding",

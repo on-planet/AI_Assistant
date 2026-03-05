@@ -148,6 +148,22 @@ AppRuntimeConfig LoadRuntimeConfigImpl() {
         }
     }
 
+    if (const JsonValue *face_mapping = root.get("faceMapping"); face_mapping && face_mapping->isObject()) {
+        if (const JsonValue *sensor_fallback = face_mapping->get("sensorFallbackTemplate");
+            sensor_fallback && sensor_fallback->isObject()) {
+            cfg.face_map_sensor_fallback_enabled =
+                sensor_fallback->getBool("enabled").value_or(cfg.face_map_sensor_fallback_enabled);
+            cfg.face_map_sensor_fallback_head_yaw =
+                static_cast<float>(sensor_fallback->getNumber("headYaw").value_or(cfg.face_map_sensor_fallback_head_yaw));
+            cfg.face_map_sensor_fallback_head_pitch =
+                static_cast<float>(sensor_fallback->getNumber("headPitch").value_or(cfg.face_map_sensor_fallback_head_pitch));
+            cfg.face_map_sensor_fallback_eye_open =
+                static_cast<float>(sensor_fallback->getNumber("eyeOpen").value_or(cfg.face_map_sensor_fallback_eye_open));
+            cfg.face_map_sensor_fallback_weight =
+                static_cast<float>(sensor_fallback->getNumber("weight").value_or(cfg.face_map_sensor_fallback_weight));
+        }
+    }
+
     if (const JsonValue *task_category = root.get("taskCategory"); task_category && task_category->isObject()) {
         if (const JsonValue *game_primary_keywords = task_category->get("gamePrimaryKeywords")) {
             LoadTaskCategoryKeywords(game_primary_keywords, cfg.task_category.game_primary_keywords);
@@ -209,6 +225,10 @@ AppRuntimeConfig LoadRuntimeConfigImpl() {
     cfg.window_width = std::max(64, cfg.window_width);
     cfg.window_height = std::max(64, cfg.window_height);
     cfg.window_opacity = std::clamp(cfg.window_opacity, 0.05f, 1.0f);
+    cfg.face_map_sensor_fallback_head_yaw = std::clamp(cfg.face_map_sensor_fallback_head_yaw, -1.0f, 1.0f);
+    cfg.face_map_sensor_fallback_head_pitch = std::clamp(cfg.face_map_sensor_fallback_head_pitch, -1.0f, 1.0f);
+    cfg.face_map_sensor_fallback_eye_open = std::clamp(cfg.face_map_sensor_fallback_eye_open, 0.0f, 1.0f);
+    cfg.face_map_sensor_fallback_weight = std::clamp(cfg.face_map_sensor_fallback_weight, 0.0f, 1.0f);
     if (cfg.default_model_candidates.empty()) {
         cfg.default_model_candidates = BuildSafeRuntimeConfig().default_model_candidates;
     }

@@ -725,6 +725,15 @@ void RenderAppDebugUi(AppRuntime &runtime) {
         ImGui::Checkbox("Enable Face Emotion", &runtime.feature_face_emotion_enabled);
         ImGui::Checkbox("Enable ASR", &runtime.feature_asr_enabled);
 
+        ImGui::SeparatorText("OCR Runtime Tuning");
+        ImGui::SliderInt("OCR Det Input Size", &runtime.perception_state.ocr_det_input_size, 160, 1280);
+        runtime.perception_state.ocr_det_input_size = std::clamp(runtime.perception_state.ocr_det_input_size, 160, 1280);
+        ImGui::SameLine();
+        if (ImGui::Button("Reset##ocr_det_input_size")) {
+            runtime.perception_state.ocr_det_input_size = 640;
+        }
+        ImGui::TextDisabled("det NxN, larger size may improve recall but increases latency");
+
         std::string overview_error;
         RenderModuleLatestErrorCard(overview_error);
 
@@ -1122,6 +1131,7 @@ void RenderAppDebugUi(AppRuntime &runtime) {
     runtime.perception_state.ocr_timeout_ms = std::clamp(runtime.perception_state.ocr_timeout_ms, 500, 10000);
     ImGui::SliderInt("OCR Det Input", &runtime.perception_state.ocr_det_input_size, 160, 1280);
     runtime.perception_state.ocr_det_input_size = std::clamp(runtime.perception_state.ocr_det_input_size, 160, 1280);
+    ImGui::Text("OCR Det Effective Input: %d", runtime.perception_state.ocr_det_input_size);
 
     ImGui::SeparatorText("Perception Performance");
     ImGui::SliderFloat("Capture Poll Interval (s)", &runtime.perception_state.screen_capture_poll_interval_sec, 0.1f, 5.0f, "%.2f");

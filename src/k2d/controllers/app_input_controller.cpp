@@ -101,10 +101,20 @@ EditorInputCallbacks BuildEditorInputCallbacks(const AppInputControllerContext &
                 return;
             }
             if (key == SDLK_S && ctrl_pressed) {
-                if (ctx.save_project) {
-                    ctx.save_project();
-                } else if (ctx.save_model) {
-                    ctx.save_model();
+                if (shift_pressed) {
+                    if (ctx.save_project_as) {
+                        ctx.save_project_as();
+                    } else if (ctx.save_project) {
+                        ctx.save_project();
+                    } else if (ctx.save_model) {
+                        ctx.save_model();
+                    }
+                } else {
+                    if (ctx.save_project) {
+                        ctx.save_project();
+                    } else if (ctx.save_model) {
+                        ctx.save_model();
+                    }
                 }
                 return;
             }

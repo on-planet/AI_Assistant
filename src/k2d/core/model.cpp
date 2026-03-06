@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <string>
@@ -869,6 +870,22 @@ bool SaveModelRuntimeJson(const ModelRuntime &model,
     }
 
     const std::string text = StringifyJson(root, 2);
+
+    {
+        std::error_code ec;
+        const std::filesystem::path out_path(output_json_path);
+        const std::filesystem::path parent = out_path.parent_path();
+        if (!parent.empty()) {
+            std::filesystem::create_directories(parent, ec);
+            if (ec) {
+                if (out_error) {
+                    *out_error = "create parent directory failed for '" +
+                                 std::string(output_json_path) + "': " + ec.message();
+                }
+                return false;
+            }
+        }
+    }
 
     SDL_IOStream *io = SDL_IOFromFile(output_json_path, "wb");
     if (!io) {

@@ -11,6 +11,43 @@
 #include <string>
 
 namespace k2d {
+namespace {
+
+std::filesystem::path ParentPathOrDot(const std::filesystem::path &path) {
+    const std::filesystem::path parent = path.parent_path();
+    return parent.empty() ? std::filesystem::path(".") : parent;
+}
+
+std::string LexicallyNormalUtf8(const std::filesystem::path &path) {
+    return path.lexically_normal().generic_string();
+}
+
+std::string BuildProjectSaveAsPath(const AppRuntime &runtime) {
+    namespace fs = std::filesystem;
+    fs::path current = runtime.current_project_path.empty()
+                           ? fs::path("assets/project.json")
+                           : fs::path(runtime.current_project_path);
+
+    const fs::path dir = ParentPathOrDot(current);
+    const std::string stem = current.stem().empty() ? std::string("project") : current.stem().string();
+    const std::string ext = current.has_extension() ? current.extension().string() : std::string(".json");
+
+    fs::path candidate = (dir / (stem + "_copy" + ext)).lexically_normal();
+    if (!fs::exists(candidate)) {
+        return LexicallyNormalUtf8(candidate);
+    }
+
+    for (int i = 2; i <= 999; ++i) {
+        candidate = (dir / (stem + "_copy_" + std::to_string(i) + ext)).lexically_normal();
+        if (!fs::exists(candidate)) {
+            return LexicallyNormalUtf8(candidate);
+        }
+    }
+
+    return LexicallyNormalUtf8((dir / (stem + "_copy_overflow" + ext)).lexically_normal());
+}
+
+}  // namespace
 
 void ApplyPivotDelta(ModelPart *part, float delta_x, float delta_y) {
     if (!part) {
@@ -63,9 +100,16 @@ bool SaveEditorProjectJsonToDisk(AppRuntime &runtime, const std::string &project
         return false;
     }
 
-    const std::string model_out_path = runtime.model.model_path.empty()
-                                       ? std::string("assets/model_01/model.json")
-                                       : runtime.model.model_path;
+    const std::filesystem::path project_fs_path(project_path);
+    const std::filesystem::path project_dir = ParentPathOrDot(project_fs_path);
+
+    const std::filesystem::path model_existing_path(runtime.model.model_path.empty()
+                                                        ? std::filesystem::path("assets/model_01/model.json")
+                                                        : std::filesystem::path(runtime.model.model_path));
+    const std::filesystem::path model_out_path_fs = model_existing_path.is_absolute()
+                                                        ? model_existing_path
+                                                        : (project_dir / model_existing_path).lexically_normal();
+    const std::string model_out_path = LexicallyNormalUtf8(model_out_path_fs);
 
     std::string model_err;
     if (!SaveModelRuntimeJson(runtime.model, model_out_path.c_str(), &model_err)) {
@@ -237,6 +281,19 @@ void SaveEditorProjectToDisk(AppRuntime &runtime) {
         runtime.editor_status_ttl = 2.5f;
     } else {
         runtime.editor_status = "save project failed: " + err;
+        runtime.editor_status_ttl = 3.5f;
+    }
+}
+
+void SaveEditorProjectAsToDisk(AppRuntime &runtime) {
+    const std::string path = BuildProjectSaveAsPath(runtime);
+    std::string err;
+    if (SaveEditorProjectJsonToDisk(runtime, path, &err)) {
+        runtime.current_project_path = path;
+        runtime.editor_status = "saved project as: " + path;
+        runtime.editor_status_ttl = 2.5f;
+    } else {
+        runtime.editor_status = "save project as failed: " + err;
         runtime.editor_status_ttl = 3.5f;
     }
 }

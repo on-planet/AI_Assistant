@@ -189,8 +189,8 @@
       "transform": {
         "opacity": 1,
         "pos": [
-          400,
-          360
+          529,
+          399
         ],
         "rotDeg": 0,
         "scale": [
@@ -305,7 +305,7 @@
       ],
       "texture": "head.png",
       "transform": {
-        "opacity": 0.949999988079071,
+        "opacity": 1,
         "pos": [
           0,
           -130
@@ -363,7 +363,7 @@
       ],
       "texture": "head.png",
       "transform": {
-        "opacity": 0.649999976158142,
+        "opacity": 1,
         "pos": [
           0,
           0
@@ -400,8 +400,8 @@
       "name": "左耳",
       "parent": "HeadBase",
       "pivot": [
-        38,
-        90
+        57.7996101379395,
+        95.4220428466797
       ],
       "size": [
         76,
@@ -409,10 +409,10 @@
       ],
       "texture": "head.png",
       "transform": {
-        "opacity": 0.899999976158142,
+        "opacity": 1,
         "pos": [
-          -96,
-          -70
+          -76.2004165649414,
+          -64.5779190063477
         ],
         "rotDeg": -12,
         "scale": [
@@ -455,7 +455,7 @@
       ],
       "texture": "head.png",
       "transform": {
-        "opacity": 0.899999976158142,
+        "opacity": 1,
         "pos": [
           96,
           -70
@@ -530,7 +530,7 @@
         20
       ],
       "transform": {
-        "opacity": 0.949999988079071,
+        "opacity": 1,
         "pos": [
           -46,
           -36
@@ -605,7 +605,7 @@
         20
       ],
       "transform": {
-        "opacity": 0.949999988079071,
+        "opacity": 1,
         "pos": [
           46,
           -36
@@ -890,7 +890,7 @@
         22
       ],
       "transform": {
-        "opacity": 0.850000023841858,
+        "opacity": 1,
         "pos": [
           0,
           42

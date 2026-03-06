@@ -18,6 +18,7 @@ bool LoadEditorProjectJsonFromDisk(AppRuntime &runtime,
 
 void SaveEditedModelJsonToDisk(AppRuntime &runtime);
 void SaveEditorProjectToDisk(AppRuntime &runtime);
+void SaveEditorProjectAsToDisk(AppRuntime &runtime);
 void LoadEditorProjectFromDisk(AppRuntime &runtime);
 
 }  // namespace k2d

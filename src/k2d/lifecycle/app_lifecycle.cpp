@@ -393,6 +393,10 @@ void SaveEditorProjectToDisk() {
     k2d::SaveEditorProjectToDisk(g_runtime);
 }
 
+void SaveEditorProjectAsToDisk() {
+    k2d::SaveEditorProjectAsToDisk(g_runtime);
+}
+
 void LoadEditorProjectFromDisk() {
     k2d::LoadEditorProjectFromDisk(g_runtime);
 }
@@ -419,6 +423,7 @@ EditorInputBindingBridge BuildEditorInputBindingBridge(AppRuntime &runtime) {
         .toggle_manual_param_mode = []() { ToggleManualParamMode(); },
         .save_model = []() { SaveEditedModelJsonToDisk(); },
         .save_project = []() { SaveEditorProjectToDisk(); },
+        .save_project_as = []() { SaveEditorProjectAsToDisk(); },
         .load_project = []() { LoadEditorProjectFromDisk(); },
         .undo_edit = []() { UndoLastEdit(); },
         .redo_edit = []() { RedoLastEdit(); },

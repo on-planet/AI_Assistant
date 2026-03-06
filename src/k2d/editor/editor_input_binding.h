@@ -29,6 +29,7 @@ struct EditorInputBindingBridge {
     VoidFn toggle_manual_param_mode;
     VoidFn save_model;
     VoidFn save_project;
+    VoidFn save_project_as;
     VoidFn load_project;
     VoidFn undo_edit;
     VoidFn redo_edit;

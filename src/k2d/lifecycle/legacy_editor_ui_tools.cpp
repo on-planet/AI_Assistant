@@ -206,14 +206,16 @@ void RenderResourceTreeInspector(ModelRuntime &model,
     ImGuiTreeNodeFlags deformer_root_flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth;
     const bool deformer_root_open = ImGui::TreeNodeEx("Deformer##deformer_root", deformer_root_flags);
     if (deformer_root_open) {
-        ImGuiTreeNodeFlags warp_flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+        ImGuiTreeNodeFlags warp_flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth |
+                                        ImGuiTreeNodeFlags_NoTreePushOnOpen;
         if (is_warp_selected) warp_flags |= ImGuiTreeNodeFlags_Selected;
         ImGui::TreeNodeEx("Warp##deformer_warp", warp_flags);
         if (ImGui::IsItemClicked() && selected_deformer_type) {
             *selected_deformer_type = 0;
         }
 
-        ImGuiTreeNodeFlags rotation_flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+        ImGuiTreeNodeFlags rotation_flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth |
+                                            ImGuiTreeNodeFlags_NoTreePushOnOpen;
         if (is_rotation_selected) rotation_flags |= ImGuiTreeNodeFlags_Selected;
         ImGui::TreeNodeEx("Rotation##deformer_rotation", rotation_flags);
         if (ImGui::IsItemClicked() && selected_deformer_type) {

@@ -427,10 +427,10 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
                 if (packet.elapsed_ms > state.ocr_timeout_ms) {
                     state.ocr_skipped_due_timeout = true;
                     state.ocr_last_error = "ocr timeout degrade, keep last stable result";
-                    RecordRuntimeError(state.ocr_error_info,
-                                       RuntimeErrorDomain::PerceptionOcr,
-                                       RuntimeErrorCode::TimeoutDegraded,
-                                       state.ocr_last_error);
+                    RecordRuntimeDegrade(state.ocr_error_info,
+                                         RuntimeErrorDomain::PerceptionOcr,
+                                         RuntimeErrorCode::TimeoutDegraded,
+                                         state.ocr_last_error);
                     if (!state.ocr_last_stable_result.summary.empty() || !state.ocr_last_stable_result.lines.empty()) {
                         state.ocr_result = state.ocr_last_stable_result;
                     }

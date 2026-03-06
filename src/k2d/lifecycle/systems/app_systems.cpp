@@ -134,10 +134,17 @@ void TickAppSystems(AppRuntime &runtime, float dt) {
                     if (result.timeout_detected) {
                         asr_code = RuntimeErrorCode::TimeoutDegraded;
                     }
-                    UpdateRuntimeError(runtime.asr_error_info,
-                                       RuntimeErrorDomain::Asr,
-                                       asr_code,
-                                       asr_err);
+                    if (asr_code == RuntimeErrorCode::TimeoutDegraded) {
+                        UpdateRuntimeDegrade(runtime.asr_error_info,
+                                             RuntimeErrorDomain::Asr,
+                                             asr_code,
+                                             asr_err);
+                    } else {
+                        UpdateRuntimeError(runtime.asr_error_info,
+                                           RuntimeErrorDomain::Asr,
+                                           asr_code,
+                                           asr_err);
+                    }
                     LogError("[obs] domain=%s code=%s detail=%s",
                              RuntimeErrorDomainName(runtime.asr_error_info.domain),
                              RuntimeErrorCodeName(runtime.asr_error_info.code),
@@ -168,10 +175,17 @@ void TickAppSystems(AppRuntime &runtime, float dt) {
                                RuntimeErrorCode::AutoDisabled,
                                stats.last_error.empty() ? std::string("plugin auto disabled") : stats.last_error);
         } else if (stats.internal_error_count > 0 || stats.exception_count > 0 || stats.timeout_count > 0) {
-            UpdateRuntimeError(runtime.plugin_error_info,
-                               RuntimeErrorDomain::PluginWorker,
-                               RuntimeErrorCode::InternalError,
-                               stats.last_error);
+            if (stats.internal_error_count == 0 && stats.exception_count == 0 && stats.timeout_count > 0) {
+                UpdateRuntimeDegrade(runtime.plugin_error_info,
+                                     RuntimeErrorDomain::PluginWorker,
+                                     RuntimeErrorCode::TimeoutDegraded,
+                                     stats.last_error.empty() ? std::string("plugin timeout degraded") : stats.last_error);
+            } else {
+                UpdateRuntimeError(runtime.plugin_error_info,
+                                   RuntimeErrorDomain::PluginWorker,
+                                   RuntimeErrorCode::InternalError,
+                                   stats.last_error);
+            }
         } else {
             ClearRuntimeError(runtime.plugin_error_info);
         }
@@ -206,10 +220,11 @@ void TickAppSystems(AppRuntime &runtime, float dt) {
 
         const auto log_err = [](const RuntimeErrorInfo &err) {
             if (err.code != RuntimeErrorCode::Ok) {
-                LogError("[obs][error] domain=%s code=%s count=%lld detail=%s",
+                LogError("[obs][error] domain=%s code=%s count=%lld degraded=%lld detail=%s",
                          RuntimeErrorDomainName(err.domain),
                          RuntimeErrorCodeName(err.code),
                          static_cast<long long>(err.count),
+                         static_cast<long long>(err.degraded_count),
                          err.detail.c_str());
             }
         };

@@ -119,23 +119,125 @@ RuntimeErrorDomain PickRecentErrorDomain(const AppRuntime &runtime) {
     return RuntimeErrorDomain::None;
 }
 
+enum class RuntimeModuleState {
+    Ok,
+    Degraded,
+    Failed,
+    Recovering,
+};
+
+const char *RuntimeModuleStateName(RuntimeModuleState s) {
+    switch (s) {
+        case RuntimeModuleState::Ok: return "OK";
+        case RuntimeModuleState::Degraded: return "DEGRADED";
+        case RuntimeModuleState::Failed: return "FAILED";
+        case RuntimeModuleState::Recovering: return "RECOVERING";
+        default: return "UNKNOWN";
+    }
+}
+
+ImVec4 RuntimeModuleStateColor(RuntimeModuleState s) {
+    switch (s) {
+        case RuntimeModuleState::Ok: return ImVec4(0.35f, 0.9f, 0.45f, 1.0f);
+        case RuntimeModuleState::Degraded: return ImVec4(1.0f, 0.82f, 0.25f, 1.0f);
+        case RuntimeModuleState::Failed: return ImVec4(1.0f, 0.35f, 0.35f, 1.0f);
+        case RuntimeModuleState::Recovering: return ImVec4(0.35f, 0.82f, 1.0f, 1.0f);
+        default: return ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
+    }
+}
+
+RuntimeModuleState ClassifyModuleState(const RuntimeErrorInfo &err,
+                                       bool ready,
+                                       bool degraded_hint,
+                                       bool recovering_hint) {
+    if (recovering_hint) {
+        return RuntimeModuleState::Recovering;
+    }
+    if (degraded_hint || err.code == RuntimeErrorCode::TimeoutDegraded || err.code == RuntimeErrorCode::AutoDisabled) {
+        return RuntimeModuleState::Degraded;
+    }
+    if (!ready) {
+        return RuntimeModuleState::Failed;
+    }
+    if (err.code != RuntimeErrorCode::Ok) {
+        return RuntimeModuleState::Failed;
+    }
+    return RuntimeModuleState::Ok;
+}
+
 struct RuntimeErrorRow {
     const char *label = "";
     const RuntimeErrorInfo *info = nullptr;
+    RuntimeModuleState state = RuntimeModuleState::Ok;
     int recent_seq = 0;
 };
 
 std::vector<RuntimeErrorRow> BuildRuntimeErrorRows(const AppRuntime &runtime) {
     return {
-        {"Chat", &runtime.chat_error_info, 0},
-        {"ASR", &runtime.asr_error_info, 1},
-        {"Plugin.Worker", &runtime.plugin_error_info, 2},
-        {"Perception.FaceMesh", &runtime.perception_state.facemesh_error_info, 3},
-        {"Perception.OCR", &runtime.perception_state.ocr_error_info, 4},
-        {"Perception.Scene", &runtime.perception_state.scene_error_info, 5},
-        {"Perception.Capture", &runtime.perception_state.capture_error_info, 6},
-        {"Perception.SystemContext", &runtime.perception_state.system_context_error_info, 7},
-        {"Reminder", &runtime.reminder_error_info, 8},
+        {"Chat",
+         &runtime.chat_error_info,
+         ClassifyModuleState(runtime.chat_error_info,
+                             runtime.feature_chat_enabled ? runtime.chat_ready : true,
+                             false,
+                             false),
+         0},
+        {"ASR",
+         &runtime.asr_error_info,
+         ClassifyModuleState(runtime.asr_error_info,
+                             runtime.feature_asr_enabled ? runtime.asr_ready : true,
+                             false,
+                             false),
+         1},
+        {"Plugin.Worker",
+         &runtime.plugin_error_info,
+         ClassifyModuleState(runtime.plugin_error_info,
+                             runtime.plugin_ready,
+                             runtime.plugin_auto_disabled || runtime.plugin_timeout_rate > 0.10,
+                             (!runtime.plugin_auto_disabled && runtime.plugin_recover_count > 0 &&
+                              runtime.plugin_error_info.code != RuntimeErrorCode::Ok)),
+         2},
+        {"Perception.FaceMesh",
+         &runtime.perception_state.facemesh_error_info,
+         ClassifyModuleState(runtime.perception_state.facemesh_error_info,
+                             runtime.perception_state.camera_facemesh_ready,
+                             runtime.face_map_sensor_fallback_active,
+                             false),
+         3},
+        {"Perception.OCR",
+         &runtime.perception_state.ocr_error_info,
+         ClassifyModuleState(runtime.perception_state.ocr_error_info,
+                             runtime.perception_state.ocr_ready,
+                             runtime.perception_state.ocr_skipped_due_timeout,
+                             false),
+         4},
+        {"Perception.Scene",
+         &runtime.perception_state.scene_error_info,
+         ClassifyModuleState(runtime.perception_state.scene_error_info,
+                             runtime.perception_state.scene_classifier_ready,
+                             false,
+                             false),
+         5},
+        {"Perception.Capture",
+         &runtime.perception_state.capture_error_info,
+         ClassifyModuleState(runtime.perception_state.capture_error_info,
+                             runtime.perception_state.screen_capture_ready,
+                             false,
+                             false),
+         6},
+        {"Perception.SystemContext",
+         &runtime.perception_state.system_context_error_info,
+         ClassifyModuleState(runtime.perception_state.system_context_error_info,
+                             true,
+                             false,
+                             false),
+         7},
+        {"Reminder",
+         &runtime.reminder_error_info,
+         ClassifyModuleState(runtime.reminder_error_info,
+                             runtime.reminder_ready,
+                             false,
+                             false),
+         8},
     };
 }
 
@@ -154,6 +256,8 @@ void RenderRuntimeErrorClassificationTable(const AppRuntime &runtime) {
         all_errors += row.label;
         all_errors += " | count=";
         all_errors += std::to_string(static_cast<long long>(row.info->count));
+        all_errors += " | degraded=";
+        all_errors += std::to_string(static_cast<long long>(row.info->degraded_count));
         all_errors += " | recent_seq=";
         all_errors += std::to_string(row.recent_seq);
         all_errors += " | ";
@@ -173,12 +277,14 @@ void RenderRuntimeErrorClassificationTable(const AppRuntime &runtime) {
     ImGui::SameLine();
     ImGui::TextUnformatted("recent_seq 越小表示越近期（当前为近似时序）");
 
-    if (ImGui::BeginTable("runtime_error_table", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("Module", ImGuiTableColumnFlags_WidthStretch, 0.28f);
-        ImGui::TableSetupColumn("Count", ImGuiTableColumnFlags_WidthStretch, 0.12f);
-        ImGui::TableSetupColumn("Recent", ImGuiTableColumnFlags_WidthStretch, 0.12f);
-        ImGui::TableSetupColumn("Code", ImGuiTableColumnFlags_WidthStretch, 0.24f);
-        ImGui::TableSetupColumn("Detail", ImGuiTableColumnFlags_WidthStretch, 0.24f);
+    if (ImGui::BeginTable("runtime_error_table", 7, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Module", ImGuiTableColumnFlags_WidthStretch, 0.24f);
+        ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthStretch, 0.14f);
+        ImGui::TableSetupColumn("Count", ImGuiTableColumnFlags_WidthStretch, 0.08f);
+        ImGui::TableSetupColumn("Degraded", ImGuiTableColumnFlags_WidthStretch, 0.10f);
+        ImGui::TableSetupColumn("Recent", ImGuiTableColumnFlags_WidthStretch, 0.08f);
+        ImGui::TableSetupColumn("Code", ImGuiTableColumnFlags_WidthStretch, 0.18f);
+        ImGui::TableSetupColumn("Detail", ImGuiTableColumnFlags_WidthStretch, 0.22f);
         ImGui::TableHeadersRow();
 
         for (const auto &row : rows) {
@@ -187,15 +293,21 @@ void RenderRuntimeErrorClassificationTable(const AppRuntime &runtime) {
             ImGui::TextUnformatted(row.label);
 
             ImGui::TableSetColumnIndex(1);
-            ImGui::Text("%lld", static_cast<long long>(row.info->count));
+            ImGui::TextColored(RuntimeModuleStateColor(row.state), "%s", RuntimeModuleStateName(row.state));
 
             ImGui::TableSetColumnIndex(2);
-            ImGui::Text("T-%d", row.recent_seq);
+            ImGui::Text("%lld", static_cast<long long>(row.info->count));
 
             ImGui::TableSetColumnIndex(3);
-            ImGui::Text("%s.%s", RuntimeErrorDomainName(row.info->domain), RuntimeErrorCodeName(row.info->code));
+            ImGui::Text("%lld", static_cast<long long>(row.info->degraded_count));
 
             ImGui::TableSetColumnIndex(4);
+            ImGui::Text("T-%d", row.recent_seq);
+
+            ImGui::TableSetColumnIndex(5);
+            ImGui::Text("%s.%s", RuntimeErrorDomainName(row.info->domain), RuntimeErrorCodeName(row.info->code));
+
+            ImGui::TableSetColumnIndex(6);
             if (row.info->detail.empty()) {
                 ImGui::TextUnformatted("(none)");
             } else {
@@ -309,6 +421,7 @@ void ResetAllRuntimeErrorCounters(AppRuntime &runtime) {
     auto reset_err = [](RuntimeErrorInfo &err) {
         ClearRuntimeError(err);
         err.count = 0;
+        err.degraded_count = 0;
     };
 
     reset_err(runtime.perception_state.capture_error_info);
@@ -354,6 +467,18 @@ JsonValue BuildRuntimeSnapshotJson(const AppRuntime &runtime) {
     err_counts.emplace("chat", JsonValue::makeNumber(static_cast<double>(runtime.chat_error_info.count)));
     err_counts.emplace("reminder", JsonValue::makeNumber(static_cast<double>(runtime.reminder_error_info.count)));
     root.emplace("error_counts", JsonValue::makeObject(std::move(err_counts)));
+
+    JsonObject degraded_counts;
+    degraded_counts.emplace("capture", JsonValue::makeNumber(static_cast<double>(runtime.perception_state.capture_error_info.degraded_count)));
+    degraded_counts.emplace("scene", JsonValue::makeNumber(static_cast<double>(runtime.perception_state.scene_error_info.degraded_count)));
+    degraded_counts.emplace("ocr", JsonValue::makeNumber(static_cast<double>(runtime.perception_state.ocr_error_info.degraded_count)));
+    degraded_counts.emplace("facemesh", JsonValue::makeNumber(static_cast<double>(runtime.perception_state.facemesh_error_info.degraded_count)));
+    degraded_counts.emplace("system_context", JsonValue::makeNumber(static_cast<double>(runtime.perception_state.system_context_error_info.degraded_count)));
+    degraded_counts.emplace("plugin", JsonValue::makeNumber(static_cast<double>(runtime.plugin_error_info.degraded_count)));
+    degraded_counts.emplace("asr", JsonValue::makeNumber(static_cast<double>(runtime.asr_error_info.degraded_count)));
+    degraded_counts.emplace("chat", JsonValue::makeNumber(static_cast<double>(runtime.chat_error_info.degraded_count)));
+    degraded_counts.emplace("reminder", JsonValue::makeNumber(static_cast<double>(runtime.reminder_error_info.degraded_count)));
+    root.emplace("degraded_counts", JsonValue::makeObject(std::move(degraded_counts)));
 
     return JsonValue::makeObject(std::move(root));
 }
@@ -1167,7 +1292,17 @@ void RenderAppDebugUi(AppRuntime &runtime) {
                 runtime.chat_last_answer = std::move(rsp.text);
                 runtime.chat_last_switch_reason = rsp.switch_reason;
                 runtime.chat_last_error.clear();
-                ClearRuntimeError(runtime.chat_error_info);
+                if (rsp.fallback_to_offline || (rsp.cloud_attempted && !rsp.cloud_succeeded)) {
+                    std::string degrade_detail = rsp.switch_reason.empty()
+                                                     ? std::string("chat degraded: cloud fallback to offline")
+                                                     : std::string("chat degraded: ") + rsp.switch_reason;
+                    UpdateRuntimeDegrade(runtime.chat_error_info,
+                                         RuntimeErrorDomain::Chat,
+                                         RuntimeErrorCode::TimeoutDegraded,
+                                         degrade_detail);
+                } else {
+                    ClearRuntimeError(runtime.chat_error_info);
+                }
             } else {
                 runtime.chat_last_error = err;
                 UpdateRuntimeError(runtime.chat_error_info,

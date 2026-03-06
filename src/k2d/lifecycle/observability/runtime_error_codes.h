@@ -34,7 +34,8 @@ struct RuntimeErrorInfo {
     RuntimeErrorDomain domain = RuntimeErrorDomain::None;
     RuntimeErrorCode code = RuntimeErrorCode::Ok;
     std::string detail;
-    std::int64_t count = 0;
+    std::int64_t count = 0;          // hard error 次数
+    std::int64_t degraded_count = 0; // 降级但可运行次数
 };
 
 inline const char *RuntimeErrorDomainName(RuntimeErrorDomain domain) {
@@ -75,14 +76,36 @@ inline void RecordRuntimeError(RuntimeErrorInfo &dst,
     dst.count += 1;
 }
 
+inline void RecordRuntimeDegrade(RuntimeErrorInfo &dst,
+                                 RuntimeErrorDomain domain,
+                                 RuntimeErrorCode code,
+                                 std::string detail) {
+    dst.domain = domain;
+    dst.code = code;
+    dst.detail = std::move(detail);
+    dst.degraded_count += 1;
+}
+
 inline void UpdateRuntimeError(RuntimeErrorInfo &dst,
                                RuntimeErrorDomain domain,
                                RuntimeErrorCode code,
                                const std::string &detail) {
     if (dst.domain == domain && dst.code == code && dst.detail == detail) {
+        dst.count += 1;
         return;
     }
     RecordRuntimeError(dst, domain, code, detail);
+}
+
+inline void UpdateRuntimeDegrade(RuntimeErrorInfo &dst,
+                                 RuntimeErrorDomain domain,
+                                 RuntimeErrorCode code,
+                                 const std::string &detail) {
+    if (dst.domain == domain && dst.code == code && dst.detail == detail) {
+        dst.degraded_count += 1;
+        return;
+    }
+    RecordRuntimeDegrade(dst, domain, code, detail);
 }
 
 inline void ClearRuntimeError(RuntimeErrorInfo &dst) {

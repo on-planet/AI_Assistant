@@ -5,6 +5,7 @@
 #include "k2d/editor/editor_input.h"
 
 #include <functional>
+#include <string>
 
 namespace k2d {
 
@@ -37,6 +38,10 @@ struct AppInputControllerContext {
 };
 
 void HandleNonEditKeyDown(const AppInputControllerContext &ctx, SDL_Keycode key, bool shift_pressed);
+void LogUserActionFeedback(const char *action,
+                           bool accepted,
+                           const char *module,
+                           const std::string &reason = "");
 EditorInputCallbacks BuildEditorInputCallbacks(const AppInputControllerContext &ctx);
 void HandleAppInputEvent(const SDL_Event &event,
                          bool edit_mode,

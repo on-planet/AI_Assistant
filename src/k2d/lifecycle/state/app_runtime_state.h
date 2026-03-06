@@ -30,6 +30,18 @@
 
 namespace k2d {
 
+struct RuntimeMetricsSample {
+    std::int64_t ts_ms = 0;
+    std::uint64_t seq = 0;
+    double capture_success_rate = 0.0;
+    double scene_p95_latency_ms = 0.0;
+    double ocr_p95_latency_ms = 0.0;
+    double face_p95_latency_ms = 0.0;
+    double ocr_timeout_rate = 0.0;
+    double asr_timeout_rate = 0.0;
+    double plugin_timeout_rate = 0.0;
+};
+
 enum class AxisConstraint {
     None,
     XOnly,
@@ -191,6 +203,18 @@ struct AppRuntime {
     bool runtime_observability_log_enabled = true;
     float runtime_observability_log_interval_sec = 3.0f;
     float runtime_observability_log_accum_sec = 0.0f;
+
+    std::vector<double> scene_latency_window_ms;
+    std::vector<double> ocr_latency_window_ms;
+    std::vector<double> face_latency_window_ms;
+    double scene_p95_latency_ms = 0.0;
+    double ocr_p95_latency_ms = 0.0;
+    double face_p95_latency_ms = 0.0;
+    std::size_t runtime_metrics_window_size = 120;
+
+    std::vector<RuntimeMetricsSample> runtime_metrics_series;
+    std::size_t runtime_metrics_series_capacity = 2048;
+    std::uint64_t runtime_metrics_seq = 0;
 
     float face_map_min_confidence = 0.45f;
     float face_map_head_pose_deadzone_deg = 2.0f;

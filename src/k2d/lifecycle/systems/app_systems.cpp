@@ -1,15 +1,78 @@
 #include "k2d/lifecycle/systems/app_systems.h"
 
 #include <algorithm>
+#include <cmath>
 #include <ctime>
 #include <string>
 
 #include "k2d/core/async_logger.h"
+#include "k2d/lifecycle/observability/runtime_error_codes.h"
 #include "k2d/lifecycle/state/app_runtime_state.h"
 #include "k2d/lifecycle/asr/asr_provider.h"
 #include "k2d/lifecycle/asr/vad_segmenter.h"
 
 namespace k2d {
+
+namespace {
+
+double ComputeP95(std::vector<double> samples) {
+    if (samples.empty()) {
+        return 0.0;
+    }
+    std::sort(samples.begin(), samples.end());
+    const std::size_t idx = static_cast<std::size_t>(std::floor(0.95 * static_cast<double>(samples.size() - 1)));
+    return samples[std::min(idx, samples.size() - 1)];
+}
+
+void PushLatency(std::vector<double> &window, std::size_t cap, double ms) {
+    if (cap == 0) {
+        return;
+    }
+    window.push_back(std::max(0.0, ms));
+    if (window.size() > cap) {
+        window.erase(window.begin());
+    }
+}
+
+void PushMetricsSample(AppRuntime &runtime) {
+    RuntimeMetricsSample sample{};
+    sample.ts_ms = ObsNowTsMs();
+    sample.seq = ++runtime.runtime_metrics_seq;
+
+    const double cap_ok = static_cast<double>(runtime.perception_state.screen_capture_success_count);
+    const double cap_fail = static_cast<double>(runtime.perception_state.screen_capture_fail_count);
+    const double cap_total = cap_ok + cap_fail;
+    sample.capture_success_rate = cap_total > 0.0 ? (cap_ok / cap_total) : 1.0;
+
+    sample.scene_p95_latency_ms = runtime.scene_p95_latency_ms;
+    sample.ocr_p95_latency_ms = runtime.ocr_p95_latency_ms;
+    sample.face_p95_latency_ms = runtime.face_p95_latency_ms;
+
+    const double ocr_runs = static_cast<double>(std::max<std::int64_t>(1, runtime.perception_state.ocr_total_runs));
+    sample.ocr_timeout_rate = static_cast<double>(runtime.perception_state.ocr_error_info.degraded_count) / ocr_runs;
+    sample.asr_timeout_rate = runtime.asr_timeout_rate;
+    sample.plugin_timeout_rate = runtime.plugin_timeout_rate;
+
+    runtime.runtime_metrics_series.push_back(sample);
+    if (runtime.runtime_metrics_series.size() > runtime.runtime_metrics_series_capacity) {
+        runtime.runtime_metrics_series.erase(runtime.runtime_metrics_series.begin());
+    }
+
+    LogObsInfo("runtime.metrics",
+               "SNAPSHOT",
+               "app_systems.observability.metrics",
+               std::string("seq=") + std::to_string(static_cast<long long>(sample.seq)) +
+                   " capture_success_rate=" + std::to_string(sample.capture_success_rate) +
+                   " scene_p95_ms=" + std::to_string(sample.scene_p95_latency_ms) +
+                   " ocr_p95_ms=" + std::to_string(sample.ocr_p95_latency_ms) +
+                   " face_p95_ms=" + std::to_string(sample.face_p95_latency_ms) +
+                   " ocr_timeout_rate=" + std::to_string(sample.ocr_timeout_rate) +
+                   " asr_timeout_rate=" + std::to_string(sample.asr_timeout_rate) +
+                   " plugin_timeout_rate=" + std::to_string(sample.plugin_timeout_rate),
+               "runtime-main");
+}
+
+}  // namespace
 
 void TickAppSystems(AppRuntime &runtime, float dt) {
     runtime.perception_state.scene_classifier_enabled = runtime.feature_scene_classifier_enabled;
@@ -36,9 +99,12 @@ void TickAppSystems(AppRuntime &runtime, float dt) {
                                    due_err);
             }
             for (const auto &item : due_items) {
-                LogInfo("[obs] domain=reminder code=OK detail=due id=%lld title=%s",
-                        static_cast<long long>(item.id),
-                        item.title.c_str());
+                LogObsInfo("reminder",
+                           "OK",
+                           "app_systems.reminder.poll_due",
+                           std::string("due id=") + std::to_string(static_cast<long long>(item.id)) +
+                               " title=" + item.title,
+                           "runtime-main");
             }
 
             std::string list_err;
@@ -50,7 +116,10 @@ void TickAppSystems(AppRuntime &runtime, float dt) {
                                    RuntimeErrorCode::InternalError,
                                    list_err);
             } else if (due_err.empty()) {
-                ClearRuntimeError(runtime.reminder_error_info);
+                ClearRuntimeError(runtime.reminder_error_info,
+                                  "app_systems.reminder.poll",
+                                  "poll_success",
+                                  "runtime-main");
             }
         }
     }
@@ -130,11 +199,12 @@ void TickAppSystems(AppRuntime &runtime, float dt) {
                     runtime.asr_last_error.clear();
                 } else {
                     runtime.asr_last_error = asr_err;
-                    RuntimeErrorCode asr_code = RuntimeErrorCode::InferenceFailed;
-                    if (result.timeout_detected) {
-                        asr_code = RuntimeErrorCode::TimeoutDegraded;
-                    }
-                    if (asr_code == RuntimeErrorCode::TimeoutDegraded) {
+                    RuntimeErrorCode asr_code = result.timeout_detected
+                                                    ? RuntimeErrorCode::TimeoutDegraded
+                                                    : ClassifyRuntimeErrorCodeFromDetail(asr_err,
+                                                                                         RuntimeErrorCode::InferenceFailed);
+                    if (asr_code == RuntimeErrorCode::TimeoutDegraded ||
+                        asr_code == RuntimeErrorCode::DataQualityDegraded) {
                         UpdateRuntimeDegrade(runtime.asr_error_info,
                                              RuntimeErrorDomain::Asr,
                                              asr_code,
@@ -145,10 +215,11 @@ void TickAppSystems(AppRuntime &runtime, float dt) {
                                            asr_code,
                                            asr_err);
                     }
-                    LogError("[obs] domain=%s code=%s detail=%s",
-                             RuntimeErrorDomainName(runtime.asr_error_info.domain),
-                             RuntimeErrorCodeName(runtime.asr_error_info.code),
-                             runtime.asr_error_info.detail.c_str());
+                    LogObsError(RuntimeErrorDomainName(runtime.asr_error_info.domain),
+                                RuntimeErrorCodeName(runtime.asr_error_info.code),
+                                "app_systems.asr.recognize",
+                                runtime.asr_error_info.detail,
+                                "runtime-main");
                 }
             }
         }
@@ -187,7 +258,10 @@ void TickAppSystems(AppRuntime &runtime, float dt) {
                                    stats.last_error);
             }
         } else {
-            ClearRuntimeError(runtime.plugin_error_info);
+            ClearRuntimeError(runtime.plugin_error_info,
+                              "app_systems.plugin.update",
+                              "plugin_worker_healthy",
+                              "runtime-main");
         }
     } else {
         runtime.plugin_total_update_count = 0;
@@ -206,26 +280,31 @@ void TickAppSystems(AppRuntime &runtime, float dt) {
         runtime.runtime_observability_log_accum_sec >= std::max(0.2f, runtime.runtime_observability_log_interval_sec)) {
         runtime.runtime_observability_log_accum_sec = 0.0f;
 
-        LogInfo("[obs][metrics] fps=%.2f frame_ms=%.2f capture_ok=%lld capture_fail=%lld scene_ms=%.1f ocr_ms=%.1f face_ms=%.1f asr_rtf=%.3f plugin_hz=%d plugin_auto_disabled=%s",
-                runtime.debug_fps,
-                runtime.debug_frame_ms,
-                static_cast<long long>(runtime.perception_state.screen_capture_success_count),
-                static_cast<long long>(runtime.perception_state.screen_capture_fail_count),
-                runtime.perception_state.scene_avg_latency_ms,
-                runtime.perception_state.ocr_avg_latency_ms,
-                runtime.perception_state.face_avg_latency_ms,
-                runtime.asr_rtf,
-                runtime.plugin_current_update_hz,
-                runtime.plugin_auto_disabled ? "true" : "false");
+        PushLatency(runtime.scene_latency_window_ms,
+                    runtime.runtime_metrics_window_size,
+                    static_cast<double>(runtime.perception_state.scene_avg_latency_ms));
+        PushLatency(runtime.ocr_latency_window_ms,
+                    runtime.runtime_metrics_window_size,
+                    static_cast<double>(runtime.perception_state.ocr_avg_latency_ms));
+        PushLatency(runtime.face_latency_window_ms,
+                    runtime.runtime_metrics_window_size,
+                    static_cast<double>(runtime.perception_state.face_avg_latency_ms));
+
+        runtime.scene_p95_latency_ms = ComputeP95(runtime.scene_latency_window_ms);
+        runtime.ocr_p95_latency_ms = ComputeP95(runtime.ocr_latency_window_ms);
+        runtime.face_p95_latency_ms = ComputeP95(runtime.face_latency_window_ms);
+
+        PushMetricsSample(runtime);
 
         const auto log_err = [](const RuntimeErrorInfo &err) {
             if (err.code != RuntimeErrorCode::Ok) {
-                LogError("[obs][error] domain=%s code=%s count=%lld degraded=%lld detail=%s",
-                         RuntimeErrorDomainName(err.domain),
-                         RuntimeErrorCodeName(err.code),
-                         static_cast<long long>(err.count),
-                         static_cast<long long>(err.degraded_count),
-                         err.detail.c_str());
+                LogObsError(RuntimeErrorDomainName(err.domain),
+                            RuntimeErrorCodeName(err.code),
+                            "app_systems.observability.snapshot",
+                            std::string("count=") + std::to_string(static_cast<long long>(err.count)) +
+                                " degraded=" + std::to_string(static_cast<long long>(err.degraded_count)) +
+                                " detail=" + err.detail,
+                            "runtime-main");
             }
         };
 

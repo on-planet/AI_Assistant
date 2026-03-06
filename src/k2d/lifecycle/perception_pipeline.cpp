@@ -13,13 +13,7 @@ namespace k2d {
 namespace {
 
 RuntimeErrorCode ClassifyInitErrorCode(const std::string &err) {
-    const auto has = [&](const char *needle) {
-        return err.find(needle) != std::string::npos;
-    };
-    if (has("not found") || has("not exist") || has("No such file") || has("cannot open")) {
-        return RuntimeErrorCode::ResourceNotFound;
-    }
-    return RuntimeErrorCode::InitFailed;
+    return ClassifyRuntimeErrorCodeFromDetail(err, RuntimeErrorCode::InitFailed);
 }
 
 }  // namespace
@@ -36,13 +30,21 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
                                RuntimeErrorDomain::PerceptionCapture,
                                RuntimeErrorCode::InitFailed,
                                capture_err);
-            LogError("[obs] domain=%s code=%s detail=%s",
-                     RuntimeErrorDomainName(state.capture_error_info.domain),
-                     RuntimeErrorCodeName(state.capture_error_info.code),
-                     state.capture_error_info.detail.c_str());
+            LogObsError(RuntimeErrorDomainName(state.capture_error_info.domain),
+                        RuntimeErrorCodeName(state.capture_error_info.code),
+                        "perception_pipeline.init.capture",
+                        state.capture_error_info.detail,
+                        "perception-init");
         } else {
-            ClearRuntimeError(state.capture_error_info);
-            LogInfo("[obs] domain=perception.capture code=OK detail=screen_capture_init_ok");
+            ClearRuntimeError(state.capture_error_info,
+                              "perception_pipeline.init.capture",
+                              "screen_capture_init_ok",
+                              "perception-init");
+            LogObsInfo("perception.capture",
+                       "OK",
+                       "perception_pipeline.init.capture",
+                       "screen_capture_init_ok",
+                       "perception-init");
         }
     }
 
@@ -88,10 +90,15 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
             if (scene_classifier_.Init(pair.first, pair.second, &try_err)) {
                 state.scene_classifier_ready = true;
                 state.scene_classifier_last_error.clear();
-                ClearRuntimeError(state.scene_error_info);
-                LogInfo("[obs] domain=perception.scene code=OK detail=scene_init_ok model=%s labels=%s",
-                        pair.first.c_str(),
-                        pair.second.c_str());
+                ClearRuntimeError(state.scene_error_info,
+                                  "perception_pipeline.init.scene",
+                                  "scene_classifier_init_ok",
+                                  "perception-init");
+                LogObsInfo("perception.scene",
+                           "OK",
+                           "perception_pipeline.init.scene",
+                           std::string("scene_init_ok model=") + pair.first + " labels=" + pair.second,
+                           "perception-init");
                 break;
             }
             if (sc_err.empty() && !try_err.empty()) {
@@ -108,10 +115,11 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
                                RuntimeErrorDomain::PerceptionScene,
                                ClassifyInitErrorCode(sc_err),
                                sc_err);
-            LogError("[obs] domain=%s code=%s detail=%s",
-                     RuntimeErrorDomainName(state.scene_error_info.domain),
-                     RuntimeErrorCodeName(state.scene_error_info.code),
-                     state.scene_error_info.detail.c_str());
+            LogObsError(RuntimeErrorDomainName(state.scene_error_info.domain),
+                        RuntimeErrorCodeName(state.scene_error_info.code),
+                        "perception_pipeline.init.scene",
+                        state.scene_error_info.detail,
+                        "perception-init");
         }
     }
 
@@ -139,11 +147,16 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
                 state.ocr_ready = true;
                 state.ocr_last_error.clear();
                 state.ocr_det_input_size = ocr_service_.GetDetInputSize();
-                ClearRuntimeError(state.ocr_error_info);
-                LogInfo("[obs] domain=perception.ocr code=OK detail=ocr_init_ok det=%s rec=%s keys=%s",
-                        std::get<0>(cand).c_str(),
-                        std::get<1>(cand).c_str(),
-                        std::get<2>(cand).c_str());
+                ClearRuntimeError(state.ocr_error_info,
+                                  "perception_pipeline.init.ocr",
+                                  "ocr_service_init_ok",
+                                  "perception-init");
+                LogObsInfo("perception.ocr",
+                           "OK",
+                           "perception_pipeline.init.ocr",
+                           std::string("ocr_init_ok det=") + std::get<0>(cand) + " rec=" + std::get<1>(cand) +
+                               " keys=" + std::get<2>(cand),
+                           "perception-init");
                 break;
             }
             if (ocr_err.empty() && !try_err.empty()) {
@@ -160,10 +173,11 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
                                RuntimeErrorDomain::PerceptionOcr,
                                ClassifyInitErrorCode(ocr_err),
                                ocr_err);
-            LogError("[obs] domain=%s code=%s detail=%s",
-                     RuntimeErrorDomainName(state.ocr_error_info.domain),
-                     RuntimeErrorCodeName(state.ocr_error_info.code),
-                     state.ocr_error_info.detail.c_str());
+            LogObsError(RuntimeErrorDomainName(state.ocr_error_info.domain),
+                        RuntimeErrorCodeName(state.ocr_error_info.code),
+                        "perception_pipeline.init.ocr",
+                        state.ocr_error_info.detail,
+                        "perception-init");
         }
     }
 
@@ -185,10 +199,15 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
             if (camera_facemesh_service_.Init(cand.first, cand.second, &try_err, 0)) {
                 state.camera_facemesh_ready = true;
                 state.camera_facemesh_last_error.clear();
-                ClearRuntimeError(state.facemesh_error_info);
-                LogInfo("[obs] domain=perception.facemesh code=OK detail=facemesh_init_ok model=%s labels=%s",
-                        cand.first.c_str(),
-                        cand.second.c_str());
+                ClearRuntimeError(state.facemesh_error_info,
+                                  "perception_pipeline.init.facemesh",
+                                  "facemesh_service_init_ok",
+                                  "perception-init");
+                LogObsInfo("perception.facemesh",
+                           "OK",
+                           "perception_pipeline.init.facemesh",
+                           std::string("facemesh_init_ok model=") + cand.first + " labels=" + cand.second,
+                           "perception-init");
                 break;
             }
             if (fm_err.empty() && !try_err.empty()) {
@@ -205,10 +224,11 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
                                RuntimeErrorDomain::PerceptionFacemesh,
                                ClassifyInitErrorCode(fm_err),
                                fm_err);
-            LogError("[obs] domain=%s code=%s detail=%s",
-                     RuntimeErrorDomainName(state.facemesh_error_info.domain),
-                     RuntimeErrorCodeName(state.facemesh_error_info.code),
-                     state.facemesh_error_info.detail.c_str());
+            LogObsError(RuntimeErrorDomainName(state.facemesh_error_info.domain),
+                        RuntimeErrorCodeName(state.facemesh_error_info.code),
+                        "perception_pipeline.init.facemesh",
+                        state.facemesh_error_info.detail,
+                        "perception-init");
         }
     }
 
@@ -273,7 +293,10 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
 
     state.screen_capture_last_error.clear();
     state.screen_capture_success_count += 1;
-    ClearRuntimeError(state.capture_error_info);
+    ClearRuntimeError(state.capture_error_info,
+                      "perception_pipeline.tick.capture",
+                      "capture_frame_ok",
+                      "perception-tick");
 
     if (state.scene_classifier_enabled && state.scene_classifier_ready) {
         if (scene_future_.valid() &&
@@ -340,7 +363,10 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
         if (system_context_service_.Capture(context_snapshot, &ctx_err)) {
             state.system_context_snapshot = std::move(context_snapshot);
             state.system_context_last_error.clear();
-            ClearRuntimeError(state.system_context_error_info);
+            ClearRuntimeError(state.system_context_error_info,
+                              "perception_pipeline.tick.system_context",
+                              "system_context_capture_ok",
+                              "perception-tick");
         } else if (!ctx_err.empty()) {
             state.system_context_last_error = ctx_err;
             RecordRuntimeError(state.system_context_error_info,
@@ -438,7 +464,10 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
                     state.ocr_result = std::move(filtered_result);
                     state.ocr_last_stable_result = state.ocr_result;
                     state.ocr_last_error.clear();
-                    ClearRuntimeError(state.ocr_error_info);
+                    ClearRuntimeError(state.ocr_error_info,
+                                      "perception_pipeline.tick.ocr",
+                                      "ocr_inference_ok",
+                                      "perception-tick");
                 }
             }
         }
@@ -578,7 +607,10 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
                                             : 0.0f;
                 state.face_emotion_result = std::move(face_packet.result);
                 state.camera_facemesh_last_error.clear();
-                ClearRuntimeError(state.facemesh_error_info);
+                ClearRuntimeError(state.facemesh_error_info,
+                                  "perception_pipeline.tick.facemesh",
+                                  "facemesh_inference_ok",
+                                  "perception-tick");
             } else if (!face_packet.error.empty()) {
                 state.camera_facemesh_last_error = face_packet.error;
                 RecordRuntimeError(state.facemesh_error_info,

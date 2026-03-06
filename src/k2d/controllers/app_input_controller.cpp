@@ -1,22 +1,53 @@
 #include "k2d/controllers/app_input_controller.h"
 
+#include "k2d/lifecycle/observability/runtime_error_codes.h"
+
 namespace k2d {
+
+void LogUserActionFeedback(const char *action,
+                           bool accepted,
+                           const char *module,
+                           const std::string &reason) {
+    const std::string trace_id = std::string("ua-") + std::to_string(static_cast<long long>(NextObsEventId()));
+    LogObsInfo("user.action",
+               accepted ? "ACCEPTED" : "REJECTED",
+               module,
+               std::string("action=") + (action ? action : "unknown") +
+                   (reason.empty() ? std::string() : (" reason=" + reason)),
+               trace_id);
+    LogObsInfo("system.feedback",
+               accepted ? "OK" : "IGNORED",
+               module,
+               std::string("action=") + (action ? action : "unknown") +
+                   (reason.empty() ? std::string() : (" reason=" + reason)),
+               trace_id);
+}
 
 void HandleNonEditKeyDown(const AppInputControllerContext &ctx, SDL_Keycode key, bool shift_pressed) {
     switch (key) {
         case SDLK_ESCAPE:
             if (ctx.running) {
                 *ctx.running = false;
+                LogUserActionFeedback("key.escape.quit", true, "app_input.non_edit", "set_running_false");
+            } else {
+                LogUserActionFeedback("key.escape.quit", false, "app_input.non_edit", "running_ptr_null");
             }
             break;
         case SDLK_F1:
             if (ctx.gui_enabled) {
                 *ctx.gui_enabled = !*ctx.gui_enabled;
+                LogUserActionFeedback("key.f1.toggle_gui", true, "app_input.non_edit",
+                                      *ctx.gui_enabled ? "gui_enabled" : "gui_disabled");
+            } else {
+                LogUserActionFeedback("key.f1.toggle_gui", false, "app_input.non_edit", "gui_enabled_ptr_null");
             }
             break;
         case SDLK_E:
             if (ctx.toggle_edit_mode) {
                 ctx.toggle_edit_mode();
+                LogUserActionFeedback("key.e.toggle_edit_mode", true, "app_input.non_edit", "callback_invoked");
+            } else {
+                LogUserActionFeedback("key.e.toggle_edit_mode", false, "app_input.non_edit", "callback_missing");
             }
             break;
         case SDLK_M:
@@ -85,42 +116,62 @@ EditorInputCallbacks BuildEditorInputCallbacks(const AppInputControllerContext &
             if (key == SDLK_ESCAPE) {
                 if (ctx.running) {
                     *ctx.running = false;
+                    LogUserActionFeedback("key.escape.quit", true, "app_input.edit", "set_running_false");
+                } else {
+                    LogUserActionFeedback("key.escape.quit", false, "app_input.edit", "running_ptr_null");
                 }
                 return;
             }
             if (key == SDLK_F1) {
                 if (ctx.gui_enabled) {
                     *ctx.gui_enabled = !*ctx.gui_enabled;
+                    LogUserActionFeedback("key.f1.toggle_gui", true, "app_input.edit",
+                                          *ctx.gui_enabled ? "gui_enabled" : "gui_disabled");
+                } else {
+                    LogUserActionFeedback("key.f1.toggle_gui", false, "app_input.edit", "gui_enabled_ptr_null");
                 }
                 return;
             }
             if (key == SDLK_E) {
                 if (ctx.toggle_edit_mode) {
                     ctx.toggle_edit_mode();
+                    LogUserActionFeedback("key.e.toggle_edit_mode", true, "app_input.edit", "callback_invoked");
+                } else {
+                    LogUserActionFeedback("key.e.toggle_edit_mode", false, "app_input.edit", "callback_missing");
                 }
                 return;
             }
             if (key == SDLK_S && ctrl_pressed) {
+                bool done = false;
                 if (shift_pressed) {
                     if (ctx.save_project_as) {
                         ctx.save_project_as();
+                        done = true;
                     } else if (ctx.save_project) {
                         ctx.save_project();
+                        done = true;
                     } else if (ctx.save_model) {
                         ctx.save_model();
+                        done = true;
                     }
                 } else {
                     if (ctx.save_project) {
                         ctx.save_project();
+                        done = true;
                     } else if (ctx.save_model) {
                         ctx.save_model();
+                        done = true;
                     }
                 }
+                LogUserActionFeedback("key.ctrl_s.save", done, "app_input.edit", done ? "save_dispatched" : "no_save_handler");
                 return;
             }
             if (key == SDLK_O && ctrl_pressed) {
                 if (ctx.load_project) {
                     ctx.load_project();
+                    LogUserActionFeedback("key.ctrl_o.load", true, "app_input.edit", "load_dispatched");
+                } else {
+                    LogUserActionFeedback("key.ctrl_o.load", false, "app_input.edit", "no_load_handler");
                 }
                 return;
             }

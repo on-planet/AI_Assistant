@@ -548,6 +548,7 @@ RuntimeRenderBridge BuildRuntimeRenderBridge(AppRuntime &runtime) {
         .render_resource_tree_inspector = [](AppRuntime &rt) {
             k2d::RenderResourceTreeInspector(rt.model,
                                              &rt.selected_part_index,
+                                             &rt.selected_deformer_type,
                                              rt.resource_tree_filter,
                                              static_cast<int>(sizeof(rt.resource_tree_filter)),
                                              &rt.resource_tree_auto_expand_matches,

@@ -425,6 +425,19 @@ bool LoadModelRuntime(SDL_Renderer *renderer,
                 }
             }
 
+            if (const JsonValue *deformer_v = pv.get("deformer"); deformer_v && deformer_v->isObject()) {
+                const std::string type = deformer_v->getString("type").value_or(std::string("warp"));
+                if (type == "rotation" || type == "Rotation") {
+                    part.deformer_type = DeformerType::Rotation;
+                } else {
+                    part.deformer_type = DeformerType::Warp;
+                }
+                part.rotation_deformer_weight = std::clamp(static_cast<float>(deformer_v->getNumber("weight").value_or(0.0)),
+                                                           0.0f,
+                                                           1.0f);
+                part.rotation_deformer_speed = std::max(0.0f, static_cast<float>(deformer_v->getNumber("speed").value_or(2.0)));
+            }
+
             part.runtime_pos_x = part.base_pos_x;
             part.runtime_pos_y = part.base_pos_y;
             part.runtime_rot_deg = part.base_rot_deg;
@@ -441,7 +454,7 @@ bool LoadModelRuntime(SDL_Renderer *renderer,
 
             part.ffd.Resize(4, 4);
             part.ffd.ClearOffsets();
-            part.ffd.weight.SetValueImmediate(0.0f);
+            part.ffd.weight.SetValueImmediate(part.deformer_type == DeformerType::Warp ? 0.0f : 0.0f);
 
             GridMeshOptions opts;
             opts.width = part.width;
@@ -813,6 +826,21 @@ bool SaveModelRuntimeJson(const ModelRuntime &model,
 
         set_or_add_vec2(part_obj, "pivot", part.pivot_x, part.pivot_y);
         set_or_add_number(part_obj, "drawOrder", static_cast<double>(part.draw_order));
+
+        JsonValue *deformer = part_obj->get("deformer");
+        if (!deformer || !deformer->isObject()) {
+            if (JsonObject *part_map = part_obj->asObject()) {
+                part_map->emplace("deformer", JsonValue::makeObject(JsonObject{}));
+                deformer = part_obj->get("deformer");
+            }
+        }
+        if (deformer && deformer->isObject()) {
+            if (JsonObject *dobj = deformer->asObject()) {
+                (*dobj)["type"] = JsonValue::makeString(part.deformer_type == DeformerType::Rotation ? "rotation" : "warp");
+                (*dobj)["weight"] = JsonValue::makeNumber(static_cast<double>(std::clamp(part.rotation_deformer_weight, 0.0f, 1.0f)));
+                (*dobj)["speed"] = JsonValue::makeNumber(static_cast<double>(std::max(0.0f, part.rotation_deformer_speed)));
+            }
+        }
     }
 
     const std::string text = StringifyJson(root, 2);

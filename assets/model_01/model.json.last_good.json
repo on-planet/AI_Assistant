@@ -168,6 +168,11 @@
           "type": "opacity"
         }
       ],
+      "deformer": {
+        "speed": 2,
+        "type": "warp",
+        "weight": 0
+      },
       "drawOrder": 0,
       "id": "Body",
       "name": "身体",
@@ -281,6 +286,11 @@
           "type": "opacity"
         }
       ],
+      "deformer": {
+        "speed": 2,
+        "type": "warp",
+        "weight": 0
+      },
       "drawOrder": 10,
       "id": "HeadBase",
       "name": "头底",
@@ -334,6 +344,11 @@
           "type": "scaleY"
         }
       ],
+      "deformer": {
+        "speed": 2,
+        "type": "warp",
+        "weight": 0
+      },
       "drawOrder": 12,
       "id": "FaceBase",
       "name": "脸底",
@@ -375,6 +390,11 @@
           "type": "rotDeg"
         }
       ],
+      "deformer": {
+        "speed": 2,
+        "type": "warp",
+        "weight": 0
+      },
       "drawOrder": 9,
       "id": "EarL",
       "name": "左耳",
@@ -416,6 +436,11 @@
           "type": "rotDeg"
         }
       ],
+      "deformer": {
+        "speed": 2,
+        "type": "warp",
+        "weight": 0
+      },
       "drawOrder": 9,
       "id": "EarR",
       "name": "右耳",
@@ -487,6 +512,11 @@
         20,
         230
       ],
+      "deformer": {
+        "speed": 2,
+        "type": "warp",
+        "weight": 0
+      },
       "drawOrder": 20,
       "id": "BrowL",
       "name": "左眉",
@@ -557,6 +587,11 @@
         20,
         230
       ],
+      "deformer": {
+        "speed": 2,
+        "type": "warp",
+        "weight": 0
+      },
       "drawOrder": 20,
       "id": "BrowR",
       "name": "右眉",
@@ -639,6 +674,11 @@
         24,
         255
       ],
+      "deformer": {
+        "speed": 2,
+        "type": "warp",
+        "weight": 0
+      },
       "drawOrder": 22,
       "id": "EyeL",
       "name": "左眼",
@@ -721,6 +761,11 @@
         24,
         255
       ],
+      "deformer": {
+        "speed": 2,
+        "type": "warp",
+        "weight": 0
+      },
       "drawOrder": 22,
       "id": "EyeR",
       "name": "右眼",
@@ -827,6 +872,11 @@
         55,
         230
       ],
+      "deformer": {
+        "speed": 2,
+        "type": "warp",
+        "weight": 0
+      },
       "drawOrder": 24,
       "id": "Mouth",
       "name": "嘴",

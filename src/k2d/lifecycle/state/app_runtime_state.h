@@ -116,6 +116,7 @@ struct AppRuntime {
     // 资源树 + Inspector 联动
     char resource_tree_filter[128] = "";
     bool resource_tree_auto_expand_matches = true;
+    int selected_deformer_type = 0; // 0=Warp, 1=Rotation
 
     // 参数面板增强：分组与批量绑定（UI 状态）
     int param_group_mode = 0; // 0=prefix, 1=semantic

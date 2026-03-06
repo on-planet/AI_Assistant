@@ -262,22 +262,28 @@ void ResolveLocalPartStates(ModelRuntime *model, float time_sec, float dt_sec) {
         part.runtime_scale_y = std::max(0.05f, SafeFinite(scale_y, part.base_scale_y));
         part.runtime_opacity = Clamp01(SafeFinite(opacity, part.base_opacity));
 
-        part.ffd.weight.SetTarget(0.45f);
-        part.ffd.weight.Update(dt_sec, 2.0f);
-        for (int y = 0; y < part.ffd.control_rows; ++y) {
-            for (int x = 0; x < part.ffd.control_cols; ++x) {
-                const float nx = (part.ffd.control_cols <= 1) ? 0.0f
-                    : (static_cast<float>(x) / static_cast<float>(part.ffd.control_cols - 1)) * 2.0f - 1.0f;
-                const float ny = (part.ffd.control_rows <= 1) ? 0.0f
-                    : (static_cast<float>(y) / static_cast<float>(part.ffd.control_rows - 1)) * 2.0f - 1.0f;
-                const float r2 = nx * nx + ny * ny;
-                const float falloff = std::exp(-r2 * 2.0f);
-                const int idx = y * part.ffd.control_cols + x;
-                part.ffd.offsets[static_cast<std::size_t>(idx)].dx =
-                    std::sin(time_sec * 1.7f + nx * 1.2f + ny * 2.1f) * 8.0f * falloff;
-                part.ffd.offsets[static_cast<std::size_t>(idx)].dy =
-                    std::cos(time_sec * 1.2f + nx * 2.2f - ny * 1.3f) * 6.0f * falloff;
+        if (part.deformer_type == DeformerType::Warp) {
+            part.ffd.weight.Update(dt_sec, 2.0f);
+            for (int y = 0; y < part.ffd.control_rows; ++y) {
+                for (int x = 0; x < part.ffd.control_cols; ++x) {
+                    const float nx = (part.ffd.control_cols <= 1) ? 0.0f
+                        : (static_cast<float>(x) / static_cast<float>(part.ffd.control_cols - 1)) * 2.0f - 1.0f;
+                    const float ny = (part.ffd.control_rows <= 1) ? 0.0f
+                        : (static_cast<float>(y) / static_cast<float>(part.ffd.control_rows - 1)) * 2.0f - 1.0f;
+                    const float r2 = nx * nx + ny * ny;
+                    const float falloff = std::exp(-r2 * 2.0f);
+                    const int idx = y * part.ffd.control_cols + x;
+                    part.ffd.offsets[static_cast<std::size_t>(idx)].dx =
+                        std::sin(time_sec * 1.7f + nx * 1.2f + ny * 2.1f) * 8.0f * falloff;
+                    part.ffd.offsets[static_cast<std::size_t>(idx)].dy =
+                        std::cos(time_sec * 1.2f + nx * 2.2f - ny * 1.3f) * 6.0f * falloff;
+                }
             }
+            part.rotation_deformer_deg = 0.0f;
+        } else {
+            part.ffd.weight.SetValueImmediate(0.0f);
+            const float amp_deg = 12.0f * std::clamp(part.rotation_deformer_weight, 0.0f, 1.0f);
+            part.rotation_deformer_deg = std::sin(time_sec * std::max(0.0f, part.rotation_deformer_speed)) * amp_deg;
         }
     }
 
@@ -512,15 +518,20 @@ void ApplyWorldDeforms(ModelRuntime *model, float dt_sec) {
             part.ffd_prev_offsets = part.ffd.offsets;
         }
 
-        // 3) 每帧仅按当前权重混合已缓存的 FFD 增量（避免全量重采样）。
-        const float w = std::clamp(part.ffd.weight.value(), 0.0f, 1.0f);
-        if (w > 0.0f && part.ffd_vertex_dxdy.size() == part.deformed_positions.size()) {
-            for (std::size_t i = 0; i + 1 < part.deformed_positions.size(); i += 2) {
-                part.deformed_positions[i] += part.ffd_vertex_dxdy[i] * w;
-                part.deformed_positions[i + 1] += part.ffd_vertex_dxdy[i + 1] * w;
+        // 3) Deformer 分层执行：Warp 或 Rotation。
+        if (part.deformer_type == DeformerType::Warp) {
+            const float w = std::clamp(part.ffd.weight.value(), 0.0f, 1.0f);
+            if (w > 0.0f && part.ffd_vertex_dxdy.size() == part.deformed_positions.size()) {
+                for (std::size_t i = 0; i + 1 < part.deformed_positions.size(); i += 2) {
+                    part.deformed_positions[i] += part.ffd_vertex_dxdy[i] * w;
+                    part.deformed_positions[i + 1] += part.ffd_vertex_dxdy[i + 1] * w;
+                }
             }
+            part.ffd_prev_weight = w;
+        } else {
+            ApplyRotationDeltaDeform(&part.deformed_positions, part.rotation_deformer_deg);
+            part.ffd_prev_weight = 0.0f;
         }
-        part.ffd_prev_weight = w;
     }
 }
 

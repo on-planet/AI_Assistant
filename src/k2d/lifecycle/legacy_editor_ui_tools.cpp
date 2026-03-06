@@ -166,6 +166,7 @@ void RenderModelHierarchyTree(ModelRuntime &model,
 
 void RenderResourceTreeInspector(ModelRuntime &model,
                                  int *selected_part_index,
+                                 int *selected_deformer_type,
                                  char *filter_text,
                                  int filter_text_capacity,
                                  bool *auto_expand_matches,
@@ -198,6 +199,30 @@ void RenderResourceTreeInspector(ModelRuntime &model,
     ImGui::Text("Part: %s", part.id.c_str());
     ImGui::TextDisabled("draw=%d, parent=%d", part.draw_order, part.parent_index);
 
+    ImGui::SeparatorText("Deformer Tree");
+    const bool is_warp_selected = selected_deformer_type && *selected_deformer_type == 0;
+    const bool is_rotation_selected = selected_deformer_type && *selected_deformer_type == 1;
+
+    ImGuiTreeNodeFlags deformer_root_flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth;
+    const bool deformer_root_open = ImGui::TreeNodeEx("Deformer##deformer_root", deformer_root_flags);
+    if (deformer_root_open) {
+        ImGuiTreeNodeFlags warp_flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+        if (is_warp_selected) warp_flags |= ImGuiTreeNodeFlags_Selected;
+        ImGui::TreeNodeEx("Warp##deformer_warp", warp_flags);
+        if (ImGui::IsItemClicked() && selected_deformer_type) {
+            *selected_deformer_type = 0;
+        }
+
+        ImGuiTreeNodeFlags rotation_flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth;
+        if (is_rotation_selected) rotation_flags |= ImGuiTreeNodeFlags_Selected;
+        ImGui::TreeNodeEx("Rotation##deformer_rotation", rotation_flags);
+        if (ImGui::IsItemClicked() && selected_deformer_type) {
+            *selected_deformer_type = 1;
+        }
+
+        ImGui::TreePop();
+    }
+
     ImGui::SliderFloat("Opacity", &part.base_opacity, 0.0f, 1.0f, "%.3f");
     ImGui::DragFloat2("Position", &part.base_pos_x, 0.1f, -5000.0f, 5000.0f, "%.3f");
     ImGui::DragFloat2("Pivot", &part.pivot_x, 0.1f, -5000.0f, 5000.0f, "%.3f");
@@ -206,6 +231,25 @@ void RenderResourceTreeInspector(ModelRuntime &model,
     ImGui::DragFloat2("Scale", &part.base_scale_x, 0.01f, 0.01f, 100.0f, "%.3f");
     part.base_scale_x = std::max(0.01f, part.base_scale_x);
     part.base_scale_y = std::max(0.01f, part.base_scale_y);
+
+    ImGui::SeparatorText("Deformer");
+    int deformer_type_ui = part.deformer_type == DeformerType::Rotation ? 1 : 0;
+    if (selected_deformer_type) {
+        deformer_type_ui = std::clamp(*selected_deformer_type, 0, 1);
+    }
+    part.deformer_type = deformer_type_ui == 1 ? DeformerType::Rotation : DeformerType::Warp;
+
+    if (part.deformer_type == DeformerType::Warp) {
+        float warp_weight = std::clamp(part.ffd.weight.value(), 0.0f, 1.0f);
+        if (ImGui::SliderFloat("Warp Weight", &warp_weight, 0.0f, 1.0f, "%.3f")) {
+            part.ffd.weight.SetValueImmediate(warp_weight);
+        }
+    } else {
+        ImGui::SliderFloat("Rotation Weight", &part.rotation_deformer_weight, 0.0f, 1.0f, "%.3f");
+        ImGui::SliderFloat("Rotation Speed", &part.rotation_deformer_speed, 0.0f, 10.0f, "%.2f");
+        part.rotation_deformer_weight = std::clamp(part.rotation_deformer_weight, 0.0f, 1.0f);
+        part.rotation_deformer_speed = std::max(0.0f, part.rotation_deformer_speed);
+    }
 }
 
 }  // namespace k2d

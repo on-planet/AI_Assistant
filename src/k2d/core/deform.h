@@ -50,6 +50,9 @@ void ApplyFFDDeform(const Mesh2D &src,
                     std::vector<float> *inout_positions,
                     const FFDDeformer &ffd);
 
+// 对当前顶点执行绕包围盒中心旋转（角度单位：deg）。
+void ApplyRotationDeltaDeform(std::vector<float> *inout_positions, float rotation_deg_delta);
+
 // Apply affine + FFD with additive blending by weights.
 void ApplyCombinedDeform(const Mesh2D &src,
                          std::vector<float> *out_positions,

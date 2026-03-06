@@ -22,6 +22,7 @@ void RenderModelHierarchyTree(ModelRuntime &model,
 
 void RenderResourceTreeInspector(ModelRuntime &model,
                                  int *selected_part_index,
+                                 int *selected_deformer_type,
                                  char *filter_text,
                                  int filter_text_capacity,
                                  bool *auto_expand_matches,

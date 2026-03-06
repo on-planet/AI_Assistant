@@ -23,6 +23,11 @@ enum class BindingType {
     Opacity,
 };
 
+enum class DeformerType {
+    Warp,
+    Rotation,
+};
+
 struct ParamBinding {
     int param_index = -1;
     BindingType type = BindingType::PosX;
@@ -110,6 +115,11 @@ struct ModelPart {
 
     AffineAnimParams deform;
     FFDDeformer ffd;
+
+    DeformerType deformer_type = DeformerType::Warp;
+    float rotation_deformer_weight = 0.0f;      // [0,1]
+    float rotation_deformer_deg = 0.0f;         // 旋转增量角度（度）
+    float rotation_deformer_speed = 2.0f;       // UI/运行时调节参数
 
     std::vector<ParamBinding> bindings;
 

@@ -172,6 +172,36 @@ void ApplyFFDDeform(const Mesh2D &src,
     }
 }
 
+void ApplyRotationDeltaDeform(std::vector<float> *inout_positions, float rotation_deg_delta) {
+    if (!inout_positions || inout_positions->size() < 2) {
+        return;
+    }
+
+    float min_x = (*inout_positions)[0];
+    float max_x = (*inout_positions)[0];
+    float min_y = (*inout_positions)[1];
+    float max_y = (*inout_positions)[1];
+    for (std::size_t i = 0; i + 1 < inout_positions->size(); i += 2) {
+        min_x = std::min(min_x, (*inout_positions)[i]);
+        max_x = std::max(max_x, (*inout_positions)[i]);
+        min_y = std::min(min_y, (*inout_positions)[i + 1]);
+        max_y = std::max(max_y, (*inout_positions)[i + 1]);
+    }
+
+    const float cx = (min_x + max_x) * 0.5f;
+    const float cy = (min_y + max_y) * 0.5f;
+    const float rad = rotation_deg_delta * 3.14159265358979323846f / 180.0f;
+    const float c = std::cos(rad);
+    const float s = std::sin(rad);
+
+    for (std::size_t i = 0; i + 1 < inout_positions->size(); i += 2) {
+        const float x = (*inout_positions)[i] - cx;
+        const float y = (*inout_positions)[i + 1] - cy;
+        (*inout_positions)[i] = x * c - y * s + cx;
+        (*inout_positions)[i + 1] = x * s + y * c + cy;
+    }
+}
+
 void ApplyCombinedDeform(const Mesh2D &src,
                          std::vector<float> *out_positions,
                          const AffineAnimParams &affine,

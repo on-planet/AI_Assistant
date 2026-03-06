@@ -203,20 +203,37 @@ bool UpdateDirtyCachesAndCheckChanged(ModelRuntime *model) {
         new_part_base_signature.push_back(part.base_opacity);
     }
 
+    if (model->part_dirty_flags.size() != model->parts.size()) {
+        model->part_dirty_flags.assign(model->parts.size(), 1);
+    }
+
     bool base_changed = false;
     if (model->cached_part_base_signature.size() != new_part_base_signature.size()) {
         base_changed = true;
+        std::fill(model->part_dirty_flags.begin(), model->part_dirty_flags.end(), static_cast<std::uint8_t>(1));
     } else {
-        for (std::size_t i = 0; i < new_part_base_signature.size(); ++i) {
-            if (std::abs(new_part_base_signature[i] - model->cached_part_base_signature[i]) > 1e-6f) {
+        for (std::size_t i = 0; i < model->parts.size(); ++i) {
+            bool part_changed = false;
+            for (std::size_t k = 0; k < 7; ++k) {
+                const std::size_t idx = i * 7 + k;
+                if (std::abs(new_part_base_signature[idx] - model->cached_part_base_signature[idx]) > 1e-6f) {
+                    part_changed = true;
+                    break;
+                }
+            }
+            if (part_changed) {
+                model->part_dirty_flags[i] = 1;
                 base_changed = true;
-                break;
             }
         }
     }
 
     if (!params_changed && !base_changed) {
         return false;
+    }
+
+    if (params_changed) {
+        std::fill(model->part_dirty_flags.begin(), model->part_dirty_flags.end(), static_cast<std::uint8_t>(1));
     }
 
     model->cached_param_values.resize(model->parameters.size());
@@ -445,7 +462,13 @@ void ResolveWorldTransforms(ModelRuntime *model) {
 
 void ApplyWorldDeforms(ModelRuntime *model, float dt_sec) {
     if (!model) return;
-    for (ModelPart &part : model->parts) {
+    for (std::size_t i = 0; i < model->parts.size(); ++i) {
+        ModelPart &part = model->parts[i];
+        const bool part_dirty = i < model->part_dirty_flags.size() && model->part_dirty_flags[i] != 0;
+        if (!part_dirty && !part.deformer_dirty && !part.transform_dirty) {
+            continue;
+        }
+
         part.deform.translate_x.SetTarget(part.runtime_pos_x);
         part.deform.translate_y.SetTarget(part.runtime_pos_y);
         part.deform.rotation_deg.SetTarget(part.runtime_rot_deg);
@@ -532,7 +555,13 @@ void ApplyWorldDeforms(ModelRuntime *model, float dt_sec) {
             ApplyRotationDeltaDeform(&part.deformed_positions, part.rotation_deformer_deg);
             part.ffd_prev_weight = 0.0f;
         }
+        part.transform_dirty = false;
+        part.deformer_dirty = false;
+        part.ffd_delta_dirty = false;
+        part.render_cache_dirty = true;
     }
+
+    std::fill(model->part_dirty_flags.begin(), model->part_dirty_flags.end(), static_cast<std::uint8_t>(0));
 }
 
 }  // namespace k2d

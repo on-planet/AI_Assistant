@@ -647,8 +647,6 @@ void RenderModelRuntime(SDL_Renderer *renderer,
     model->debug_stats.index_count = 0;
     model->debug_stats.triangle_count = 0;
 
-    std::vector<SDL_Vertex> vertices;
-    std::vector<int> indices;
 
     SDL_Rect head_clip{0, 0, 0, 0};
     bool head_clip_valid = false;
@@ -691,22 +689,35 @@ void RenderModelRuntime(SDL_Renderer *renderer,
         }
 
         const std::size_t vc = part.deformed_positions.size() / 2;
-        vertices.resize(vc);
-        for (std::size_t i = 0; i < vc; ++i) {
-            const std::size_t k = i * 2;
-            vertices[i].position.x = part.deformed_positions[k] * zoom + view_pan_x;
-            vertices[i].position.y = part.deformed_positions[k + 1] * zoom + view_pan_y;
-            vertices[i].tex_coord.x = part.mesh.uvs[k];
-            vertices[i].tex_coord.y = part.mesh.uvs[k + 1];
-            vertices[i].color.r = part.color.r;
-            vertices[i].color.g = part.color.g;
-            vertices[i].color.b = part.color.b;
-            vertices[i].color.a = part.color.a * part.runtime_opacity;
-        }
+        ModelPart &part_mut = const_cast<ModelPart &>(part);
+        const bool viewport_changed = std::abs(part_mut.cached_render_pan_x - view_pan_x) > 1e-6f ||
+                                      std::abs(part_mut.cached_render_pan_y - view_pan_y) > 1e-6f ||
+                                      std::abs(part_mut.cached_render_zoom - zoom) > 1e-6f;
+        if (part_mut.render_cache_dirty || viewport_changed ||
+            part_mut.cached_render_vertices.size() != vc ||
+            part_mut.cached_render_indices.size() != part.mesh.indices.size()) {
+            part_mut.cached_render_vertices.resize(vc);
+            for (std::size_t i = 0; i < vc; ++i) {
+                const std::size_t k = i * 2;
+                part_mut.cached_render_vertices[i].position.x = part.deformed_positions[k] * zoom + view_pan_x;
+                part_mut.cached_render_vertices[i].position.y = part.deformed_positions[k + 1] * zoom + view_pan_y;
+                part_mut.cached_render_vertices[i].tex_coord.x = part.mesh.uvs[k];
+                part_mut.cached_render_vertices[i].tex_coord.y = part.mesh.uvs[k + 1];
+                part_mut.cached_render_vertices[i].color.r = part.color.r;
+                part_mut.cached_render_vertices[i].color.g = part.color.g;
+                part_mut.cached_render_vertices[i].color.b = part.color.b;
+                part_mut.cached_render_vertices[i].color.a = part.color.a * part.runtime_opacity;
+            }
 
-        indices.resize(part.mesh.indices.size());
-        for (std::size_t i = 0; i < part.mesh.indices.size(); ++i) {
-            indices[i] = static_cast<int>(part.mesh.indices[i]);
+            part_mut.cached_render_indices.resize(part.mesh.indices.size());
+            for (std::size_t i = 0; i < part.mesh.indices.size(); ++i) {
+                part_mut.cached_render_indices[i] = static_cast<int>(part.mesh.indices[i]);
+            }
+
+            part_mut.cached_render_pan_x = view_pan_x;
+            part_mut.cached_render_pan_y = view_pan_y;
+            part_mut.cached_render_zoom = zoom;
+            part_mut.render_cache_dirty = false;
         }
 
         bool use_clip = false;
@@ -725,15 +736,15 @@ void RenderModelRuntime(SDL_Renderer *renderer,
 
         SDL_RenderGeometry(renderer,
                            part.texture,
-                           vertices.data(),
-                           static_cast<int>(vertices.size()),
-                           indices.data(),
-                           static_cast<int>(indices.size()));
+                           part_mut.cached_render_vertices.data(),
+                           static_cast<int>(part_mut.cached_render_vertices.size()),
+                           part_mut.cached_render_indices.data(),
+                           static_cast<int>(part_mut.cached_render_indices.size()));
 
         model->debug_stats.drawn_part_count += 1;
         model->debug_stats.vertex_count += static_cast<int>(vc);
-        model->debug_stats.index_count += static_cast<int>(indices.size());
-        model->debug_stats.triangle_count += static_cast<int>(indices.size() / 3);
+        model->debug_stats.index_count += static_cast<int>(part_mut.cached_render_indices.size());
+        model->debug_stats.triangle_count += static_cast<int>(part_mut.cached_render_indices.size() / 3);
     }
 
     SDL_SetRenderClipRect(renderer, nullptr);

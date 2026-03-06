@@ -123,10 +123,24 @@ struct ModelPart {
 
     std::vector<ParamBinding> bindings;
 
+    // part 级脏标记与缓存复用
+    bool transform_dirty = true;
+    bool deformer_dirty = true;
+    bool ffd_delta_dirty = true;
+    float last_rotation_deformer_deg = 0.0f;
+
     // FFD 增量缓存：用于局部更新，避免每帧全量重采样。
     std::vector<FFDControlPointOffset> ffd_prev_offsets;
     float ffd_prev_weight = 0.0f;
     std::vector<float> ffd_vertex_dxdy;  // 每顶点 2 个值(dx,dy)
+
+    // 渲染缓存：复用顶点/索引构建结果
+    std::vector<SDL_Vertex> cached_render_vertices;
+    std::vector<int> cached_render_indices;
+    bool render_cache_dirty = true;
+    float cached_render_pan_x = 0.0f;
+    float cached_render_pan_y = 0.0f;
+    float cached_render_zoom = 1.0f;
 
     SDL_Texture *texture = nullptr;
     std::string texture_cache_key;
@@ -170,6 +184,9 @@ struct ModelRuntime {
     // 用于“参数和基础变换都未变化时跳过重算”。
     std::vector<float> cached_param_values;
     std::vector<float> cached_part_base_signature;  // 每个 part 7 个值：pos/rot/scale/pivot/opacity
+
+    // 脏区优化：仅更新发生变化的 part
+    std::vector<std::uint8_t> part_dirty_flags;
 
     // 最小可用弹簧：用于“头部移动 -> 发丝/挂件延迟摆动”。
     bool spring_initialized = false;

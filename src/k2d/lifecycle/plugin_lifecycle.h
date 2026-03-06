@@ -153,10 +153,42 @@ struct PluginRouteConfig {
     std::vector<PluginRouteRule> rules;
 };
 
+enum class PluginPostprocessStepType {
+    Normalize,
+    Tokenize,
+    Argmax,
+    Threshold,
+};
+
+struct PluginPostprocessStep {
+    PluginPostprocessStepType type = PluginPostprocessStepType::Normalize;
+    std::string name;
+    float epsilon = 1e-6f;      // normalize
+    std::string delimiter = " "; // tokenize
+    float threshold = 0.5f;     // threshold
+};
+
+struct PluginPostprocessConfig {
+    std::vector<PluginPostprocessStep> steps;
+};
+
 struct PluginArtifactSpec {
     // 固化 AIPlugin 交付接口：.onnx + config.json
     std::string onnx_path;
     std::string config_path;
+
+    // 原子绑定元数据：配置与模型必须匹配。
+    std::string model_id;
+    std::string model_version;
+    std::string onnx_checksum_fnv1a64;
+
+    // 执行后端策略（优先级）与最终命中后端。
+    std::vector<std::string> backend_priority;
+    std::string resolved_backend = "cpu";
+
+    // 后处理流水线（配置驱动）
+    PluginPostprocessConfig postprocess;
+
     // 可选：多模型协作（专家集）
     std::vector<std::string> extra_onnx_paths;
     // scene/task 路由表（配置驱动，避免硬编码）
@@ -180,6 +212,7 @@ struct PluginWorkerConfig {
 
 struct PluginWorkerStats {
     std::uint64_t total_update_count = 0;
+    std::uint64_t success_count = 0;
     std::uint64_t timeout_count = 0;
     std::uint64_t exception_count = 0;
     std::uint64_t internal_error_count = 0;
@@ -187,6 +220,18 @@ struct PluginWorkerStats {
     std::uint64_t recover_count = 0;
     int current_update_hz = 60;
     bool auto_disabled = false;
+
+    // observability
+    std::string model_id = "unknown";
+    std::string model_version = "0.0.0";
+    std::string backend = "onnxruntime.cpu";
+    int batch = 1;
+    double last_latency_ms = 0.0;
+    double latency_p50_ms = 0.0;
+    double latency_p95_ms = 0.0;
+    double success_rate = 0.0;
+    double timeout_rate = 0.0;
+    std::string last_error_code = "OK";
     std::string last_error;
 };
 

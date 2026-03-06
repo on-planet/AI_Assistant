@@ -2,6 +2,8 @@
 
 #include "k2d/lifecycle/plugin_lifecycle.h"
 
+#include <chrono>
+#include <filesystem>
 #include <memory>
 #include <string>
 
@@ -27,7 +29,8 @@ public:
 
 class PluginInferenceAdapter final : public IInferenceAdapter {
 public:
-    explicit PluginInferenceAdapter(std::unique_ptr<IBehaviorPlugin> plugin);
+    explicit PluginInferenceAdapter(std::unique_ptr<IBehaviorPlugin> plugin,
+                                    std::string config_path = "");
 
     bool Init(const PluginRuntimeConfig &runtime_cfg,
               const PluginHostCallbacks &host,
@@ -45,9 +48,21 @@ public:
     const PluginDescriptor &Descriptor() const noexcept;
 
 private:
+    void TryHotReloadOnInputPath();
+
     PluginManager manager_;
     PluginWorker worker_;
     bool ready_ = false;
+
+    std::string config_path_;
+    bool hot_reload_enabled_ = false;
+    std::filesystem::file_time_type config_last_write_time_{};
+    bool config_last_write_time_valid_ = false;
+    std::chrono::steady_clock::time_point hot_reload_last_check_tp_{};
+
+    PluginRuntimeConfig runtime_cfg_{};
+    PluginHostCallbacks host_{};
+    PluginWorkerConfig worker_cfg_{};
 };
 
 std::unique_ptr<IInferenceAdapter> CreateDefaultInferenceAdapter();

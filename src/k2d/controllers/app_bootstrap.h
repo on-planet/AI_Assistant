@@ -15,6 +15,18 @@ enum class PluginParamBlendMode {
     Weighted,
 };
 
+enum class BehaviorFusionMode {
+    WeightedAverage = 0,
+    PriorityOverride,
+};
+
+struct BehaviorFusionConfig {
+    BehaviorFusionMode mode = BehaviorFusionMode::WeightedAverage;
+    float local_weight = 1.0f;
+    float plugin_weight = 1.0f;
+    bool normalize_by_weight_sum = true;
+};
+
 struct AppRuntimeConfig {
     // window
     int window_width = 800;
@@ -28,6 +40,9 @@ struct AppRuntimeConfig {
     bool manual_param_mode = false;
     bool dev_hot_reload_enabled = true;
     PluginParamBlendMode plugin_param_blend_mode = PluginParamBlendMode::Override;
+
+    // behavior fusion (local_fsm + plugin)
+    BehaviorFusionConfig behavior_fusion{};
 
     // face->param mapping sensor fallback template
     bool face_map_sensor_fallback_enabled = true;

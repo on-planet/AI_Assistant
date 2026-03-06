@@ -193,7 +193,7 @@ void RunRuntimeTickEntry(AppRuntime &runtime, float dt, const RuntimeTickBridge 
             mix_sources.push_back(BehaviorMixSource{.name = "plugin", .output = &plugin_out, .global_weight = 1.0f});
         }
 
-        if (MixBehaviorOutputs(mix_sources, &mix_result) && bridge.build_behavior_apply_context) {
+        if (MixBehaviorOutputs(mix_sources, runtime.behavior_fusion_config, &mix_result) && bridge.build_behavior_apply_context) {
             auto apply_ctx = bridge.build_behavior_apply_context();
             ApplyBehaviorOutput(mix_result.mixed, apply_ctx);
         }

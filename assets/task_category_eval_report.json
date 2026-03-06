@@ -1,0 +1,158 @@
+{
+  "total": 10,
+  "primary_accuracy": 1.0,
+  "secondary_accuracy": 1.0,
+  "joint_accuracy": 1.0,
+  "details": [
+    {
+      "index": 0,
+      "id": "work-debug-vscode",
+      "expected": {
+        "primary": "work",
+        "secondary": "debugging"
+      },
+      "predicted": {
+        "primary": "work",
+        "secondary": "debugging"
+      },
+      "primary_ok": true,
+      "secondary_ok": true,
+      "both_ok": true
+    },
+    {
+      "index": 1,
+      "id": "work-docs-browser",
+      "expected": {
+        "primary": "work",
+        "secondary": "reading_docs"
+      },
+      "predicted": {
+        "primary": "work",
+        "secondary": "reading_docs"
+      },
+      "primary_ok": true,
+      "secondary_ok": true,
+      "both_ok": true
+    },
+    {
+      "index": 2,
+      "id": "work-meeting-feishu",
+      "expected": {
+        "primary": "work",
+        "secondary": "meeting_notes"
+      },
+      "predicted": {
+        "primary": "work",
+        "secondary": "meeting_notes"
+      },
+      "primary_ok": true,
+      "secondary_ok": true,
+      "both_ok": true
+    },
+    {
+      "index": 3,
+      "id": "game-lobby-steam",
+      "expected": {
+        "primary": "game",
+        "secondary": "lobby"
+      },
+      "predicted": {
+        "primary": "game",
+        "secondary": "lobby"
+      },
+      "primary_ok": true,
+      "secondary_ok": true,
+      "both_ok": true
+    },
+    {
+      "index": 4,
+      "id": "game-match-fps",
+      "expected": {
+        "primary": "game",
+        "secondary": "match"
+      },
+      "predicted": {
+        "primary": "game",
+        "secondary": "match"
+      },
+      "primary_ok": true,
+      "secondary_ok": true,
+      "both_ok": true
+    },
+    {
+      "index": 5,
+      "id": "game-settlement-result",
+      "expected": {
+        "primary": "game",
+        "secondary": "settlement"
+      },
+      "predicted": {
+        "primary": "game",
+        "secondary": "settlement"
+      },
+      "primary_ok": true,
+      "secondary_ok": true,
+      "both_ok": true
+    },
+    {
+      "index": 6,
+      "id": "game-menu-settings",
+      "expected": {
+        "primary": "game",
+        "secondary": "menu"
+      },
+      "predicted": {
+        "primary": "game",
+        "secondary": "menu"
+      },
+      "primary_ok": true,
+      "secondary_ok": true,
+      "both_ok": true
+    },
+    {
+      "index": 7,
+      "id": "work-default-coding",
+      "expected": {
+        "primary": "work",
+        "secondary": "coding"
+      },
+      "predicted": {
+        "primary": "work",
+        "secondary": "coding"
+      },
+      "primary_ok": true,
+      "secondary_ok": true,
+      "both_ok": true
+    },
+    {
+      "index": 8,
+      "id": "game-primary-by-label",
+      "expected": {
+        "primary": "game",
+        "secondary": "settlement"
+      },
+      "predicted": {
+        "primary": "game",
+        "secondary": "settlement"
+      },
+      "primary_ok": true,
+      "secondary_ok": true,
+      "both_ok": true
+    },
+    {
+      "index": 9,
+      "id": "work-cn-docs",
+      "expected": {
+        "primary": "work",
+        "secondary": "reading_docs"
+      },
+      "predicted": {
+        "primary": "work",
+        "secondary": "reading_docs"
+      },
+      "primary_ok": true,
+      "secondary_ok": true,
+      "both_ok": true
+    }
+  ]
+}

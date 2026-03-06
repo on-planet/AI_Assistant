@@ -40,7 +40,9 @@ float ResolveWeight(const std::unordered_map<std::string, float> &weights,
 
 }  // namespace
 
-bool MixBehaviorOutputs(const std::vector<BehaviorMixSource> &sources, BehaviorMixResult *out_result) {
+bool MixBehaviorOutputs(const std::vector<BehaviorMixSource> &sources,
+                        const BehaviorFusionConfig &fusion_cfg,
+                        BehaviorMixResult *out_result) {
     if (!out_result) return false;
 
     out_result->mixed = BehaviorOutput{};
@@ -50,8 +52,20 @@ bool MixBehaviorOutputs(const std::vector<BehaviorMixSource> &sources, BehaviorM
     std::unordered_map<std::string, float> sum_weighted_target_by_param;
     std::unordered_map<std::string, float> dominant_weight_by_param;
 
+    const float local_global_w = std::clamp(fusion_cfg.local_weight, 0.0f, 1.0f);
+    const float plugin_global_w = std::clamp(fusion_cfg.plugin_weight, 0.0f, 1.0f);
+
     for (const auto &src : sources) {
         if (!src.output || src.global_weight <= 0.0f) continue;
+
+        float source_global_w = std::clamp(src.global_weight, 0.0f, 1.0f);
+        if (src.name && std::string(src.name) == "local_fsm") {
+            source_global_w *= local_global_w;
+        } else if (src.name && std::string(src.name) == "plugin") {
+            source_global_w *= plugin_global_w;
+        }
+
+        if (source_global_w <= 0.0f) continue;
 
         for (const auto &kv : src.output->param_targets) {
             bool has_weight = false;
@@ -66,7 +80,7 @@ bool MixBehaviorOutputs(const std::vector<BehaviorMixSource> &sources, BehaviorM
             if (!has_weight || weight_non_positive) continue;
             if (!IsFinite(kv.second)) continue;
 
-            const float effective_w = std::clamp(local_w * src.global_weight, 0.0f, 1.0f);
+            const float effective_w = std::clamp(local_w * source_global_w, 0.0f, 1.0f);
             if (effective_w <= 0.0f) continue;
 
             sum_weight_by_param[kv.first] += effective_w;
@@ -88,7 +102,12 @@ bool MixBehaviorOutputs(const std::vector<BehaviorMixSource> &sources, BehaviorM
         const float w_sum = kv.second;
         if (w_sum <= 1e-6f) continue;
 
-        out_result->mixed.param_targets[pid] = sum_weighted_target_by_param[pid] / w_sum;
+        const float weighted_target = sum_weighted_target_by_param[pid];
+        if (fusion_cfg.mode == BehaviorFusionMode::PriorityOverride || !fusion_cfg.normalize_by_weight_sum) {
+            out_result->mixed.param_targets[pid] = weighted_target;
+        } else {
+            out_result->mixed.param_targets[pid] = weighted_target / w_sum;
+        }
         out_result->mixed.param_weights[pid] = std::clamp(w_sum, 0.0f, 1.0f);
     }
 

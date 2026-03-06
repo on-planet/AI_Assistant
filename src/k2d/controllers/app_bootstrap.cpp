@@ -55,6 +55,59 @@ TaskSecondaryCategory ParseSecondaryCategory(const std::string &name) {
     return TaskSecondaryCategory::Unknown;
 }
 
+void ApplyFusionConfigFromJsonObject(const JsonValue &fusion, BehaviorFusionConfig &cfg) {
+    const std::string fusion_mode = fusion.getString("mode").value_or(std::string());
+    if (fusion_mode == "priority_override") {
+        cfg.mode = BehaviorFusionMode::PriorityOverride;
+    } else if (fusion_mode == "weighted_average") {
+        cfg.mode = BehaviorFusionMode::WeightedAverage;
+    }
+
+    cfg.local_weight = static_cast<float>(fusion.getNumber("localWeight").value_or(cfg.local_weight));
+    cfg.plugin_weight = static_cast<float>(fusion.getNumber("pluginWeight").value_or(cfg.plugin_weight));
+    cfg.normalize_by_weight_sum = fusion.getBool("normalizeByWeightSum").value_or(cfg.normalize_by_weight_sum);
+}
+
+void TryApplyPluginBehaviorFusionConfig(BehaviorFusionConfig &cfg) {
+    const char *config_candidates[] = {
+        "assets/plugin_behavior_config.json",
+        "../assets/plugin_behavior_config.json",
+        "../../assets/plugin_behavior_config.json",
+    };
+
+    std::string text;
+    for (const char *path : config_candidates) {
+        SDL_IOStream *io = SDL_IOFromFile(path, "rb");
+        if (!io) continue;
+        const Sint64 sz = SDL_GetIOSize(io);
+        if (sz > 0) {
+            text.resize(static_cast<std::size_t>(sz));
+            const size_t got = SDL_ReadIO(io, text.data(), text.size());
+            SDL_CloseIO(io);
+            if (got == text.size()) {
+                break;
+            }
+            text.clear();
+            continue;
+        }
+        SDL_CloseIO(io);
+    }
+
+    if (text.empty()) {
+        return;
+    }
+
+    JsonParseError err;
+    auto root_opt = ParseJson(text, &err);
+    if (!root_opt || !root_opt->isObject()) {
+        return;
+    }
+
+    if (const JsonValue *fusion = root_opt->get("fusion"); fusion && fusion->isObject()) {
+        ApplyFusionConfigFromJsonObject(*fusion, cfg);
+    }
+}
+
 AppRuntimeConfig BuildSafeRuntimeConfig() {
     AppRuntimeConfig cfg;
     cfg.window_width = 800;
@@ -67,6 +120,10 @@ AppRuntimeConfig BuildSafeRuntimeConfig() {
     cfg.manual_param_mode = false;
     cfg.dev_hot_reload_enabled = true;
     cfg.plugin_param_blend_mode = PluginParamBlendMode::Override;
+    cfg.behavior_fusion.mode = BehaviorFusionMode::WeightedAverage;
+    cfg.behavior_fusion.local_weight = 1.0f;
+    cfg.behavior_fusion.plugin_weight = 1.0f;
+    cfg.behavior_fusion.normalize_by_weight_sum = true;
 
     cfg.default_model_candidates = {
         "assets/model_01/model.json",
@@ -138,6 +195,22 @@ AppRuntimeConfig LoadRuntimeConfigImpl() {
             cfg.plugin_param_blend_mode = PluginParamBlendMode::Weighted;
         } else if (mode == "override") {
             cfg.plugin_param_blend_mode = PluginParamBlendMode::Override;
+        }
+
+        if (const JsonValue *fusion = plugin->get("fusion"); fusion && fusion->isObject()) {
+            const std::string fusion_mode = fusion->getString("mode").value_or(std::string());
+            if (fusion_mode == "priority_override") {
+                cfg.behavior_fusion.mode = BehaviorFusionMode::PriorityOverride;
+            } else if (fusion_mode == "weighted_average") {
+                cfg.behavior_fusion.mode = BehaviorFusionMode::WeightedAverage;
+            }
+
+            cfg.behavior_fusion.local_weight =
+                static_cast<float>(fusion->getNumber("localWeight").value_or(cfg.behavior_fusion.local_weight));
+            cfg.behavior_fusion.plugin_weight =
+                static_cast<float>(fusion->getNumber("pluginWeight").value_or(cfg.behavior_fusion.plugin_weight));
+            cfg.behavior_fusion.normalize_by_weight_sum =
+                fusion->getBool("normalizeByWeightSum").value_or(cfg.behavior_fusion.normalize_by_weight_sum);
         }
     }
 
@@ -222,6 +295,8 @@ AppRuntimeConfig LoadRuntimeConfigImpl() {
         }
     }
 
+    TryApplyPluginBehaviorFusionConfig(cfg.behavior_fusion);
+
     cfg.window_width = std::max(64, cfg.window_width);
     cfg.window_height = std::max(64, cfg.window_height);
     cfg.window_opacity = std::clamp(cfg.window_opacity, 0.05f, 1.0f);
@@ -229,6 +304,8 @@ AppRuntimeConfig LoadRuntimeConfigImpl() {
     cfg.face_map_sensor_fallback_head_pitch = std::clamp(cfg.face_map_sensor_fallback_head_pitch, -1.0f, 1.0f);
     cfg.face_map_sensor_fallback_eye_open = std::clamp(cfg.face_map_sensor_fallback_eye_open, 0.0f, 1.0f);
     cfg.face_map_sensor_fallback_weight = std::clamp(cfg.face_map_sensor_fallback_weight, 0.0f, 1.0f);
+    cfg.behavior_fusion.local_weight = std::clamp(cfg.behavior_fusion.local_weight, 0.0f, 1.0f);
+    cfg.behavior_fusion.plugin_weight = std::clamp(cfg.behavior_fusion.plugin_weight, 0.0f, 1.0f);
     if (cfg.default_model_candidates.empty()) {
         cfg.default_model_candidates = BuildSafeRuntimeConfig().default_model_candidates;
     }

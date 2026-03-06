@@ -1,0 +1,326 @@
+[
+  {
+    "id": "work-debug-vscode",
+    "ctx": {
+      "process_name": "Code.exe",
+      "window_title": "main.cpp - Visual Studio Code",
+      "url_hint": ""
+    },
+    "ocr": {
+      "summary": "Exception breakpoint stacktrace debug console"
+    },
+    "scene": {
+      "label": "desktop"
+    },
+    "expected": {
+      "primary": "work",
+      "secondary": "debugging"
+    }
+  },
+  {
+    "id": "work-docs-browser",
+    "ctx": {
+      "process_name": "chrome.exe",
+      "window_title": "C++ API Reference - cppreference",
+      "url_hint": "https://en.cppreference.com"
+    },
+    "ocr": {
+      "summary": "manual tutorial docs reference"
+    },
+    "scene": {
+      "label": "website"
+    },
+    "expected": {
+      "primary": "work",
+      "secondary": "reading_docs"
+    }
+  },
+  {
+    "id": "work-meeting-feishu",
+    "ctx": {
+      "process_name": "Feishu.exe",
+      "window_title": "项目周会 会议纪要",
+      "url_hint": ""
+    },
+    "ocr": {
+      "summary": "会议 议程 minutes standup"
+    },
+    "scene": {
+      "label": "office"
+    },
+    "expected": {
+      "primary": "work",
+      "secondary": "meeting_notes"
+    }
+  },
+  {
+    "id": "game-lobby-steam",
+    "ctx": {
+      "process_name": "steam.exe",
+      "window_title": "Party Lobby",
+      "url_hint": ""
+    },
+    "ocr": {
+      "summary": "queue ready matchmaking character select"
+    },
+    "scene": {
+      "label": "game_ui"
+    },
+    "expected": {
+      "primary": "game",
+      "secondary": "lobby"
+    }
+  },
+  {
+    "id": "game-match-fps",
+    "ctx": {
+      "process_name": "VALORANT-Win64-Shipping.exe",
+      "window_title": "Competitive Match",
+      "url_hint": ""
+    },
+    "ocr": {
+      "summary": "round objective kill assist ammo crosshair"
+    },
+    "scene": {
+      "label": "in_game"
+    },
+    "expected": {
+      "primary": "game",
+      "secondary": "match"
+    }
+  },
+  {
+    "id": "game-settlement-result",
+    "ctx": {
+      "process_name": "LeagueClientUx.exe",
+      "window_title": "Post Game Result",
+      "url_hint": ""
+    },
+    "ocr": {
+      "summary": "victory mvp scoreboard summary 结算"
+    },
+    "scene": {
+      "label": "game_result"
+    },
+    "expected": {
+      "primary": "game",
+      "secondary": "settlement"
+    }
+  },
+  {
+    "id": "game-menu-settings",
+    "ctx": {
+      "process_name": "GenshinImpact.exe",
+      "window_title": "Settings Menu",
+      "url_hint": ""
+    },
+    "ocr": {
+      "summary": "menu settings inventory store loadout"
+    },
+    "scene": {
+      "label": "game_ui"
+    },
+    "expected": {
+      "primary": "game",
+      "secondary": "menu"
+    }
+  },
+  {
+    "id": "work-default-coding",
+    "ctx": {
+      "process_name": "clion64.exe",
+      "window_title": "task_category_service.cpp",
+      "url_hint": ""
+    },
+    "ocr": {
+      "summary": "refactor compile cmake target"
+    },
+    "scene": {
+      "label": "ide"
+    },
+    "expected": {
+      "primary": "work",
+      "secondary": "coding"
+    }
+  },
+  {
+    "id": "game-primary-by-label",
+    "ctx": {
+      "process_name": "obs64.exe",
+      "window_title": "直播推流",
+      "url_hint": ""
+    },
+    "ocr": {
+      "summary": ""
+    },
+    "scene": {
+      "label": "minimap scoreboard"
+    },
+    "expected": {
+      "primary": "game",
+      "secondary": "settlement"
+    }
+  },
+  {
+    "id": "work-cn-docs",
+    "ctx": {
+      "process_name": "msedge.exe",
+      "window_title": "系统设计文档",
+      "url_hint": "https://wiki.company.local"
+    },
+    "ocr": {
+      "summary": "文档 教程 API reference"
+    },
+    "scene": {
+      "label": "browser"
+    },
+    "expected": {
+      "primary": "work",
+      "secondary": "reading_docs"
+    }
+  },
+  {
+    "id": "boundary-reminder-schedule-todo-work",
+    "ctx": {
+      "process_name": "Feishu.exe",
+      "window_title": "提醒 我明天10点开评审会并整理待办",
+      "url_hint": ""
+    },
+    "ocr": {
+      "summary": "提醒 日程 待办 评审会 纪要 action items"
+    },
+    "scene": {
+      "label": "office"
+    },
+    "expected": {
+      "primary": "work",
+      "secondary": "coding"
+    }
+  },
+  {
+    "id": "boundary-reminder-docs-todo-browser",
+    "ctx": {
+      "process_name": "msedge.exe",
+      "window_title": "提醒：补齐API文档并更新周计划待办",
+      "url_hint": "https://wiki.company.local/todo"
+    },
+    "ocr": {
+      "summary": "reminder schedule todo docs api reference update plan"
+    },
+    "scene": {
+      "label": "browser"
+    },
+    "expected": {
+      "primary": "work",
+      "secondary": "coding"
+    }
+  },
+  {
+    "id": "boundary-game-calendar-reminder",
+    "ctx": {
+      "process_name": "steam.exe",
+      "window_title": "活动日程与每日任务提醒",
+      "url_hint": ""
+    },
+    "ocr": {
+      "summary": "daily mission schedule reminder lobby queue rewards"
+    },
+    "scene": {
+      "label": "game_ui"
+    },
+    "expected": {
+      "primary": "game",
+      "secondary": "match"
+    }
+  },
+  {
+    "id": "boundary-obs-stream-notes-mixed",
+    "ctx": {
+      "process_name": "obs64.exe",
+      "window_title": "直播待办：比赛复盘+明日日程提醒",
+      "url_hint": ""
+    },
+    "ocr": {
+      "summary": "scoreboard summary todo reminder tomorrow schedule"
+    },
+    "scene": {
+      "label": "minimap scoreboard"
+    },
+    "expected": {
+      "primary": "game",
+      "secondary": "match"
+    }
+  },
+  {
+    "id": "complex-negation-not-reminder-coding",
+    "ctx": {
+      "process_name": "Code.exe",
+      "window_title": "不是提醒，修复崩溃并提交补丁",
+      "url_hint": ""
+    },
+    "ocr": {
+      "summary": "不是提醒 do not remind fix crash stacktrace patch"
+    },
+    "scene": {
+      "label": "ide"
+    },
+    "expected": {
+      "primary": "work",
+      "secondary": "coding"
+    }
+  },
+  {
+    "id": "complex-conditional-if-tomorrow-then-review",
+    "ctx": {
+      "process_name": "msedge.exe",
+      "window_title": "如果明天评审会延期，就先补 API 文档",
+      "url_hint": "https://wiki.company.local/spec"
+    },
+    "ocr": {
+      "summary": "if tomorrow review delayed then update api docs"
+    },
+    "scene": {
+      "label": "browser"
+    },
+    "expected": {
+      "primary": "work",
+      "secondary": "coding"
+    }
+  },
+  {
+    "id": "complex-multi-intent-game-and-work-mixed",
+    "ctx": {
+      "process_name": "steam.exe",
+      "window_title": "先打两把排位，然后整理复盘待办",
+      "url_hint": ""
+    },
+    "ocr": {
+      "summary": "rank match then review notes todo scoreboard"
+    },
+    "scene": {
+      "label": "in_game minimap"
+    },
+    "expected": {
+      "primary": "game",
+      "secondary": "match"
+    }
+  },
+  {
+    "id": "hierarchical-primary-uncertain-secondary-unknown",
+    "ctx": {
+      "process_name": "obs64.exe",
+      "window_title": "直播窗口",
+      "url_hint": ""
+    },
+    "ocr": {
+      "summary": ""
+    },
+    "scene": {
+      "label": "desktop"
+    },
+    "expected": {
+      "primary": "game",
+      "secondary": "unknown"
+    }
+  }
+]

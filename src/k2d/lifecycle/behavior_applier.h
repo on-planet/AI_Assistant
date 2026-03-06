@@ -40,7 +40,9 @@ struct BehaviorMixResult {
     std::unordered_map<std::string, std::string> dominant_source_by_param;
 };
 
-bool MixBehaviorOutputs(const std::vector<BehaviorMixSource> &sources, BehaviorMixResult *out_result);
+bool MixBehaviorOutputs(const std::vector<BehaviorMixSource> &sources,
+                        const BehaviorFusionConfig &fusion_cfg,
+                        BehaviorMixResult *out_result);
 
 void ApplyBehaviorOutput(const BehaviorOutput &out, const BehaviorApplyContext &ctx);
 

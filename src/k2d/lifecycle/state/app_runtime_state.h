@@ -182,6 +182,7 @@ struct AppRuntime {
     std::unique_ptr<IInferenceAdapter> inference_adapter;
     bool plugin_ready = false;
     PluginParamBlendMode plugin_param_blend_mode = PluginParamBlendMode::Override;
+    BehaviorFusionConfig behavior_fusion_config{};
 
     ReminderService reminder_service;
     bool reminder_ready = false;

@@ -147,6 +147,13 @@ static std::optional<TimelineInterpolation> ParseTimelineInterpolation(std::stri
     return std::nullopt;
 }
 
+static std::optional<TimelineWrapMode> ParseTimelineWrapMode(std::string_view s) {
+    if (s == "Clamp" || s == "clamp") return TimelineWrapMode::Clamp;
+    if (s == "Loop" || s == "loop") return TimelineWrapMode::Loop;
+    if (s == "PingPong" || s == "pingpong" || s == "ping_pong") return TimelineWrapMode::PingPong;
+    return std::nullopt;
+}
+
 static float EvalAnimationChannel(const AnimationChannel &channel, float time_sec) {
     const float phase = channel.phase + time_sec * channel.frequency * 6.283185307179586f;
     float signal = 0.0f;
@@ -331,6 +338,9 @@ bool LoadModelRuntime(SDL_Renderer *renderer,
                 if (const std::string interp_str = cv.getString("interp").value_or(std::string("Linear")); !interp_str.empty()) {
                     ch.timeline_interp = ParseTimelineInterpolation(interp_str).value_or(TimelineInterpolation::Linear);
                 }
+                if (const std::string wrap_str = cv.getString("wrap").value_or(std::string("Clamp")); !wrap_str.empty()) {
+                    ch.timeline_wrap = ParseTimelineWrapMode(wrap_str).value_or(TimelineWrapMode::Clamp);
+                }
 
                 for (const JsonValue &kv : *kfs_v->asArray()) {
                     if (!kv.isObject()) continue;
@@ -338,11 +348,15 @@ bool LoadModelRuntime(SDL_Renderer *renderer,
                     const float v = static_cast<float>(kv.getNumber("value").value_or(0.0));
                     const float tin = static_cast<float>(kv.getNumber("inTangent").value_or(0.0));
                     const float tout = static_cast<float>(kv.getNumber("outTangent").value_or(0.0));
+                    const float in_w = static_cast<float>(kv.getNumber("inWeight").value_or(0.333));
+                    const float out_w = static_cast<float>(kv.getNumber("outWeight").value_or(0.333));
                     ch.keyframes.push_back(TimelineKeyframe{
                         .time_sec = t,
                         .value = v,
                         .in_tangent = tin,
                         .out_tangent = tout,
+                        .in_weight = std::clamp(in_w, 0.0f, 1.0f),
+                        .out_weight = std::clamp(out_w, 0.0f, 1.0f),
                     });
                 }
                 std::sort(ch.keyframes.begin(), ch.keyframes.end(), [](const TimelineKeyframe &a, const TimelineKeyframe &b) {

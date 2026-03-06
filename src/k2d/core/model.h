@@ -54,12 +54,21 @@ enum class TimelineInterpolation {
     Hermite,
 };
 
+enum class TimelineWrapMode {
+    Clamp,
+    Loop,
+    PingPong,
+};
+
 struct TimelineKeyframe {
     float time_sec = 0.0f;
     float value = 0.0f;
     // dv/dt（每秒）
     float in_tangent = 0.0f;
     float out_tangent = 0.0f;
+    // Bezier 权重手柄（[0,1]，越大表示控制柄更长）
+    float in_weight = 0.333f;
+    float out_weight = 0.333f;
 };
 
 struct ModelParameter {
@@ -81,6 +90,7 @@ struct AnimationChannel {
     float bias = 0.0f;
     float phase = 0.0f;
     TimelineInterpolation timeline_interp = TimelineInterpolation::Linear;
+    TimelineWrapMode timeline_wrap = TimelineWrapMode::Clamp;
     std::vector<TimelineKeyframe> keyframes;
 };
 

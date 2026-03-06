@@ -750,6 +750,14 @@ void RenderAppDebugUi(AppRuntime &runtime) {
                                        (interp_idx == 1 ? TimelineInterpolation::Linear : TimelineInterpolation::Hermite);
                 }
 
+                const char *wrap_items[] = {"Clamp", "Loop", "PingPong"};
+                int wrap_idx = ch.timeline_wrap == TimelineWrapMode::Clamp ? 0 :
+                               (ch.timeline_wrap == TimelineWrapMode::Loop ? 1 : 2);
+                if (ImGui::Combo("Wrap", &wrap_idx, wrap_items, 3)) {
+                    ch.timeline_wrap = wrap_idx == 0 ? TimelineWrapMode::Clamp :
+                                     (wrap_idx == 1 ? TimelineWrapMode::Loop : TimelineWrapMode::PingPong);
+                }
+
                 int param_idx = std::clamp(ch.param_index, 0, static_cast<int>(runtime.model.parameters.size()) - 1);
                 if (ImGui::BeginCombo("Target Param", runtime.model.parameters[static_cast<std::size_t>(param_idx)].id.c_str())) {
                     for (int i = 0; i < static_cast<int>(runtime.model.parameters.size()); ++i) {
@@ -779,6 +787,142 @@ void RenderAppDebugUi(AppRuntime &runtime) {
                 }
 
                 ImGui::Text("Keyframes: %d", static_cast<int>(ch.keyframes.size()));
+
+                ImGui::SeparatorText("Track Editor (Drag)");
+                const float track_h = 180.0f;
+                const ImVec2 track_size(ImGui::GetContentRegionAvail().x, track_h);
+                const ImVec2 track_pos = ImGui::GetCursorScreenPos();
+                ImDrawList *dl = ImGui::GetWindowDrawList();
+                ImGui::InvisibleButton("##timeline_track_drag", track_size,
+                                       ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+
+                const float duration = std::max(0.001f, runtime.timeline_duration_sec);
+                float vmin = -1.0f;
+                float vmax = 1.0f;
+                if (param_idx >= 0 && param_idx < static_cast<int>(runtime.model.parameters.size())) {
+                    const auto &spec = runtime.model.parameters[static_cast<std::size_t>(param_idx)].param.spec();
+                    vmin = std::min(spec.min_value, spec.max_value);
+                    vmax = std::max(spec.min_value, spec.max_value);
+                    if (std::abs(vmax - vmin) < 1e-6f) {
+                        vmax = vmin + 1.0f;
+                    }
+                }
+
+                auto time_to_x = [&](float t) {
+                    const float nt = std::clamp(t / duration, 0.0f, 1.0f);
+                    return track_pos.x + nt * track_size.x;
+                };
+                auto value_to_y = [&](float v) {
+                    const float nv = std::clamp((v - vmin) / (vmax - vmin), 0.0f, 1.0f);
+                    return track_pos.y + (1.0f - nv) * track_size.y;
+                };
+                auto x_to_time = [&](float x) {
+                    const float nx = std::clamp((x - track_pos.x) / std::max(1.0f, track_size.x), 0.0f, 1.0f);
+                    return nx * duration;
+                };
+                auto y_to_value = [&](float y) {
+                    const float ny = std::clamp((y - track_pos.y) / std::max(1.0f, track_size.y), 0.0f, 1.0f);
+                    return vmin + (1.0f - ny) * (vmax - vmin);
+                };
+
+                dl->AddRectFilled(track_pos,
+                                  ImVec2(track_pos.x + track_size.x, track_pos.y + track_size.y),
+                                  IM_COL32(26, 28, 32, 220),
+                                  6.0f);
+                dl->AddRect(track_pos,
+                            ImVec2(track_pos.x + track_size.x, track_pos.y + track_size.y),
+                            IM_COL32(110, 120, 138, 255),
+                            6.0f,
+                            0,
+                            1.5f);
+
+                for (int g = 1; g < 4; ++g) {
+                    const float gx = track_pos.x + track_size.x * (static_cast<float>(g) / 4.0f);
+                    dl->AddLine(ImVec2(gx, track_pos.y),
+                                ImVec2(gx, track_pos.y + track_size.y),
+                                IM_COL32(62, 68, 78, 180),
+                                1.0f);
+                }
+                for (int g = 1; g < 4; ++g) {
+                    const float gy = track_pos.y + track_size.y * (static_cast<float>(g) / 4.0f);
+                    dl->AddLine(ImVec2(track_pos.x, gy),
+                                ImVec2(track_pos.x + track_size.x, gy),
+                                IM_COL32(62, 68, 78, 180),
+                                1.0f);
+                }
+
+                const float cursor_x = time_to_x(runtime.timeline_cursor_sec);
+                dl->AddLine(ImVec2(cursor_x, track_pos.y),
+                            ImVec2(cursor_x, track_pos.y + track_size.y),
+                            IM_COL32(255, 204, 96, 220),
+                            1.5f);
+
+                static int dragging_kf_idx = -1;
+                static int dragging_channel_idx = -1;
+                const bool hovered = ImGui::IsItemHovered();
+                const ImVec2 mouse = ImGui::GetIO().MousePos;
+
+                for (std::size_t i = 1; i < ch.keyframes.size(); ++i) {
+                    const auto &a = ch.keyframes[i - 1];
+                    const auto &b = ch.keyframes[i];
+                    dl->AddLine(ImVec2(time_to_x(a.time_sec), value_to_y(a.value)),
+                                ImVec2(time_to_x(b.time_sec), value_to_y(b.value)),
+                                IM_COL32(120, 200, 255, 230),
+                                1.8f);
+                }
+
+                int hovered_kf_idx = -1;
+                for (std::size_t i = 0; i < ch.keyframes.size(); ++i) {
+                    const auto &kf = ch.keyframes[i];
+                    const ImVec2 p(time_to_x(kf.time_sec), value_to_y(kf.value));
+                    const float dx = mouse.x - p.x;
+                    const float dy = mouse.y - p.y;
+                    if (dx * dx + dy * dy <= 64.0f) {
+                        hovered_kf_idx = static_cast<int>(i);
+                    }
+                }
+
+                if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hovered_kf_idx >= 0) {
+                    dragging_kf_idx = hovered_kf_idx;
+                    dragging_channel_idx = runtime.timeline_selected_channel_index;
+                }
+                if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+                    dragging_kf_idx = -1;
+                    dragging_channel_idx = -1;
+                }
+
+                if (dragging_channel_idx == runtime.timeline_selected_channel_index &&
+                    dragging_kf_idx >= 0 && dragging_kf_idx < static_cast<int>(ch.keyframes.size()) &&
+                    ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                    auto &kf = ch.keyframes[static_cast<std::size_t>(dragging_kf_idx)];
+                    float t_new = x_to_time(mouse.x);
+                    float v_new = y_to_value(mouse.y);
+
+                    const float eps = 0.0001f;
+                    if (dragging_kf_idx > 0) {
+                        t_new = std::max(t_new, ch.keyframes[static_cast<std::size_t>(dragging_kf_idx - 1)].time_sec + eps);
+                    }
+                    if (dragging_kf_idx + 1 < static_cast<int>(ch.keyframes.size())) {
+                        t_new = std::min(t_new, ch.keyframes[static_cast<std::size_t>(dragging_kf_idx + 1)].time_sec - eps);
+                    }
+                    kf.time_sec = std::clamp(t_new, 0.0f, duration);
+                    kf.value = std::clamp(v_new, vmin, vmax);
+                }
+
+                for (std::size_t i = 0; i < ch.keyframes.size(); ++i) {
+                    const auto &kf = ch.keyframes[i];
+                    const ImVec2 p(time_to_x(kf.time_sec), value_to_y(kf.value));
+                    const bool active = dragging_channel_idx == runtime.timeline_selected_channel_index &&
+                                        dragging_kf_idx == static_cast<int>(i);
+                    dl->AddCircleFilled(p, active ? 5.5f : 4.5f, active ? IM_COL32(255, 190, 70, 255) : IM_COL32(210, 230, 255, 255));
+                    dl->AddCircle(p, active ? 5.5f : 4.5f, IM_COL32(20, 24, 30, 255), 0, 1.0f);
+                }
+
+                if (hovered && hovered_kf_idx >= 0) {
+                    const auto &hkf = ch.keyframes[static_cast<std::size_t>(hovered_kf_idx)];
+                    ImGui::SetTooltip("KF[%d]\nt=%.3f\nv=%.3f", hovered_kf_idx, hkf.time_sec, hkf.value);
+                }
+
                 for (std::size_t i = 0; i < ch.keyframes.size(); ++i) {
                     auto &kf = ch.keyframes[i];
                     ImGui::PushID(static_cast<int>(i));
@@ -786,6 +930,10 @@ void RenderAppDebugUi(AppRuntime &runtime) {
                     if (ch.timeline_interp == TimelineInterpolation::Hermite) {
                         ImGui::SliderFloat("inTan", &kf.in_tangent, -20.0f, 20.0f, "%.3f");
                         ImGui::SliderFloat("outTan", &kf.out_tangent, -20.0f, 20.0f, "%.3f");
+                        ImGui::SliderFloat("inWeight", &kf.in_weight, 0.0f, 1.0f, "%.3f");
+                        ImGui::SliderFloat("outWeight", &kf.out_weight, 0.0f, 1.0f, "%.3f");
+                        kf.in_weight = std::clamp(kf.in_weight, 0.0f, 1.0f);
+                        kf.out_weight = std::clamp(kf.out_weight, 0.0f, 1.0f);
                     }
                     ImGui::PopID();
                 }

@@ -65,22 +65,37 @@ static float EvalTimelineKeys(const AnimationChannel &channel, float time_sec) {
     }
 
     const auto &kfs = channel.keyframes;
-    if (time_sec <= kfs.front().time_sec) {
+    const float start_t = kfs.front().time_sec;
+    const float end_t = kfs.back().time_sec;
+    const float duration = std::max(1e-6f, end_t - start_t);
+
+    float eval_t = time_sec;
+    if (channel.timeline_wrap == TimelineWrapMode::Loop) {
+        const float x = std::fmod(time_sec - start_t, duration);
+        eval_t = start_t + (x < 0.0f ? (x + duration) : x);
+    } else if (channel.timeline_wrap == TimelineWrapMode::PingPong) {
+        const float period = duration * 2.0f;
+        float x = std::fmod(time_sec - start_t, period);
+        if (x < 0.0f) x += period;
+        eval_t = (x <= duration) ? (start_t + x) : (end_t - (x - duration));
+    }
+
+    if (eval_t <= start_t) {
         return kfs.front().value;
     }
-    if (time_sec >= kfs.back().time_sec) {
+    if (eval_t >= end_t) {
         return kfs.back().value;
     }
 
     for (std::size_t i = 1; i < kfs.size(); ++i) {
         const TimelineKeyframe &a = kfs[i - 1];
         const TimelineKeyframe &b = kfs[i];
-        if (time_sec <= b.time_sec) {
+        if (eval_t <= b.time_sec) {
             if (channel.timeline_interp == TimelineInterpolation::Step) {
                 return a.value;
             }
             const float span = std::max(1e-6f, b.time_sec - a.time_sec);
-            const float t = std::clamp((time_sec - a.time_sec) / span, 0.0f, 1.0f);
+            const float t = std::clamp((eval_t - a.time_sec) / span, 0.0f, 1.0f);
             if (channel.timeline_interp == TimelineInterpolation::Linear) {
                 return a.value + (b.value - a.value) * t;
             }
@@ -92,8 +107,10 @@ static float EvalTimelineKeys(const AnimationChannel &channel, float time_sec) {
             const float h10 = t3 - 2.0f * t2 + t;
             const float h01 = -2.0f * t3 + 3.0f * t2;
             const float h11 = t3 - t2;
-            const float m0 = a.out_tangent * span;
-            const float m1 = b.in_tangent * span;
+            const float w0 = std::clamp(a.out_weight, 0.0f, 1.0f);
+            const float w1 = std::clamp(b.in_weight, 0.0f, 1.0f);
+            const float m0 = a.out_tangent * span * w0;
+            const float m1 = b.in_tangent * span * w1;
             return h00 * a.value + h10 * m0 + h01 * b.value + h11 * m1;
         }
     }

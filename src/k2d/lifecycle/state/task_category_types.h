@@ -29,7 +29,16 @@ struct TaskCategoryKeywordRule {
     std::vector<std::string> keywords;
 };
 
+struct TaskCategoryCalibrationConfig {
+    float scene_temperature = 1.35f;
+    float ocr_platt_a = 1.10f;
+    float ocr_platt_b = -0.08f;
+    float context_temperature = 1.15f;
+};
+
 struct TaskCategoryConfig {
+    TaskCategoryCalibrationConfig calibration{};
+
     std::vector<std::string> game_primary_keywords = {
         "game",
         "steam",

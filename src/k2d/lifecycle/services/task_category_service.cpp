@@ -132,7 +132,8 @@ float CalibrateByPlatt(float p, float a, float b) {
 
 DynamicSourceWeights BuildDynamicSourceWeights(const SystemContextSnapshot &ctx,
                                                const OcrResult &ocr,
-                                               const SceneClassificationResult &scene) {
+                                               const SceneClassificationResult &scene,
+                                               const TaskCategoryCalibrationConfig &calibration) {
     DynamicSourceWeights w{};
 
     // Step-1: 先得到各路原始置信度（不可直接比大小）。
@@ -160,11 +161,11 @@ DynamicSourceWeights BuildDynamicSourceWeights(const SystemContextSnapshot &ctx,
 
     // Step-2: 分数校准，让三路置信度处于可比空间。
     // scene: temperature scaling（软化偏激高分）
-    const float scene_cal = CalibrateByTemperature(scene_raw, 1.35f);
+    const float scene_cal = CalibrateByTemperature(scene_raw, calibration.scene_temperature);
     // ocr: platt scaling（拟合为更稳定后验）
-    const float ocr_cal = CalibrateByPlatt(ocr_raw, 1.10f, -0.08f);
+    const float ocr_cal = CalibrateByPlatt(ocr_raw, calibration.ocr_platt_a, calibration.ocr_platt_b);
     // context: temperature scaling（离散模板分布拉平）
-    const float context_cal = CalibrateByTemperature(context_raw, 1.15f);
+    const float context_cal = CalibrateByTemperature(context_raw, calibration.context_temperature);
 
     // Step-3: 在校准后置信度上做动态加权。
     w.scene = 0.10f + 0.90f * scene_cal;
@@ -570,7 +571,7 @@ void InferTaskCategory(const SystemContextSnapshot &ctx,
     const std::string ocr_text = ToLower(ocr.summary);
     const std::string ctx_text = ToLower(ctx.process_name + "\n" + ctx.window_title + "\n" + ctx.url_hint);
 
-    const DynamicSourceWeights w = BuildDynamicSourceWeights(ctx, ocr, scene);
+    const DynamicSourceWeights w = BuildDynamicSourceWeights(ctx, ocr, scene, config.calibration);
     const PrimaryInferenceResult primary_result =
         InferPrimaryCategoryHierarchical(scene_text, ocr_text, ctx_text, w, config);
     out_primary = primary_result.primary;

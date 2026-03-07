@@ -119,6 +119,26 @@ RuntimeErrorDomain PickRecentErrorDomain(const AppRuntime &runtime) {
     return RuntimeErrorDomain::None;
 }
 
+std::string PickRecentErrorText(const AppRuntime &runtime) {
+    const std::array<const std::string *, 9> texts = {
+        &runtime.chat_last_error,
+        &runtime.asr_last_error,
+        &runtime.plugin_last_error,
+        &runtime.perception_state.camera_facemesh_last_error,
+        &runtime.perception_state.ocr_last_error,
+        &runtime.perception_state.scene_classifier_last_error,
+        &runtime.perception_state.screen_capture_last_error,
+        &runtime.perception_state.system_context_last_error,
+        &runtime.reminder_last_error,
+    };
+    for (const std::string *text : texts) {
+        if (text != nullptr && !text->empty()) {
+            return *text;
+        }
+    }
+    return {};
+}
+
 enum class RuntimeModuleState {
     Ok,
     Degraded,
@@ -170,6 +190,13 @@ struct RuntimeErrorRow {
     const RuntimeErrorInfo *info = nullptr;
     RuntimeModuleState state = RuntimeModuleState::Ok;
     int recent_seq = 0;
+};
+
+enum class ErrorViewFilter {
+    All = 0,
+    NonOk = 1,
+    Failed = 2,
+    Degraded = 3,
 };
 
 std::vector<RuntimeErrorRow> BuildRuntimeErrorRows(const AppRuntime &runtime) {
@@ -241,7 +268,7 @@ std::vector<RuntimeErrorRow> BuildRuntimeErrorRows(const AppRuntime &runtime) {
     };
 }
 
-void RenderRuntimeErrorClassificationTable(const AppRuntime &runtime) {
+void RenderRuntimeErrorClassificationTable(const AppRuntime &runtime, ErrorViewFilter filter) {
     std::vector<RuntimeErrorRow> rows = BuildRuntimeErrorRows(runtime);
     std::stable_sort(rows.begin(), rows.end(), [](const RuntimeErrorRow &a, const RuntimeErrorRow &b) {
         if (a.info->count != b.info->count) {
@@ -250,9 +277,32 @@ void RenderRuntimeErrorClassificationTable(const AppRuntime &runtime) {
         return a.recent_seq < b.recent_seq;
     });
 
+    auto pass_filter = [filter](const RuntimeErrorRow &row) {
+        switch (filter) {
+            case ErrorViewFilter::All:
+                return true;
+            case ErrorViewFilter::NonOk:
+                return row.info->code != RuntimeErrorCode::Ok;
+            case ErrorViewFilter::Failed:
+                return row.state == RuntimeModuleState::Failed;
+            case ErrorViewFilter::Degraded:
+                return row.state == RuntimeModuleState::Degraded || row.state == RuntimeModuleState::Recovering;
+            default:
+                return true;
+        }
+    };
+
+    std::vector<RuntimeErrorRow> filtered_rows;
+    filtered_rows.reserve(rows.size());
+    for (const auto &row : rows) {
+        if (pass_filter(row)) {
+            filtered_rows.push_back(row);
+        }
+    }
+
     std::string all_errors;
     all_errors.reserve(1024);
-    for (const auto &row : rows) {
+    for (const auto &row : filtered_rows) {
         all_errors += row.label;
         all_errors += " | count=";
         all_errors += std::to_string(static_cast<long long>(row.info->count));
@@ -287,7 +337,7 @@ void RenderRuntimeErrorClassificationTable(const AppRuntime &runtime) {
         ImGui::TableSetupColumn("Detail", ImGuiTableColumnFlags_WidthStretch, 0.22f);
         ImGui::TableHeadersRow();
 
-        for (const auto &row : rows) {
+        for (const auto &row : filtered_rows) {
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
             ImGui::TextUnformatted(row.label);
@@ -660,10 +710,8 @@ void RenderRuntimeDebugSummary(const AppRuntime &runtime) {
     ImGui::Text("PartCount: %d", static_cast<int>(runtime.model.parts.size()));
 }
 
-void RenderAppDebugUi(AppRuntime &runtime) {
-    static std::string runtime_ops_status;
-    if (ImGui::CollapsingHeader("总览", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::SeparatorText("Status Card (Read Only)");
+void RenderOverviewTab(AppRuntime &runtime) {
+    ImGui::SeparatorText("Status Card (Read Only)");
         if (ImGui::BeginTable("overview_status_table", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV)) {
             ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthStretch, 0.55f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.45f);
@@ -696,7 +744,15 @@ void RenderAppDebugUi(AppRuntime &runtime) {
             ImGui::EndTable();
         }
         RenderOverviewRuntimeHealth(runtime);
+        RenderModuleLatestErrorCard(PickRecentErrorText(runtime));
 
+    ImGui::SeparatorText("Task Category");
+    ImGui::Text("Primary: %s", TaskPrimaryCategoryNameUi(runtime.task_primary));
+    ImGui::Text("Secondary: %s", TaskSecondaryCategoryNameUi(runtime.task_secondary));
+}
+
+void RenderEditorTab(AppRuntime &runtime) {
+        ImGui::BeginChild("editor_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
         ImGui::SeparatorText("Param Card (Editable)");
         ImGui::Checkbox("Show Debug Stats", &runtime.show_debug_stats);
         if (ImGui::Checkbox("Manual Param Mode", &runtime.manual_param_mode)) {
@@ -709,7 +765,6 @@ void RenderAppDebugUi(AppRuntime &runtime) {
                 }
             }
         }
-        ImGui::Checkbox("GUI Enabled", &runtime.gui_enabled);
         ImGui::Checkbox("Hair Spring", &runtime.model.enable_hair_spring);
         ImGui::Checkbox("Simple Mask", &runtime.model.enable_simple_mask);
 
@@ -724,18 +779,7 @@ void RenderAppDebugUi(AppRuntime &runtime) {
         ImGui::Checkbox("Enable OCR", &runtime.feature_ocr_enabled);
         ImGui::Checkbox("Enable Face Emotion", &runtime.feature_face_emotion_enabled);
         ImGui::Checkbox("Enable ASR", &runtime.feature_asr_enabled);
-
-        ImGui::SeparatorText("OCR Runtime Tuning");
-        ImGui::SliderInt("OCR Det Input Size", &runtime.perception_state.ocr_det_input_size, 160, 1280);
-        runtime.perception_state.ocr_det_input_size = std::clamp(runtime.perception_state.ocr_det_input_size, 160, 1280);
-        ImGui::SameLine();
-        if (ImGui::Button("Reset##ocr_det_input_size")) {
-            runtime.perception_state.ocr_det_input_size = 640;
-        }
-        ImGui::TextDisabled("det NxN, larger size may improve recall but increases latency");
-
-        std::string overview_error;
-        RenderModuleLatestErrorCard(overview_error);
+        ImGui::TextDisabled("运行时 GUI 可通过 F1 或 FPS Overlay 快速开关；OCR 详细调参已收纳到“感知”页。");
 
         ImGui::SeparatorText("Param Panel Enhanced (Group/Batch Bind)");
         if (runtime.model_loaded && !runtime.model.parameters.empty()) {
@@ -830,9 +874,11 @@ void RenderAppDebugUi(AppRuntime &runtime) {
         } else {
             ImGui::TextDisabled("model/parameters unavailable");
         }
-    }
+    ImGui::EndChild();
+}
 
-    if (ImGui::CollapsingHeader("Timeline v1", ImGuiTreeNodeFlags_DefaultOpen)) {
+void RenderTimelineTab(AppRuntime &runtime) {
+        ImGui::BeginChild("timeline_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
         ImGui::Checkbox("Enable Timeline", &runtime.timeline_enabled);
         runtime.model.animation_channels_enabled = runtime.timeline_enabled;
 
@@ -1075,9 +1121,11 @@ void RenderAppDebugUi(AppRuntime &runtime) {
                 ImGui::TextDisabled("no channels");
             }
         }
-    }
+    ImGui::EndChild();
+}
 
-    if (ImGui::CollapsingHeader("感知", ImGuiTreeNodeFlags_DefaultOpen)) {
+void RenderPerceptionTab(AppRuntime &runtime) {
+    ImGui::BeginChild("perception_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
     ImGui::SeparatorText("Status Card (Read Only)");
     ImGui::Text("Capture: %s", runtime.perception_state.screen_capture_ready ? "ready" : "not ready");
     if (!runtime.perception_state.screen_capture_last_error.empty()) {
@@ -1202,9 +1250,11 @@ void RenderAppDebugUi(AppRuntime &runtime) {
         runtime.perception_state.screen_capture_last_error;
     RenderModuleLatestErrorCard(perception_recent_error);
 
-    }
+    ImGui::EndChild();
+}
 
-    if (ImGui::CollapsingHeader("映射", ImGuiTreeNodeFlags_DefaultOpen)) {
+void RenderMappingTab(AppRuntime &runtime) {
+        ImGui::BeginChild("mapping_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
         ImGui::SeparatorText("Status Card (Read Only)");
     ImGui::Text("Gate: %s", runtime.face_map_gate_reason.empty() ? "(none)" : runtime.face_map_gate_reason.c_str());
     ImGui::Text("Fallback Active: %s", runtime.face_map_sensor_fallback_active ? "true" : "false");
@@ -1238,9 +1288,11 @@ void RenderAppDebugUi(AppRuntime &runtime) {
 
     RenderModuleLatestErrorCard(runtime.face_map_sensor_fallback_reason);
 
-    }
+    ImGui::EndChild();
+}
 
-    if (ImGui::CollapsingHeader("ASR/Chat", ImGuiTreeNodeFlags_DefaultOpen)) {
+void RenderAsrChatTab(AppRuntime &runtime) {
+        ImGui::BeginChild("asr_chat_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
         ImGui::SeparatorText("Status Card (Read Only)");
     ImGui::Text("ASR: %s (%s)", runtime.asr_ready ? "ready" : "not ready", runtime.feature_asr_enabled ? "enabled" : "disabled");
     RenderLongTextBlock("ASR Text", "asr_text_child", &runtime.asr_last_result.text, 10, 100.0f);
@@ -1334,14 +1386,24 @@ void RenderAppDebugUi(AppRuntime &runtime) {
         runtime.plugin_last_error;
     RenderModuleLatestErrorCard(asr_chat_recent_error);
 
-    }
+    ImGui::EndChild();
+}
 
-    if (ImGui::CollapsingHeader("错误分类", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::SeparatorText("Runtime Error Classification");
-        RenderRuntimeErrorClassificationTable(runtime);
-    }
+void RenderErrorTab(AppRuntime &runtime) {
+    static int error_filter_idx = 1; // 默认 Non-OK
+    const char *filters[] = {"All", "Non-OK", "Failed", "Degraded"};
+    error_filter_idx = std::clamp(error_filter_idx, 0, 3);
+    ImGui::SetNextItemWidth(180.0f);
+    ImGui::Combo("Error Filter", &error_filter_idx, filters, 4);
+    ImGui::BeginChild("error_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
+    ImGui::SeparatorText("Runtime Error Classification");
+    RenderRuntimeErrorClassificationTable(runtime, static_cast<ErrorViewFilter>(error_filter_idx));
+    ImGui::EndChild();
+}
 
-    if (ImGui::CollapsingHeader("Runtime Ops", ImGuiTreeNodeFlags_DefaultOpen)) {
+void RenderOpsTab(AppRuntime &runtime, std::string &runtime_ops_status) {
+        ImGui::BeginChild("ops_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
+        ImGui::SeparatorText("Runtime Operations");
         if (ImGui::Button("Reset Perception State")) {
             ResetPerceptionRuntimeState(runtime.perception_state);
             runtime_ops_status = "Perception state reset";
@@ -1367,11 +1429,53 @@ void RenderAppDebugUi(AppRuntime &runtime) {
         }
 
         ImGui::TextWrapped("%s", runtime_ops_status.empty() ? "(no operation yet)" : runtime_ops_status.c_str());
-    }
 
-    ImGui::SeparatorText("Task Category");
-    ImGui::Text("Primary: %s", TaskPrimaryCategoryNameUi(runtime.task_primary));
-    ImGui::Text("Secondary: %s", TaskSecondaryCategoryNameUi(runtime.task_secondary));
+        ImGui::SeparatorText("Program");
+        if (ImGui::Button("Close Program")) {
+            runtime.running = false;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(Esc)");
+    ImGui::EndChild();
+}
+
+void RenderAppDebugUi(AppRuntime &runtime) {
+    static std::string runtime_ops_status;
+    if (ImGui::BeginTabBar("runtime_debug_tabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
+        if (ImGui::BeginTabItem("总览")) {
+            RenderOverviewTab(runtime);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("编辑")) {
+            RenderEditorTab(runtime);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("时间轴")) {
+            RenderTimelineTab(runtime);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("感知")) {
+            RenderPerceptionTab(runtime);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("映射")) {
+            RenderMappingTab(runtime);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("语音/对话")) {
+            RenderAsrChatTab(runtime);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("错误")) {
+            RenderErrorTab(runtime);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("运维")) {
+            RenderOpsTab(runtime, runtime_ops_status);
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
 }
 
 }  // namespace k2d

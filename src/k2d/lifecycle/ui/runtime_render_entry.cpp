@@ -66,25 +66,45 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
     }
 
     if (runtime.gui_enabled) {
-        ImGui::SetNextWindowPos(ImVec2(12.0f, 120.0f), ImGuiCond_FirstUseEver);
+        const ImGuiViewport *vp = ImGui::GetMainViewport();
+        const float base_x = vp ? vp->WorkPos.x : 0.0f;
+        const float base_y = vp ? vp->WorkPos.y : 0.0f;
+        const float work_w = vp ? vp->WorkSize.x : static_cast<float>(runtime.window_w);
+        const float work_h = vp ? vp->WorkSize.y : static_cast<float>(runtime.window_h);
+
+        const float margin = 12.0f;
+        const float gap = 8.0f;
+        const float top_offset = runtime.show_debug_stats ? 108.0f : 48.0f;
+
+        const float usable_w = std::max(720.0f, work_w - margin * 2.0f);
+        const float usable_h = std::max(420.0f, work_h - top_offset - margin);
+
+        const bool compact_layout = usable_w < 1200.0f;
+        const float debug_w = compact_layout ? usable_w : std::max(460.0f, usable_w * 0.52f);
+        const float right_w = compact_layout ? usable_w : std::max(300.0f, usable_w - debug_w - gap);
+
+        ImGui::SetNextWindowPos(ImVec2(base_x + margin, base_y + top_offset), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(debug_w, usable_h), ImGuiCond_FirstUseEver);
         ImGui::Begin("Runtime Debug");
         RenderAppDebugUi(runtime);
+        ImGui::End();
 
-        ImGui::SeparatorText("Model Hierarchy + Inspector");
-        bridge.RenderResourceTreeInspector();
+        const float right_x = compact_layout ? (base_x + margin) : (base_x + margin + debug_w + gap);
+        const float inspector_h = compact_layout ? std::max(240.0f, usable_h * 0.58f) : std::max(300.0f, usable_h * 0.68f);
+        const float reminder_h = std::max(180.0f, usable_h - inspector_h - gap);
 
-        ImGui::SeparatorText("Task Category");
-        ImGui::Text("Primary: %s", bridge.TaskPrimaryCategoryName());
-        ImGui::Text("Secondary: %s", bridge.TaskSecondaryCategoryName());
-
-        if (ImGui::Button("Close Program")) {
-            runtime.running = false;
+        ImGui::SetNextWindowPos(ImVec2(right_x, base_y + top_offset), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(right_w, inspector_h), ImGuiCond_FirstUseEver);
+        if (ImGui::Begin("Model Hierarchy + Inspector")) {
+            bridge.RenderResourceTreeInspector();
         }
-        ImGui::SameLine();
-        ImGui::TextDisabled("(Esc)");
+        ImGui::End();
 
-        RenderReminderPanel(runtime);
-
+        ImGui::SetNextWindowPos(ImVec2(right_x, base_y + top_offset + inspector_h + gap), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(right_w, reminder_h), ImGuiCond_FirstUseEver);
+        if (ImGui::Begin("Reminder")) {
+            RenderReminderPanel(runtime);
+        }
         ImGui::End();
     }
 

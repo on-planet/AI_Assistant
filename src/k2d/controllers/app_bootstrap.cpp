@@ -293,6 +293,18 @@ AppRuntimeConfig LoadRuntimeConfigImpl() {
                 cfg.task_category.secondary_rules = std::move(loaded_rules);
             }
         }
+
+        if (const JsonValue *calibration = task_category->get("calibration");
+            calibration && calibration->isObject()) {
+            cfg.task_category.calibration.scene_temperature = static_cast<float>(
+                calibration->getNumber("sceneTemperature").value_or(cfg.task_category.calibration.scene_temperature));
+            cfg.task_category.calibration.ocr_platt_a = static_cast<float>(
+                calibration->getNumber("ocrPlattA").value_or(cfg.task_category.calibration.ocr_platt_a));
+            cfg.task_category.calibration.ocr_platt_b = static_cast<float>(
+                calibration->getNumber("ocrPlattB").value_or(cfg.task_category.calibration.ocr_platt_b));
+            cfg.task_category.calibration.context_temperature = static_cast<float>(
+                calibration->getNumber("contextTemperature").value_or(cfg.task_category.calibration.context_temperature));
+        }
     }
 
     TryApplyPluginBehaviorFusionConfig(cfg.behavior_fusion);
@@ -306,6 +318,15 @@ AppRuntimeConfig LoadRuntimeConfigImpl() {
     cfg.face_map_sensor_fallback_weight = std::clamp(cfg.face_map_sensor_fallback_weight, 0.0f, 1.0f);
     cfg.behavior_fusion.local_weight = std::clamp(cfg.behavior_fusion.local_weight, 0.0f, 1.0f);
     cfg.behavior_fusion.plugin_weight = std::clamp(cfg.behavior_fusion.plugin_weight, 0.0f, 1.0f);
+    cfg.task_category.calibration.scene_temperature =
+        std::clamp(cfg.task_category.calibration.scene_temperature, 0.05f, 10.0f);
+    cfg.task_category.calibration.context_temperature =
+        std::clamp(cfg.task_category.calibration.context_temperature, 0.05f, 10.0f);
+    cfg.task_category.calibration.ocr_platt_a =
+        std::clamp(cfg.task_category.calibration.ocr_platt_a, -10.0f, 10.0f);
+    cfg.task_category.calibration.ocr_platt_b =
+        std::clamp(cfg.task_category.calibration.ocr_platt_b, -10.0f, 10.0f);
+
     if (cfg.default_model_candidates.empty()) {
         cfg.default_model_candidates = BuildSafeRuntimeConfig().default_model_candidates;
     }

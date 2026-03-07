@@ -23,6 +23,7 @@
 #include "k2d/lifecycle/plugin_lifecycle.h"
 #include "k2d/lifecycle/reminder_service.h"
 #include "k2d/lifecycle/asr/asr_provider.h"
+#include "k2d/lifecycle/asr/asr_session_service.h"
 #include "k2d/lifecycle/asr/vad_segmenter.h"
 #include "k2d/lifecycle/chat/chat_provider.h"
 #include "k2d/lifecycle/observability/runtime_error_codes.h"
@@ -189,6 +190,10 @@ struct AppRuntime {
     float reminder_poll_accum_sec = 0.0f;
     char reminder_title_input[128] = "喝水";
     int reminder_after_min = 10;
+    char reminder_search[128] = "";
+    int reminder_filter_mode = 0; // 0=all,1=upcoming,2=overdue
+    int reminder_sort_mode = 0;   // 0=due asc,1=due desc,2=overdue first
+    int reminder_page = 0;
     std::vector<ReminderItem> reminder_upcoming;
     std::string reminder_last_error;
 
@@ -247,6 +252,8 @@ struct AppRuntime {
     float asr_poll_accum_sec = 0.0f;
     std::string asr_last_error;
     AsrRecognitionResult asr_last_result;
+    // ASR 会话流缓存（短期上下文）
+    AsrSessionState asr_session_state{};
 
     std::unique_ptr<IChatProvider> chat_provider;
     bool chat_ready = false;
@@ -283,12 +290,24 @@ struct AppRuntime {
     std::uint64_t plugin_disable_count = 0;
     std::uint64_t plugin_recover_count = 0;
     double plugin_timeout_rate = 0.0;
+    double plugin_last_latency_ms = 0.0;
+    double plugin_avg_latency_ms = 0.0;
+    double plugin_latency_p50_ms = 0.0;
+    double plugin_latency_p95_ms = 0.0;
+    double plugin_success_rate = 0.0;
     int plugin_current_update_hz = 60;
     bool plugin_auto_disabled = false;
     std::string plugin_last_error;
+    std::string plugin_route_selected = "unknown";
+    double plugin_route_scene_score = 0.0;
+    double plugin_route_task_score = 0.0;
+    double plugin_route_presence_score = 0.0;
+    double plugin_route_total_score = 0.0;
+    std::vector<std::string> plugin_route_rejected_summary;
 
     RuntimeErrorInfo plugin_error_info{};
     RuntimeErrorInfo asr_error_info{};
+    RuntimeErrorInfo decision_error_info{};
     RuntimeErrorInfo chat_error_info{};
     RuntimeErrorInfo reminder_error_info{};
 

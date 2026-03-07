@@ -99,6 +99,72 @@ void RenderHealthLampRow(const char *label, HealthState state, const char *detai
                        detail != nullptr ? detail : "");
 }
 
+void RenderModuleLatencyRow(const char *label,
+                            double last_ms,
+                            double avg_ms,
+                            double p95_ms,
+                            const char *detail) {
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    ImGui::TextUnformatted(label);
+    ImGui::TableSetColumnIndex(1);
+    ImGui::Text("%.1f", last_ms);
+    ImGui::TableSetColumnIndex(2);
+    ImGui::Text("%.1f", avg_ms);
+    ImGui::TableSetColumnIndex(3);
+    ImGui::Text("%.1f", p95_ms);
+    ImGui::TableSetColumnIndex(4);
+    ImGui::TextUnformatted(detail ? detail : "");
+}
+
+void RenderModuleLatencyPanel(const AppRuntime &runtime) {
+    ImGui::SeparatorText("Module Latency");
+    if (ImGui::BeginTable("module_latency_table",
+                          5,
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Module", ImGuiTableColumnFlags_WidthStretch, 0.28f);
+        ImGui::TableSetupColumn("Last(ms)", ImGuiTableColumnFlags_WidthStretch, 0.14f);
+        ImGui::TableSetupColumn("Avg(ms)", ImGuiTableColumnFlags_WidthStretch, 0.14f);
+        ImGui::TableSetupColumn("P95(ms)", ImGuiTableColumnFlags_WidthStretch, 0.14f);
+        ImGui::TableSetupColumn("Detail", ImGuiTableColumnFlags_WidthStretch, 0.30f);
+        ImGui::TableHeadersRow();
+
+        RenderModuleLatencyRow("Frame",
+                               runtime.debug_frame_ms,
+                               runtime.debug_frame_ms,
+                               runtime.debug_frame_ms,
+                               "main loop");
+        RenderModuleLatencyRow("Perception.Scene",
+                               runtime.perception_state.scene_avg_latency_ms,
+                               runtime.perception_state.scene_avg_latency_ms,
+                               runtime.scene_p95_latency_ms,
+                               "scene classifier");
+        RenderModuleLatencyRow("Perception.OCR",
+                               runtime.perception_state.ocr_avg_latency_ms,
+                               runtime.perception_state.ocr_avg_latency_ms,
+                               runtime.ocr_p95_latency_ms,
+                               runtime.perception_state.ocr_skipped_due_timeout ? "timeout skipped" : "det+rec pipeline");
+        RenderModuleLatencyRow("Perception.FaceMesh",
+                               runtime.perception_state.face_avg_latency_ms,
+                               runtime.perception_state.face_avg_latency_ms,
+                               runtime.face_p95_latency_ms,
+                               "camera facemesh");
+        RenderModuleLatencyRow("ASR",
+                               static_cast<double>(runtime.asr_last_result.latency_ms),
+                               static_cast<double>(runtime.asr_infer_total_sec * 1000.0 /
+                                                   std::max<std::int64_t>(1, runtime.asr_total_segments)),
+                               static_cast<double>(runtime.asr_last_result.latency_ms),
+                               runtime.asr_last_switch_reason.empty() ? "provider route" : runtime.asr_last_switch_reason.c_str());
+        RenderModuleLatencyRow("Plugin.Worker",
+                               runtime.plugin_last_latency_ms,
+                               runtime.plugin_avg_latency_ms,
+                               runtime.plugin_latency_p95_ms,
+                               runtime.plugin_auto_disabled ? "auto disabled" : "worker stats");
+
+        ImGui::EndTable();
+    }
+}
+
 RuntimeErrorDomain PickRecentErrorDomain(const AppRuntime &runtime) {
     const std::array<const RuntimeErrorInfo *, 9> infos = {
         &runtime.chat_error_info,
@@ -319,6 +385,11 @@ void RenderRuntimeErrorClassificationTable(const AppRuntime &runtime, ErrorViewF
             all_errors += row.info->detail;
         }
         all_errors += "\n";
+    }
+
+    if (filtered_rows.empty()) {
+        ImGui::TextDisabled("当前过滤条件下无错误记录（系统可能健康）");
+        return;
     }
 
     if (ImGui::Button("Copy All Errors")) {
@@ -712,9 +783,9 @@ void RenderRuntimeDebugSummary(const AppRuntime &runtime) {
 
 void RenderOverviewTab(AppRuntime &runtime) {
     ImGui::SeparatorText("Status Card (Read Only)");
-        if (ImGui::BeginTable("overview_status_table", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV)) {
-            ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthStretch, 0.55f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.45f);
+    if (ImGui::BeginTable("overview_status_table", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV)) {
+        ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthStretch, 0.55f);
+        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.45f);
 
             char buf[128] = {};
             SDL_snprintf(buf, sizeof(buf), "%.2f ms", runtime.debug_frame_ms);
@@ -743,8 +814,9 @@ void RenderOverviewTab(AppRuntime &runtime) {
 
             ImGui::EndTable();
         }
-        RenderOverviewRuntimeHealth(runtime);
-        RenderModuleLatestErrorCard(PickRecentErrorText(runtime));
+    RenderOverviewRuntimeHealth(runtime);
+    RenderModuleLatencyPanel(runtime);
+    RenderModuleLatestErrorCard(PickRecentErrorText(runtime));
 
     ImGui::SeparatorText("Task Category");
     ImGui::Text("Primary: %s", TaskPrimaryCategoryNameUi(runtime.task_primary));
@@ -752,9 +824,9 @@ void RenderOverviewTab(AppRuntime &runtime) {
 }
 
 void RenderEditorTab(AppRuntime &runtime) {
-        ImGui::BeginChild("editor_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
-        ImGui::SeparatorText("Param Card (Editable)");
-        ImGui::Checkbox("Show Debug Stats", &runtime.show_debug_stats);
+    ImGui::BeginChild("editor_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
+    ImGui::SeparatorText("Param Card (Editable)");
+    ImGui::Checkbox("Show Debug Stats", &runtime.show_debug_stats);
         if (ImGui::Checkbox("Manual Param Mode", &runtime.manual_param_mode)) {
             if (runtime.model_loaded) {
                 runtime.model.animation_channels_enabled = !runtime.manual_param_mode;
@@ -871,16 +943,16 @@ void RenderEditorTab(AppRuntime &runtime) {
                     runtime.editor_status_ttl = 2.5f;
                 }
             }
-        } else {
-            ImGui::TextDisabled("model/parameters unavailable");
-        }
+    } else {
+        ImGui::TextDisabled("model/parameters unavailable");
+    }
     ImGui::EndChild();
 }
 
 void RenderTimelineTab(AppRuntime &runtime) {
-        ImGui::BeginChild("timeline_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
-        ImGui::Checkbox("Enable Timeline", &runtime.timeline_enabled);
-        runtime.model.animation_channels_enabled = runtime.timeline_enabled;
+    ImGui::BeginChild("timeline_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
+    ImGui::Checkbox("Enable Timeline", &runtime.timeline_enabled);
+    runtime.model.animation_channels_enabled = runtime.timeline_enabled;
 
         ImGui::SliderFloat("Timeline Cursor (s)", &runtime.timeline_cursor_sec, 0.0f, std::max(0.1f, runtime.timeline_duration_sec), "%.2f");
         ImGui::SliderFloat("Timeline Duration (s)", &runtime.timeline_duration_sec, 0.5f, 30.0f, "%.1f");
@@ -1120,7 +1192,7 @@ void RenderTimelineTab(AppRuntime &runtime) {
             } else {
                 ImGui::TextDisabled("no channels");
             }
-        }
+    }
     ImGui::EndChild();
 }
 
@@ -1254,8 +1326,8 @@ void RenderPerceptionTab(AppRuntime &runtime) {
 }
 
 void RenderMappingTab(AppRuntime &runtime) {
-        ImGui::BeginChild("mapping_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
-        ImGui::SeparatorText("Status Card (Read Only)");
+    ImGui::BeginChild("mapping_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
+    ImGui::SeparatorText("Status Card (Read Only)");
     ImGui::Text("Gate: %s", runtime.face_map_gate_reason.empty() ? "(none)" : runtime.face_map_gate_reason.c_str());
     ImGui::Text("Fallback Active: %s", runtime.face_map_sensor_fallback_active ? "true" : "false");
     ImGui::Text("Fallback Reason: %s",
@@ -1292,8 +1364,8 @@ void RenderMappingTab(AppRuntime &runtime) {
 }
 
 void RenderAsrChatTab(AppRuntime &runtime) {
-        ImGui::BeginChild("asr_chat_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
-        ImGui::SeparatorText("Status Card (Read Only)");
+    ImGui::BeginChild("asr_chat_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
+    ImGui::SeparatorText("Status Card (Read Only)");
     ImGui::Text("ASR: %s (%s)", runtime.asr_ready ? "ready" : "not ready", runtime.feature_asr_enabled ? "enabled" : "disabled");
     RenderLongTextBlock("ASR Text", "asr_text_child", &runtime.asr_last_result.text, 10, 100.0f);
     ImGui::Text("Switch Reason: %s", runtime.asr_last_switch_reason.empty() ? "(none)" : runtime.asr_last_switch_reason.c_str());
@@ -1320,6 +1392,22 @@ void RenderAsrChatTab(AppRuntime &runtime) {
     ImGui::Text("auto_disabled: %s", runtime.plugin_auto_disabled ? "true" : "false");
     if (!runtime.plugin_last_error.empty()) {
         ImGui::TextWrapped("Plugin Last Error: %s", runtime.plugin_last_error.c_str());
+    }
+
+    ImGui::SeparatorText("Plugin Route Trace");
+    ImGui::Text("Selected: %s", runtime.plugin_route_selected.c_str());
+    ImGui::Text("Scene Score: %.2f", runtime.plugin_route_scene_score);
+    ImGui::Text("Task Score: %.2f", runtime.plugin_route_task_score);
+    ImGui::Text("Presence Score: %.2f", runtime.plugin_route_presence_score);
+    ImGui::Text("Total Score: %.2f", runtime.plugin_route_total_score);
+    if (runtime.plugin_route_rejected_summary.empty()) {
+        ImGui::TextDisabled("Rejected: (none)");
+    } else {
+        ImGui::BeginChild("plugin_route_trace_child", ImVec2(-1.0f, 88.0f), ImGuiChildFlags_Borders);
+        for (const auto &line : runtime.plugin_route_rejected_summary) {
+            ImGui::TextWrapped("%s", line.c_str());
+        }
+        ImGui::EndChild();
     }
 
     ImGui::SeparatorText("Param Card (Editable)");
@@ -1402,8 +1490,8 @@ void RenderErrorTab(AppRuntime &runtime) {
 }
 
 void RenderOpsTab(AppRuntime &runtime, std::string &runtime_ops_status) {
-        ImGui::BeginChild("ops_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
-        ImGui::SeparatorText("Runtime Operations");
+    ImGui::BeginChild("ops_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
+    ImGui::SeparatorText("Runtime Operations");
         if (ImGui::Button("Reset Perception State")) {
             ResetPerceptionRuntimeState(runtime.perception_state);
             runtime_ops_status = "Perception state reset";
@@ -1430,12 +1518,12 @@ void RenderOpsTab(AppRuntime &runtime, std::string &runtime_ops_status) {
 
         ImGui::TextWrapped("%s", runtime_ops_status.empty() ? "(no operation yet)" : runtime_ops_status.c_str());
 
-        ImGui::SeparatorText("Program");
-        if (ImGui::Button("Close Program")) {
-            runtime.running = false;
-        }
-        ImGui::SameLine();
-        ImGui::TextDisabled("(Esc)");
+    ImGui::SeparatorText("Program");
+    if (ImGui::Button("Close Program")) {
+        runtime.running = false;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(Esc)");
     ImGui::EndChild();
 }
 

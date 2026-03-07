@@ -9,6 +9,8 @@
 #include "k2d/lifecycle/behavior_applier.h"
 #include "k2d/lifecycle/model_reload_service.h"
 #include "k2d/lifecycle/plugin_lifecycle.h"
+#include "k2d/lifecycle/services/decision_service.h"
+#include "k2d/lifecycle/services/task_category_service.h"
 #include "k2d/lifecycle/systems/app_systems.h"
 
 namespace k2d {
@@ -169,7 +171,24 @@ void RunRuntimeTickEntry(AppRuntime &runtime, float dt, const RuntimeTickBridge 
 
         BehaviorOutput plugin_out{};
         bool has_plugin_out = false;
+        runtime.plugin_route_selected = "unknown";
+        runtime.plugin_route_scene_score = 0.0;
+        runtime.plugin_route_task_score = 0.0;
+        runtime.plugin_route_presence_score = 0.0;
+        runtime.plugin_route_total_score = 0.0;
+        runtime.plugin_route_rejected_summary.clear();
         if (runtime.plugin_ready) {
+            TaskCategoryInferenceResult task_result{};
+            ComputeTaskDecision(runtime.perception_state.system_context_snapshot,
+                                runtime.perception_state.ocr_result,
+                                runtime.perception_state.scene_result,
+                                runtime.task_category_config,
+                                &runtime.asr_session_state.session_text,
+                                task_result,
+                                &runtime.decision_error_info);
+            runtime.task_primary = task_result.primary;
+            runtime.task_secondary = task_result.secondary;
+
             PerceptionInput in{};
             in.time_sec = static_cast<double>(runtime.model_time);
             in.audio_level = 0.0f;
@@ -180,10 +199,65 @@ void RunRuntimeTickEntry(AppRuntime &runtime, float dt, const RuntimeTickBridge 
             in.vision.head_roll_deg = runtime.perception_state.face_emotion_result.head_roll_deg;
             in.vision.gaze_x = 0.0f;
             in.vision.gaze_y = 0.0f;
+            in.state.window_visible = runtime.window_visible;
+            in.state.click_through = runtime.click_through;
+            in.state.manual_param_mode = runtime.manual_param_mode;
+            in.state.show_debug_stats = runtime.show_debug_stats;
+            in.state.dt_sec = dt;
             in.scene_label = runtime.perception_state.scene_result.label;
             in.task_label = bridge.TaskSecondaryCategoryName(runtime.task_secondary);
+            in.routing.primary_label = TaskPrimaryCategoryName(task_result.primary);
+            in.routing.primary_confidence = task_result.primary_confidence;
+            in.routing.primary_structured_confidence = task_result.primary_structured_confidence;
+            in.routing.secondary_label = TaskSecondaryCategoryName(task_result.secondary);
+            in.routing.secondary_confidence = task_result.secondary_confidence;
+            in.routing.secondary_structured_confidence = task_result.secondary_structured_confidence;
+            in.routing.scene_confidence = task_result.scene_confidence;
+            in.routing.source_scene_weight = task_result.source_scene_weight;
+            in.routing.source_ocr_weight = task_result.source_ocr_weight;
+            in.routing.source_context_weight = task_result.source_context_weight;
+            for (const auto &candidate : task_result.secondary_top_candidates) {
+                in.routing.secondary_top_candidates.push_back(RoutingEvidenceCandidate{
+                    .label = TaskSecondaryCategoryName(candidate.category),
+                    .confidence = candidate.score,
+                });
+            }
             runtime.inference_adapter->SubmitInput(in);
             has_plugin_out = runtime.inference_adapter->TryConsumeLatestOutput(plugin_out, nullptr);
+            if (has_plugin_out) {
+                std::string selected = "unknown";
+                for (const auto &kv : plugin_out.event_scores) {
+                    if (kv.first.rfind("plugin.route.", 0) == 0 &&
+                        kv.first.find("plugin.route.trace.") != 0 &&
+                        kv.first != "plugin.route.selected" &&
+                        kv.second > 0.0f) {
+                        selected = kv.first.substr(std::string("plugin.route.").size());
+                        break;
+                    }
+                }
+                runtime.plugin_route_selected = selected;
+                if (const auto it = plugin_out.event_scores.find("plugin.route.trace.scene_score"); it != plugin_out.event_scores.end()) {
+                    runtime.plugin_route_scene_score = it->second;
+                }
+                if (const auto it = plugin_out.event_scores.find("plugin.route.trace.task_score"); it != plugin_out.event_scores.end()) {
+                    runtime.plugin_route_task_score = it->second;
+                }
+                if (const auto it = plugin_out.event_scores.find("plugin.route.trace.presence_score"); it != plugin_out.event_scores.end()) {
+                    runtime.plugin_route_presence_score = it->second;
+                }
+                if (const auto it = plugin_out.event_scores.find("plugin.route.trace.total_score"); it != plugin_out.event_scores.end()) {
+                    runtime.plugin_route_total_score = it->second;
+                }
+                for (const auto &kv : plugin_out.event_scores) {
+                    if (kv.first.rfind("plugin.route.trace.rejected.", 0) == 0 &&
+                        kv.first.find("scene_score") == std::string::npos &&
+                        kv.first.find("task_score") == std::string::npos &&
+                        kv.first.find("structured_score") == std::string::npos &&
+                        kv.first.find("presence_score") == std::string::npos) {
+                        runtime.plugin_route_rejected_summary.push_back(kv.first + "=" + std::to_string(kv.second));
+                    }
+                }
+            }
         }
 
         BehaviorMixResult mix_result{};
@@ -200,7 +274,9 @@ void RunRuntimeTickEntry(AppRuntime &runtime, float dt, const RuntimeTickBridge 
     }
 
     TickAppSystems(runtime, dt);
-    bridge.InferTaskCategoryInplace();
+    if (!runtime.plugin_ready) {
+        bridge.InferTaskCategoryInplace();
+    }
 }
 
 }  // namespace k2d

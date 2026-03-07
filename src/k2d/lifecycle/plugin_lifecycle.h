@@ -53,6 +53,26 @@ struct RuntimeStateFeaturePacket {
     float dt_sec = 0.0f;
 };
 
+struct RoutingEvidenceCandidate {
+    std::string label;
+    float confidence = 0.0f;
+};
+
+struct RoutingEvidence {
+    int schema_version = 1;
+    std::string primary_label;
+    float primary_confidence = 0.0f;
+    float primary_structured_confidence = 0.0f;
+    std::string secondary_label;
+    float secondary_confidence = 0.0f;
+    float secondary_structured_confidence = 0.0f;
+    std::vector<RoutingEvidenceCandidate> secondary_top_candidates;
+    float scene_confidence = 0.0f;
+    float source_scene_weight = 0.0f;
+    float source_ocr_weight = 0.0f;
+    float source_context_weight = 0.0f;
+};
+
 struct PerceptionInput {
     int schema_version = 1;
     double time_sec = 0.0;
@@ -61,7 +81,7 @@ struct PerceptionInput {
     float audio_level = 0.0f;
     float user_presence = 0.0f;
 
-    // 专家路由提示：先粗分类，再转发给子专家。
+    // 兼容旧字符串路由提示；新实现优先走 routing 结构化证据。
     // 典型值：game / code / meeting / unknown
     std::string scene_label;
     std::string task_label;
@@ -69,6 +89,7 @@ struct PerceptionInput {
     AudioFeaturePacket audio;
     VisionFeaturePacket vision;
     RuntimeStateFeaturePacket state;
+    RoutingEvidence routing;
 };
 
 struct BehaviorOutput {
@@ -145,11 +166,38 @@ struct PluginRouteRule {
     std::string name;
     std::vector<std::string> scene_keywords;
     std::vector<std::string> task_keywords;
+    std::vector<std::string> scene_negative_keywords;
+    std::vector<std::string> task_negative_keywords;
+    std::vector<std::string> primary_labels;
+    std::vector<std::string> secondary_labels;
+    std::vector<std::string> primary_negative_labels;
+    std::vector<std::string> secondary_negative_labels;
+    int top_k_limit = 0;
+    int memory_hold_frames = 0;
+    int switch_out_cooldown_frames = 0;
+    float scene_weight = 1.5f;
+    float task_weight = 1.0f;
+    float structured_weight = 1.35f;
+    float negative_weight = 1.25f;
+    float primary_weight = 1.1f;
+    float secondary_weight = 1.2f;
+    float top_k_weight = 0.85f;
+    float memory_weight = 0.2f;
+    float min_primary_confidence = 0.0f;
+    float min_secondary_confidence = 0.0f;
+    float min_total_score = 0.0f;
     float opacity_bias = 0.0f;
 };
 
 struct PluginRouteConfig {
     std::string default_route = "unknown";
+    int top_k_candidates = 3;
+    int switch_hold_frames = 6;
+    int switch_cooldown_frames = 18;
+    float switch_score_margin = 0.15f;
+    float activation_threshold = 0.25f;
+    float memory_decay = 0.85f;
+    float expert_gating_temperature = 1.0f;
     std::vector<PluginRouteRule> rules;
 };
 
@@ -173,6 +221,19 @@ struct PluginPostprocessConfig {
 };
 
 struct PluginArtifactSpec {
+    struct TensorSchema {
+        std::string input_name = "input";
+        std::string output_name = "output";
+        std::int64_t batch = 1;
+        std::int64_t feature_dim = 8;
+    } tensor_schema;
+
+    struct ExpertModelSpec {
+        std::string route_name;
+        std::string onnx_path;
+        float fusion_weight = 0.35f;
+    };
+
     // 固化 AIPlugin 交付接口：.onnx + config.json
     std::string onnx_path;
     std::string config_path;
@@ -191,19 +252,49 @@ struct PluginArtifactSpec {
 
     // 可选：多模型协作（专家集）
     std::vector<std::string> extra_onnx_paths;
+    std::vector<ExpertModelSpec> expert_models;
     // scene/task 路由表（配置驱动，避免硬编码）
     PluginRouteConfig route_config;
+
+    // 插件级 worker 调度策略（可由 config.json 覆盖）
+    struct WorkerTuning {
+        int update_hz = 60;
+        int frame_budget_ms = 1;
+        int timeout_degrade_threshold = 8;
+        std::vector<int> degrade_hz_steps = {120, 60, 30, 15, 10};
+        int recover_after_consecutive_successes = 24;
+        double avg_latency_budget_ms = 8.0;
+        std::size_t latency_budget_window_size = 24;
+        int disable_after_consecutive_failures = 24;
+        int auto_recover_after_ms = 5000;
+    } worker_tuning;
 };
+
+struct PluginRouteDecisionSnapshot {
+    std::string selected_route = "unknown";
+    std::vector<std::string> ranked_routes;
+    std::vector<float> ranked_scores;
+};
+
+struct PluginWorkerConfig;
+PluginWorkerConfig BuildPluginWorkerConfig(const PluginArtifactSpec::WorkerTuning &tuning);
 
 std::unique_ptr<IBehaviorPlugin> CreateDefaultBehaviorPlugin();
 std::unique_ptr<IBehaviorPlugin> CreateOnnxBehaviorPlugin(const PluginArtifactSpec &spec);
 std::unique_ptr<IBehaviorPlugin> CreateOnnxBehaviorPluginFromConfig(const std::string &config_path,
-                                                                    std::string *out_error = nullptr);
+                                                                    std::string *out_error = nullptr,
+                                                                    PluginArtifactSpec *out_spec = nullptr);
 
 struct PluginWorkerConfig {
     int update_hz = 60;
     int frame_budget_ms = 1;
     int timeout_degrade_threshold = 8;
+
+    // 调度/降级策略
+    std::vector<int> degrade_hz_steps = {120, 60, 30, 15, 10};
+    int recover_after_consecutive_successes = 24;
+    double avg_latency_budget_ms = 8.0;
+    std::size_t latency_budget_window_size = 24;
 
     // 自动禁用与恢复策略
     int disable_after_consecutive_failures = 24;
@@ -227,6 +318,7 @@ struct PluginWorkerStats {
     std::string backend = "onnxruntime.cpu";
     int batch = 1;
     double last_latency_ms = 0.0;
+    double avg_latency_ms = 0.0;
     double latency_p50_ms = 0.0;
     double latency_p95_ms = 0.0;
     double success_rate = 0.0;

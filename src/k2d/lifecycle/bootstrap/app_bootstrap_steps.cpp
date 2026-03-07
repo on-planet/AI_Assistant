@@ -213,8 +213,9 @@ bool AppLifecycleBootstrapImpl(AppLifecycleContext &ctx) {
         host.log = [](void *, const char *msg) { SDL_Log("[PluginHost] %s", msg ? msg : ""); };
 
         PluginWorkerConfig worker_cfg{};
-        worker_cfg.update_hz = 60;
-        worker_cfg.frame_budget_ms = 1;
+        if (g_runtime.inference_adapter) {
+            worker_cfg = g_runtime.inference_adapter->GetWorkerConfig();
+        }
 
         std::string plugin_err;
         g_runtime.plugin_ready = g_runtime.inference_adapter && g_runtime.inference_adapter->Init(plugin_cfg, host, worker_cfg, &plugin_err);

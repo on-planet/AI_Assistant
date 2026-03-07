@@ -20,6 +20,7 @@ enum class RuntimeErrorDomain {
     PerceptionSystemContext,
     PluginWorker,
     Asr,
+    DecisionHub,
     Chat,
     Reminder,
 };
@@ -40,6 +41,9 @@ enum class RuntimeErrorCode {
     DataQualityDegraded,
     TimeoutDegraded,
     AutoDisabled,
+    MemoryLimitExceeded,
+    UnsupportedOperation,
+    ModelMismatch,
     InternalError,
 };
 
@@ -63,6 +67,7 @@ inline const char *RuntimeErrorDomainName(RuntimeErrorDomain domain) {
         case RuntimeErrorDomain::PerceptionSystemContext: return "perception.system_context";
         case RuntimeErrorDomain::PluginWorker: return "plugin.worker";
         case RuntimeErrorDomain::Asr: return "asr";
+        case RuntimeErrorDomain::DecisionHub: return "decision.hub";
         case RuntimeErrorDomain::Chat: return "chat";
         case RuntimeErrorDomain::Reminder: return "reminder";
         default: return "none";
@@ -85,6 +90,9 @@ inline const char *RuntimeErrorCodeName(RuntimeErrorCode code) {
         case RuntimeErrorCode::DataQualityDegraded: return "E_DATA_QUALITY_DEGRADED";
         case RuntimeErrorCode::TimeoutDegraded: return "E_TIMEOUT_DEGRADED";
         case RuntimeErrorCode::AutoDisabled: return "E_AUTO_DISABLED";
+        case RuntimeErrorCode::MemoryLimitExceeded: return "E_MEMORY_LIMIT_EXCEEDED";
+        case RuntimeErrorCode::UnsupportedOperation: return "E_UNSUPPORTED_OPERATION";
+        case RuntimeErrorCode::ModelMismatch: return "E_MODEL_MISMATCH";
         case RuntimeErrorCode::InternalError: return "E_INTERNAL";
         default: return "OK";
     }
@@ -104,6 +112,15 @@ inline RuntimeErrorCode ClassifyRuntimeErrorCodeFromDetail(const std::string &de
     }
     if (has("config") || has("invalid arg") || has("invalid parameter") || has("parse")) {
         return RuntimeErrorCode::InvalidConfig;
+    }
+    if (has("out of memory") || has("bad alloc") || has("bad_alloc") || has("memory") || has("alloc")) {
+        return RuntimeErrorCode::MemoryLimitExceeded;
+    }
+    if (has("unsupported") || has("not implemented") || has("unsupported op") || has("unsupported operator")) {
+        return RuntimeErrorCode::UnsupportedOperation;
+    }
+    if (has("shape mismatch") || has("dimension mismatch") || has("invalid shape") || has("tensor shape") || has("model mismatch")) {
+        return RuntimeErrorCode::ModelMismatch;
     }
     if (has("camera") || has("microphone") || has("device") || has("dxgi") || has("d3d")) {
         return RuntimeErrorCode::DeviceUnavailable;

@@ -83,24 +83,27 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
         const float debug_w = compact_layout ? usable_w : std::max(460.0f, usable_w * 0.52f);
         const float right_w = compact_layout ? usable_w : std::max(300.0f, usable_w - debug_w - gap);
 
+        const float debug_h = compact_layout ? std::max(220.0f, usable_h * 0.52f) : usable_h;
+        const float right_x = compact_layout ? (base_x + margin) : (base_x + margin + debug_w + gap);
+        const float right_y = compact_layout ? (base_y + top_offset + debug_h + gap) : (base_y + top_offset);
+        const float right_h = compact_layout ? std::max(220.0f, usable_h - debug_h - gap) : usable_h;
+        const float inspector_h = compact_layout ? std::max(140.0f, right_h * 0.62f) : std::max(300.0f, right_h * 0.68f);
+        const float reminder_h = std::max(120.0f, right_h - inspector_h - gap);
+
         ImGui::SetNextWindowPos(ImVec2(base_x + margin, base_y + top_offset), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(debug_w, usable_h), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(debug_w, debug_h), ImGuiCond_FirstUseEver);
         ImGui::Begin("Runtime Debug");
         RenderAppDebugUi(runtime);
         ImGui::End();
 
-        const float right_x = compact_layout ? (base_x + margin) : (base_x + margin + debug_w + gap);
-        const float inspector_h = compact_layout ? std::max(240.0f, usable_h * 0.58f) : std::max(300.0f, usable_h * 0.68f);
-        const float reminder_h = std::max(180.0f, usable_h - inspector_h - gap);
-
-        ImGui::SetNextWindowPos(ImVec2(right_x, base_y + top_offset), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos(ImVec2(right_x, right_y), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(right_w, inspector_h), ImGuiCond_FirstUseEver);
         if (ImGui::Begin("Model Hierarchy + Inspector")) {
             bridge.RenderResourceTreeInspector();
         }
         ImGui::End();
 
-        ImGui::SetNextWindowPos(ImVec2(right_x, base_y + top_offset + inspector_h + gap), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos(ImVec2(right_x, right_y + inspector_h + gap), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(right_w, reminder_h), ImGuiCond_FirstUseEver);
         if (ImGui::Begin("Reminder")) {
             RenderReminderPanel(runtime);

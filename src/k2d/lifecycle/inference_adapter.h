@@ -25,12 +25,14 @@ public:
 
     virtual bool IsReady() const noexcept = 0;
     virtual PluginWorkerStats GetStats() const = 0;
+    virtual PluginWorkerConfig GetWorkerConfig() const = 0;
 };
 
 class PluginInferenceAdapter final : public IInferenceAdapter {
 public:
     explicit PluginInferenceAdapter(std::unique_ptr<IBehaviorPlugin> plugin,
-                                    std::string config_path = "");
+                                    std::string config_path = "",
+                                    PluginWorkerConfig worker_cfg = {});
 
     bool Init(const PluginRuntimeConfig &runtime_cfg,
               const PluginHostCallbacks &host,
@@ -44,6 +46,7 @@ public:
 
     bool IsReady() const noexcept override;
     PluginWorkerStats GetStats() const override;
+    PluginWorkerConfig GetWorkerConfig() const override;
 
     const PluginDescriptor &Descriptor() const noexcept;
 

@@ -29,6 +29,25 @@ struct TaskCategoryKeywordRule {
     std::vector<std::string> keywords;
 };
 
+struct TaskCategorySecondaryCandidate {
+    TaskSecondaryCategory category = TaskSecondaryCategory::Unknown;
+    float score = 0.0f;
+};
+
+struct TaskCategoryInferenceResult {
+    TaskPrimaryCategory primary = TaskPrimaryCategory::Unknown;
+    float primary_confidence = 0.0f;
+    float primary_structured_confidence = 0.0f;
+    TaskSecondaryCategory secondary = TaskSecondaryCategory::Unknown;
+    float secondary_confidence = 0.0f;
+    float secondary_structured_confidence = 0.0f;
+    std::vector<TaskCategorySecondaryCandidate> secondary_top_candidates;
+    float source_scene_weight = 0.0f;
+    float source_ocr_weight = 0.0f;
+    float source_context_weight = 0.0f;
+    float scene_confidence = 0.0f;
+};
+
 struct TaskCategoryCalibrationConfig {
     float scene_temperature = 1.35f;
     float ocr_platt_a = 1.10f;

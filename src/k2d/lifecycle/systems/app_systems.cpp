@@ -6,10 +6,11 @@
 #include <string>
 
 #include "k2d/core/async_logger.h"
+#include "k2d/lifecycle/asr/asr_provider.h"
+#include "k2d/lifecycle/asr/asr_session_service.h"
+#include "k2d/lifecycle/asr/vad_segmenter.h"
 #include "k2d/lifecycle/observability/runtime_error_codes.h"
 #include "k2d/lifecycle/state/app_runtime_state.h"
-#include "k2d/lifecycle/asr/asr_provider.h"
-#include "k2d/lifecycle/asr/vad_segmenter.h"
 
 namespace k2d {
 
@@ -197,6 +198,9 @@ void TickAppSystems(AppRuntime &runtime, float dt) {
                 if (ok) {
                     runtime.asr_last_result = std::move(result);
                     runtime.asr_last_error.clear();
+
+                    // ASR 会话流：纯函数组件更新，便于单测。
+                    UpdateAsrSessionState(runtime.asr_last_result, runtime.asr_session_state);
                 } else {
                     runtime.asr_last_error = asr_err;
                     RuntimeErrorCode asr_code = result.timeout_detected
@@ -236,6 +240,11 @@ void TickAppSystems(AppRuntime &runtime, float dt) {
         runtime.plugin_timeout_rate = stats.total_update_count > 0
                                           ? static_cast<double>(stats.timeout_count) / static_cast<double>(stats.total_update_count)
                                           : 0.0;
+        runtime.plugin_last_latency_ms = stats.last_latency_ms;
+        runtime.plugin_avg_latency_ms = stats.avg_latency_ms;
+        runtime.plugin_latency_p50_ms = stats.latency_p50_ms;
+        runtime.plugin_latency_p95_ms = stats.latency_p95_ms;
+        runtime.plugin_success_rate = stats.success_rate;
         runtime.plugin_current_update_hz = stats.current_update_hz;
         runtime.plugin_auto_disabled = stats.auto_disabled;
         runtime.plugin_last_error = stats.last_error;
@@ -271,6 +280,11 @@ void TickAppSystems(AppRuntime &runtime, float dt) {
         runtime.plugin_disable_count = 0;
         runtime.plugin_recover_count = 0;
         runtime.plugin_timeout_rate = 0.0;
+        runtime.plugin_last_latency_ms = 0.0;
+        runtime.plugin_avg_latency_ms = 0.0;
+        runtime.plugin_latency_p50_ms = 0.0;
+        runtime.plugin_latency_p95_ms = 0.0;
+        runtime.plugin_success_rate = 0.0;
         runtime.plugin_current_update_hz = 0;
         runtime.plugin_auto_disabled = false;
     }

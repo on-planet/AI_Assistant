@@ -528,6 +528,7 @@ RuntimeTickBridge BuildRuntimeTickBridge(AppRuntime &runtime) {
                               rt.perception_state.ocr_result,
                               rt.perception_state.scene_result,
                               rt.task_category_config,
+                              &rt.asr_session_state.session_text,
                               rt.task_primary,
                               rt.task_secondary);
         },

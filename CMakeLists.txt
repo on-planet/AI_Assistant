@@ -83,6 +83,8 @@ add_executable(AI_assistant WIN32
     src/k2d/lifecycle/asr/cloud_asr_provider.cpp
     src/k2d/lifecycle/asr/hybrid_asr_provider.cpp
     src/k2d/lifecycle/asr/vad_segmenter.cpp
+    src/k2d/lifecycle/asr/asr_session_service.cpp
+    src/k2d/lifecycle/services/decision_service.cpp
     src/k2d/lifecycle/state/app_runtime_state.cpp
     src/k2d/lifecycle/systems/app_systems.cpp
     src/k2d/lifecycle/ui/app_debug_ui.cpp
@@ -159,5 +161,19 @@ if (EXISTS "${OPENCV_BIN_DIR}")
 endif()
 
 add_test(NAME plugin_lifecycle_tests COMMAND plugin_lifecycle_tests)
+
+add_executable(lifecycle_decoupling_tests
+    tests/lifecycle_decoupling_tests.cpp
+    src/k2d/lifecycle/asr/asr_session_service.cpp
+    src/k2d/lifecycle/services/decision_service.cpp
+    src/k2d/lifecycle/services/task_category_service.cpp
+)
+
+target_include_directories(lifecycle_decoupling_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/external
+)
+
+add_test(NAME lifecycle_decoupling_tests COMMAND lifecycle_decoupling_tests)
 
 

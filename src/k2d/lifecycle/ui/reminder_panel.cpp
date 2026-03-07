@@ -1,6 +1,7 @@
 #include "k2d/lifecycle/ui/reminder_panel.h"
 
 #include <algorithm>
+#include <cctype>
 #include <ctime>
 #include <string>
 
@@ -11,9 +12,6 @@
 namespace k2d {
 
 void RenderReminderPanel(AppRuntime &runtime) {
-    static char reminder_search[128] = "";
-    static int reminder_filter_mode = 0; // 0=all,1=upcoming,2=overdue
-    static int reminder_page = 0;
     constexpr int kPageSize = 8;
 
     ImGui::SeparatorText("Schedule Reminder (SQLite)");
@@ -31,7 +29,7 @@ void RenderReminderPanel(AppRuntime &runtime) {
             if (runtime.reminder_service.AddReminder(runtime.reminder_title_input, due_sec, &add_err)) {
                 runtime.reminder_last_error.clear();
                 runtime.reminder_upcoming = runtime.reminder_service.ListActive(64, nullptr);
-                reminder_page = 0;
+                runtime.reminder_page = 0;
             } else {
                 runtime.reminder_last_error = add_err;
             }
@@ -53,27 +51,32 @@ void RenderReminderPanel(AppRuntime &runtime) {
     }
 
     ImGui::SeparatorText("Search / Filter");
-    if (ImGui::InputTextWithHint("##reminder_search", "Search title...", reminder_search, static_cast<int>(sizeof(reminder_search)))) {
-        reminder_page = 0;
+    if (ImGui::InputTextWithHint("##reminder_search", "Search title...", runtime.reminder_search,
+                                 static_cast<int>(sizeof(runtime.reminder_search)))) {
+        runtime.reminder_page = 0;
     }
     const char *filter_items[] = {"All", "Upcoming", "Overdue"};
-    if (ImGui::Combo("Status", &reminder_filter_mode, filter_items, 3)) {
-        reminder_page = 0;
+    if (ImGui::Combo("Status", &runtime.reminder_filter_mode, filter_items, 3)) {
+        runtime.reminder_page = 0;
+    }
+    const char *sort_items[] = {"Due Asc", "Due Desc", "Overdue First"};
+    if (ImGui::Combo("Sort", &runtime.reminder_sort_mode, sort_items, 3)) {
+        runtime.reminder_page = 0;
     }
 
     const std::int64_t now_sec_ui = static_cast<std::int64_t>(std::time(nullptr));
     std::vector<std::size_t> matched_indices;
     matched_indices.reserve(runtime.reminder_upcoming.size());
 
-    std::string needle = reminder_search;
+    std::string needle = runtime.reminder_search;
     std::transform(needle.begin(), needle.end(), needle.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
     for (std::size_t i = 0; i < runtime.reminder_upcoming.size(); ++i) {
         const auto &item = runtime.reminder_upcoming[i];
         const long long remain_sec = static_cast<long long>(item.due_unix_sec - now_sec_ui);
 
-        if (reminder_filter_mode == 1 && remain_sec < 0) continue;
-        if (reminder_filter_mode == 2 && remain_sec >= 0) continue;
+        if (runtime.reminder_filter_mode == 1 && remain_sec < 0) continue;
+        if (runtime.reminder_filter_mode == 2 && remain_sec >= 0) continue;
 
         if (!needle.empty()) {
             std::string hay = item.title;
@@ -84,24 +87,49 @@ void RenderReminderPanel(AppRuntime &runtime) {
         matched_indices.push_back(i);
     }
 
+    std::sort(matched_indices.begin(), matched_indices.end(), [&](std::size_t a, std::size_t b) {
+        const auto &ia = runtime.reminder_upcoming[a];
+        const auto &ib = runtime.reminder_upcoming[b];
+        const long long ra = static_cast<long long>(ia.due_unix_sec - now_sec_ui);
+        const long long rb = static_cast<long long>(ib.due_unix_sec - now_sec_ui);
+
+        if (runtime.reminder_sort_mode == 2) {
+            const bool a_overdue = ra < 0;
+            const bool b_overdue = rb < 0;
+            if (a_overdue != b_overdue) {
+                return a_overdue > b_overdue;
+            }
+            if (ia.due_unix_sec != ib.due_unix_sec) {
+                return ia.due_unix_sec < ib.due_unix_sec;
+            }
+            return ia.id < ib.id;
+        }
+
+        if (ia.due_unix_sec != ib.due_unix_sec) {
+            const bool asc = runtime.reminder_sort_mode == 0;
+            return asc ? (ia.due_unix_sec < ib.due_unix_sec) : (ia.due_unix_sec > ib.due_unix_sec);
+        }
+        return ia.id < ib.id;
+    });
+
     const int total_items = static_cast<int>(matched_indices.size());
     const int total_pages = std::max(1, (total_items + kPageSize - 1) / kPageSize);
-    reminder_page = std::clamp(reminder_page, 0, total_pages - 1);
+    runtime.reminder_page = std::clamp(runtime.reminder_page, 0, total_pages - 1);
 
     ImGui::SeparatorText("Active Reminders");
     ImGui::Text("Matched: %d", total_items);
     ImGui::SameLine();
-    if (ImGui::Button("Prev Page") && reminder_page > 0) {
-        reminder_page -= 1;
+    if (ImGui::Button("Prev Page") && runtime.reminder_page > 0) {
+        runtime.reminder_page -= 1;
     }
     ImGui::SameLine();
-    if (ImGui::Button("Next Page") && reminder_page + 1 < total_pages) {
-        reminder_page += 1;
+    if (ImGui::Button("Next Page") && runtime.reminder_page + 1 < total_pages) {
+        runtime.reminder_page += 1;
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("Page %d / %d", reminder_page + 1, total_pages);
+    ImGui::TextDisabled("Page %d / %d", runtime.reminder_page + 1, total_pages);
 
-    const int start = reminder_page * kPageSize;
+    const int start = runtime.reminder_page * kPageSize;
     const int end = std::min(total_items, start + kPageSize);
 
     ImGui::BeginChild("reminder_list_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
@@ -122,6 +150,12 @@ void RenderReminderPanel(AppRuntime &runtime) {
             if (runtime.reminder_service.MarkCompleted(item.id, true, &op_err)) {
                 runtime.reminder_upcoming = runtime.reminder_service.ListActive(64, nullptr);
                 runtime.reminder_last_error.clear();
+                const bool deleting_last_on_page = (start == end - 1) && (idx == end - 1) && (runtime.reminder_page > 0);
+                if (deleting_last_on_page) {
+                    runtime.reminder_page -= 1;
+                }
+                ImGui::PopID();
+                break;
             } else {
                 runtime.reminder_last_error = op_err;
             }
@@ -132,6 +166,12 @@ void RenderReminderPanel(AppRuntime &runtime) {
             if (runtime.reminder_service.DeleteReminder(item.id, &op_err)) {
                 runtime.reminder_upcoming = runtime.reminder_service.ListActive(64, nullptr);
                 runtime.reminder_last_error.clear();
+                const bool deleting_last_on_page = (start == end - 1) && (idx == end - 1) && (runtime.reminder_page > 0);
+                if (deleting_last_on_page) {
+                    runtime.reminder_page -= 1;
+                }
+                ImGui::PopID();
+                break;
             } else {
                 runtime.reminder_last_error = op_err;
             }

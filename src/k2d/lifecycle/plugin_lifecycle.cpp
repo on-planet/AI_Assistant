@@ -310,6 +310,19 @@ public:
                     spec_.model_version.c_str(),
                     resolved_backend_.c_str(),
                     spec_.onnx_path.c_str());
+
+            expert_sessions_.clear();
+            for (const auto &expert : spec_.expert_models) {
+                if (expert.onnx_path.empty()) {
+                    continue;
+                }
+                const std::filesystem::path expert_path = std::filesystem::path(expert.onnx_path);
+                expert_sessions_.push_back(ExpertRuntime{
+                    .route_name = expert.route_name,
+                    .fusion_weight = std::clamp(expert.fusion_weight, 0.0f, 1.0f),
+                    .session = std::make_unique<Ort::Session>(*session_env_, expert_path.c_str(), sess_opts),
+                });
+            }
         } catch (const std::exception &e) {
             if (out_error) {
                 *out_error = "Init failed: onnx session create failed (backend=" + resolved_backend_ + "): " + e.what();
@@ -346,7 +359,182 @@ public:
 
         const RouteMatch route = ResolveRoute(in);
         const float opacity_bias = route.opacity_bias;
+
+        std::vector<float> input_tensor_values = {
+            static_cast<float>(in.audio.level),
+            static_cast<float>(in.audio.pitch_hz),
+            static_cast<float>(in.audio.vad_prob),
+            static_cast<float>(in.vision.user_presence),
+            static_cast<float>(in.vision.head_yaw_deg),
+            static_cast<float>(in.vision.head_pitch_deg),
+            static_cast<float>(in.vision.head_roll_deg),
+            static_cast<float>(in.state.window_visible ? 1.0f : 0.0f),
+        };
+
+        auto run_session = [&](Ort::Session &sess, std::vector<float> &out_values, std::string *run_err) -> bool {
+            try {
+                const std::size_t expected_features = static_cast<std::size_t>(
+                    std::max<std::int64_t>(1, spec_.tensor_schema.feature_dim));
+                if (input_tensor_values.size() != expected_features) {
+                    if (run_err) {
+                        *run_err = "input feature mismatch: expected=" + std::to_string(expected_features) +
+                                   " actual=" + std::to_string(input_tensor_values.size());
+                    }
+                    return false;
+                }
+
+                const std::array<int64_t, 2> input_shape = {
+                    std::max<std::int64_t>(1, spec_.tensor_schema.batch),
+                    std::max<std::int64_t>(1, spec_.tensor_schema.feature_dim),
+                };
+                Ort::MemoryInfo mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+                Ort::Value input_tensor = Ort::Value::CreateTensor<float>(mem_info,
+                                                                          input_tensor_values.data(),
+                                                                          input_tensor_values.size(),
+                                                                          input_shape.data(),
+                                                                          input_shape.size());
+                const char *input_names[] = {spec_.tensor_schema.input_name.c_str()};
+                const char *output_names[] = {spec_.tensor_schema.output_name.c_str()};
+                auto outputs = sess.Run(Ort::RunOptions{nullptr}, input_names, &input_tensor, 1, output_names, 1);
+                if (outputs.empty() || !outputs[0].IsTensor()) {
+                    if (run_err) *run_err = "ort output is empty or not tensor";
+                    return false;
+                }
+                float *data = outputs[0].GetTensorMutableData<float>();
+                auto type_info = outputs[0].GetTensorTypeAndShapeInfo();
+                const std::size_t elem_count = type_info.GetElementCount();
+                out_values.assign(data, data + elem_count);
+                return true;
+            } catch (const std::exception &e) {
+                if (run_err) *run_err = e.what();
+                return false;
+            }
+        };
+
+        std::vector<float> main_logits;
+        std::string ort_err;
+        if (session_ && !run_session(*session_, main_logits, &ort_err)) {
+            if (out_error) *out_error = std::string("ORT Run failed: ") + ort_err;
+            return PluginStatus::InternalError;
+        }
+
+        std::vector<float> fused_logits = main_logits;
+        int active_expert_count = 0;
+
+        struct ExpertForwardResult {
+            std::size_t expert_index = 0;
+            std::vector<float> logits;
+            float gating_score = 0.0f;
+            float softmax_weight = 0.0f;
+        };
+
+        std::vector<ExpertForwardResult> expert_results;
+        const float structured_confidence = std::clamp(
+            0.5f * (in.routing.primary_structured_confidence + in.routing.secondary_structured_confidence),
+            0.0f,
+            1.0f);
+        const float gating_temperature = std::max(0.05f, route_config_.expert_gating_temperature);
+
+        for (std::size_t expert_idx = 0; expert_idx < expert_sessions_.size(); ++expert_idx) {
+            auto &expert = expert_sessions_[expert_idx];
+            expert.last_gating_score = 0.0f;
+            expert.last_softmax_weight = 0.0f;
+            if (!expert.session) {
+                continue;
+            }
+            if (!expert.route_name.empty() && expert.route_name != route.name) {
+                continue;
+            }
+            std::vector<float> expert_logits;
+            if (!run_session(*expert.session, expert_logits, nullptr)) {
+                continue;
+            }
+            if (expert_logits.size() != fused_logits.size()) {
+                continue;
+            }
+
+            const float route_alignment = expert.route_name.empty() ? 0.0f : 1.0f;
+            const float gating_score = route.total_score + structured_confidence + route_alignment;
+            expert.last_gating_score = gating_score;
+            expert_results.push_back(ExpertForwardResult{
+                .expert_index = expert_idx,
+                .logits = std::move(expert_logits),
+                .gating_score = gating_score,
+                .softmax_weight = 0.0f,
+            });
+        }
+
+        if (!expert_results.empty()) {
+            float max_logit = expert_results.front().gating_score / gating_temperature;
+            for (const auto &r : expert_results) {
+                max_logit = std::max(max_logit, r.gating_score / gating_temperature);
+            }
+
+            float sum_exp = 0.0f;
+            for (auto &r : expert_results) {
+                r.softmax_weight = std::exp((r.gating_score / gating_temperature) - max_logit);
+                sum_exp += r.softmax_weight;
+            }
+
+            if (sum_exp > 0.0f) {
+                for (auto &r : expert_results) {
+                    r.softmax_weight /= sum_exp;
+                    expert_sessions_[r.expert_index].last_softmax_weight = r.softmax_weight;
+                }
+
+                std::vector<float> blended_expert_logits(fused_logits.size(), 0.0f);
+                for (const auto &r : expert_results) {
+                    for (std::size_t j = 0; j < blended_expert_logits.size(); ++j) {
+                        blended_expert_logits[j] += r.logits[j] * r.softmax_weight;
+                    }
+                }
+
+                float expert_mix_ratio = 0.0f;
+                for (const auto &r : expert_results) {
+                    expert_mix_ratio += r.softmax_weight *
+                                        std::clamp(expert_sessions_[r.expert_index].fusion_weight, 0.0f, 1.0f);
+                }
+                expert_mix_ratio = std::clamp(expert_mix_ratio, 0.0f, 1.0f);
+
+                for (std::size_t j = 0; j < fused_logits.size(); ++j) {
+                    fused_logits[j] = fused_logits[j] * (1.0f - expert_mix_ratio) +
+                                      blended_expert_logits[j] * expert_mix_ratio;
+                }
+                active_expert_count = static_cast<int>(expert_results.size());
+            }
+        }
         out.event_scores["plugin.route." + route.name] = 1.0f;
+        out.event_scores["plugin.route.trace.scene_score"] = route.scene_score;
+        out.event_scores["plugin.route.trace.task_score"] = route.task_score;
+        out.event_scores["plugin.route.trace.structured_score"] = route.structured_score;
+        out.event_scores["plugin.route.trace.presence_score"] = route.presence_score;
+        out.event_scores["plugin.route.trace.total_score"] = route.total_score;
+        for (std::size_t i = 0; i < route.rejected.size(); ++i) {
+            const auto &cand = route.rejected[i];
+            const std::string prefix = "plugin.route.trace.rejected." + std::to_string(i) + ".";
+            out.event_scores[prefix + cand.name] = cand.total_score;
+            out.event_scores[prefix + "scene_score"] = cand.scene_score;
+            out.event_scores[prefix + "task_score"] = cand.task_score;
+            out.event_scores[prefix + "structured_score"] = cand.structured_score;
+            out.event_scores[prefix + "presence_score"] = cand.presence_score;
+        }
+        {
+            std::ostringstream oss;
+            oss << "route_selected=" << route.name
+                << " scene_score=" << route.scene_score
+                << " task_score=" << route.task_score
+                << " structured_score=" << route.structured_score
+                << " presence_score=" << route.presence_score
+                << " total_score=" << route.total_score;
+            if (!route.rejected.empty()) {
+                oss << " rejected=";
+                for (std::size_t i = 0; i < route.rejected.size(); ++i) {
+                    if (i > 0) oss << ",";
+                    oss << route.rejected[i].name << ":" << route.rejected[i].total_score;
+                }
+            }
+            LogInfo("plugin route trace: %s", oss.str().c_str());
+        }
 
         out.param_targets["window.opacity"] = std::clamp(base_opacity_ + opacity_bias + presence * 0.05f, 0.05f, 1.0f);
         out.param_weights["window.opacity"] = 1.0f;
@@ -356,15 +544,19 @@ public:
         out.param_weights["runtime.show_debug_stats"] = 1.0f;
         out.param_targets["runtime.manual_param_mode"] = base_manual_param_mode_ ? 1.0f : 0.0f;
         out.param_weights["runtime.manual_param_mode"] = 1.0f;
-        out.event_scores["plugin.models.count"] = static_cast<float>(1 + spec_.extra_onnx_paths.size());
+        out.event_scores["plugin.models.count"] = static_cast<float>(1 + spec_.expert_models.size());
+        out.event_scores["plugin.experts.active_count"] = static_cast<float>(active_expert_count);
+        out.event_scores["plugin.expert.gating.temperature"] = gating_temperature;
         out.event_scores["plugin.route.selected"] = (route.name == route_config_.default_route ? 0.0f : 1.0f);
 
-        const std::vector<float> mock_logits = {
-            std::clamp(presence, 0.0f, 1.0f),
-            std::clamp(1.0f - presence, 0.0f, 1.0f),
-            std::clamp(0.25f + opacity_bias, 0.0f, 1.0f),
-        };
-        const PostprocessTrace trace = ExecutePostprocessPipeline(mock_logits, postprocess_);
+        if (fused_logits.empty()) {
+            fused_logits = {
+                std::clamp(presence, 0.0f, 1.0f),
+                std::clamp(1.0f - presence, 0.0f, 1.0f),
+                std::clamp(0.25f + opacity_bias, 0.0f, 1.0f),
+            };
+        }
+        const PostprocessTrace trace = ExecutePostprocessPipeline(fused_logits, postprocess_);
         out.event_scores["plugin.postprocess.argmax_index"] = static_cast<float>(trace.argmax_index);
         out.event_scores["plugin.postprocess.argmax_value"] = trace.argmax_value;
         out.event_scores["plugin.postprocess.threshold_pass"] = trace.threshold_pass ? 1.0f : 0.0f;
@@ -381,9 +573,33 @@ public:
     }
 
 private:
+    struct ExpertRuntime {
+        std::string route_name;
+        float fusion_weight = 0.35f;
+        float last_gating_score = 0.0f;
+        float last_softmax_weight = 0.0f;
+        std::unique_ptr<Ort::Session> session;
+    };
+
+    struct RouteCandidateScore {
+        std::string name;
+        float opacity_bias = 0.0f;
+        float scene_score = 0.0f;
+        float task_score = 0.0f;
+        float structured_score = 0.0f;
+        float presence_score = 0.0f;
+        float total_score = 0.0f;
+    };
+
     struct RouteMatch {
         std::string name = "unknown";
         float opacity_bias = 0.0f;
+        float scene_score = 0.0f;
+        float task_score = 0.0f;
+        float structured_score = 0.0f;
+        float presence_score = 0.0f;
+        float total_score = 0.0f;
+        std::vector<RouteCandidateScore> rejected;
     };
 
     static std::string ToLowerCopy(const std::string &s) {
@@ -393,12 +609,15 @@ private:
         return out;
     }
 
-    static bool ContainsAny(const std::string &text_lower, const std::vector<std::string> &keywords) {
+    static int CountKeywordHits(const std::string &text_lower, const std::vector<std::string> &keywords) {
+        int hits = 0;
         for (const std::string &kw : keywords) {
             if (kw.empty()) continue;
-            if (text_lower.find(ToLowerCopy(kw)) != std::string::npos) return true;
+            if (text_lower.find(ToLowerCopy(kw)) != std::string::npos) {
+                hits += 1;
+            }
         }
-        return false;
+        return hits;
     }
 
     static PluginRouteConfig BuildRouteConfig(const PluginArtifactSpec &spec) {
@@ -413,21 +632,117 @@ private:
         return fallback;
     }
 
-    RouteMatch ResolveRoute(const PerceptionInput &in) const {
+    RouteMatch ResolveRoute(const PerceptionInput &in) {
         const std::string scene = ToLowerCopy(in.scene_label);
         const std::string task = ToLowerCopy(in.task_label);
+        const float presence = std::clamp(in.vision.user_presence, 0.0f, 1.0f);
+        const bool visible_hint = in.state.window_visible;
+        const bool click_through_hint = in.state.click_through;
 
+        RouteMatch best{};
+        best.name = route_config_.default_route.empty() ? std::string("unknown") : route_config_.default_route;
+
+        std::vector<RouteCandidateScore> signal_candidates;
+        std::vector<RouteCandidateScore> all_rejected;
         for (const PluginRouteRule &rule : route_config_.rules) {
             if (rule.name.empty()) continue;
-            const bool scene_hit = !rule.scene_keywords.empty() && ContainsAny(scene, rule.scene_keywords);
-            const bool task_hit = !rule.task_keywords.empty() && ContainsAny(task, rule.task_keywords);
-            if (scene_hit || task_hit) {
-                return RouteMatch{.name = rule.name, .opacity_bias = rule.opacity_bias};
+
+            const int scene_hits = CountKeywordHits(scene, rule.scene_keywords);
+            const int task_hits = CountKeywordHits(task, rule.task_keywords);
+            const float scene_score = static_cast<float>(scene_hits) * rule.scene_weight;
+            const float task_score = static_cast<float>(task_hits) * rule.task_weight;
+            const float structured_score =
+                std::clamp(in.routing.primary_structured_confidence, 0.0f, 1.0f) * rule.primary_weight +
+                std::clamp(in.routing.secondary_structured_confidence, 0.0f, 1.0f) * rule.secondary_weight;
+            const float presence_score = presence * (visible_hint ? 0.35f : 0.15f) + (click_through_hint ? -0.10f : 0.05f);
+            const float total_score = scene_score + task_score + structured_score * rule.structured_weight + presence_score;
+
+            RouteCandidateScore cand{
+                .name = rule.name,
+                .opacity_bias = rule.opacity_bias,
+                .scene_score = scene_score,
+                .task_score = task_score,
+                .structured_score = structured_score,
+                .presence_score = presence_score,
+                .total_score = total_score,
+            };
+
+            const bool has_signal = scene_hits > 0 || task_hits > 0 || structured_score > 0.0f;
+            if (has_signal) {
+                signal_candidates.push_back(cand);
+            } else {
+                all_rejected.push_back(cand);
             }
         }
 
-        return RouteMatch{.name = route_config_.default_route.empty() ? std::string("unknown") : route_config_.default_route,
-                          .opacity_bias = 0.0f};
+        std::sort(signal_candidates.begin(), signal_candidates.end(), [](const RouteCandidateScore &a, const RouteCandidateScore &b) {
+            if (std::abs(a.total_score - b.total_score) < 1e-6f) {
+                return a.scene_score > b.scene_score;
+            }
+            return a.total_score > b.total_score;
+        });
+
+        auto find_candidate = [](const std::vector<RouteCandidateScore> &cands, const std::string &name) -> const RouteCandidateScore * {
+            for (const auto &cand : cands) {
+                if (cand.name == name) return &cand;
+            }
+            return nullptr;
+        };
+
+        const RouteCandidateScore *top_signal = signal_candidates.empty() ? nullptr : &signal_candidates.front();
+
+        if (route_hold_frames_left_ > 0) {
+            --route_hold_frames_left_;
+        }
+        if (route_cooldown_frames_left_ > 0) {
+            --route_cooldown_frames_left_;
+        }
+
+        if (last_selected_route_.empty()) {
+            last_selected_route_ = best.name;
+        }
+
+        const RouteCandidateScore *current_cand = find_candidate(signal_candidates, last_selected_route_);
+        const float current_total_score = current_cand ? current_cand->total_score : 0.0f;
+
+        if (top_signal && top_signal->total_score >= route_config_.activation_threshold) {
+            const bool candidate_is_new = top_signal->name != last_selected_route_;
+            const bool hold_ready = route_hold_frames_left_ <= 0;
+            const bool cooldown_ready = route_cooldown_frames_left_ <= 0;
+            const bool margin_ready = (top_signal->total_score - current_total_score) >= route_config_.switch_score_margin;
+
+            if (!candidate_is_new) {
+                last_selected_route_ = top_signal->name;
+            } else if (hold_ready && cooldown_ready && margin_ready) {
+                last_selected_route_ = top_signal->name;
+                route_hold_frames_left_ = std::max(0, route_config_.switch_hold_frames);
+                route_cooldown_frames_left_ = std::max(0, route_config_.switch_cooldown_frames);
+            }
+        }
+
+        const RouteCandidateScore *selected_cand = find_candidate(signal_candidates, last_selected_route_);
+        if (selected_cand) {
+            best.name = selected_cand->name;
+            best.opacity_bias = selected_cand->opacity_bias;
+            best.scene_score = selected_cand->scene_score;
+            best.task_score = selected_cand->task_score;
+            best.structured_score = selected_cand->structured_score;
+            best.presence_score = selected_cand->presence_score;
+            best.total_score = selected_cand->total_score;
+        } else {
+            best.name = route_config_.default_route.empty() ? std::string("unknown") : route_config_.default_route;
+        }
+
+        for (const auto &cand : signal_candidates) {
+            if (cand.name != best.name) {
+                all_rejected.push_back(cand);
+            }
+        }
+        best.rejected = std::move(all_rejected);
+        std::sort(best.rejected.begin(), best.rejected.end(), [](const RouteCandidateScore &a, const RouteCandidateScore &b) {
+            return a.total_score > b.total_score;
+        });
+        return best;
     }
 
     PluginArtifactSpec spec_{};
@@ -442,6 +757,10 @@ private:
     std::string resolved_backend_ = "cpu";
     std::unique_ptr<Ort::Env> session_env_;
     std::unique_ptr<Ort::Session> session_;
+    std::vector<ExpertRuntime> expert_sessions_;
+    std::string last_selected_route_;
+    int route_hold_frames_left_ = 0;
+    int route_cooldown_frames_left_ = 0;
 };
 
 std::string ReadTextFile(const std::string &path) {
@@ -562,6 +881,38 @@ bool ApplyBackendPriorityToSessionOptions(const std::vector<std::string> &priori
     return true;
 }
 
+void ApplyWorkerTuningFromJsonObject(const JsonValue &worker, PluginArtifactSpec::WorkerTuning &cfg) {
+    cfg.update_hz = static_cast<int>(worker.getNumber("update_hz").value_or(cfg.update_hz));
+    cfg.frame_budget_ms = static_cast<int>(worker.getNumber("frame_budget_ms").value_or(cfg.frame_budget_ms));
+    cfg.timeout_degrade_threshold = static_cast<int>(
+        worker.getNumber("timeout_degrade_threshold").value_or(cfg.timeout_degrade_threshold));
+    cfg.recover_after_consecutive_successes = static_cast<int>(
+        worker.getNumber("recover_after_consecutive_successes").value_or(cfg.recover_after_consecutive_successes));
+    cfg.avg_latency_budget_ms = worker.getNumber("avg_latency_budget_ms").value_or(cfg.avg_latency_budget_ms);
+    cfg.latency_budget_window_size = static_cast<std::size_t>(
+        worker.getNumber("latency_budget_window_size").value_or(static_cast<double>(cfg.latency_budget_window_size)));
+    cfg.disable_after_consecutive_failures = static_cast<int>(
+        worker.getNumber("disable_after_consecutive_failures").value_or(cfg.disable_after_consecutive_failures));
+    cfg.auto_recover_after_ms = static_cast<int>(
+        worker.getNumber("auto_recover_after_ms").value_or(cfg.auto_recover_after_ms));
+
+    if (const JsonValue *steps = worker.get("degrade_hz_steps"); steps && steps->isArray() && steps->asArray()) {
+        std::vector<int> parsed;
+        for (const auto &item : *steps->asArray()) {
+            if (!item.isNumber() || !item.asNumber()) {
+                continue;
+            }
+            const int hz = static_cast<int>(*item.asNumber());
+            if (hz > 0) {
+                parsed.push_back(hz);
+            }
+        }
+        if (!parsed.empty()) {
+            cfg.degrade_hz_steps = std::move(parsed);
+        }
+    }
+}
+
 bool ValidatePluginConfig(const JsonValue &root,
                           const std::string &config_path,
                           PluginArtifactSpec *out_spec,
@@ -660,6 +1011,39 @@ bool ValidatePluginConfig(const JsonValue &root,
                 return fail("plugin config invalid field: extra_onnx file not found -> " + p.generic_string());
             }
             spec.extra_onnx_paths.push_back(p.generic_string());
+        }
+    }
+
+    if (const JsonValue *experts = root.get("expert_models"); experts) {
+        if (!experts->isArray() || !experts->asArray()) {
+            return fail("plugin config invalid field: expert_models must be array");
+        }
+        for (const auto &ev : *experts->asArray()) {
+            if (!ev.isObject()) {
+                return fail("plugin config invalid field: expert_models[] must be object");
+            }
+            const std::optional<std::string> route_name = ev.getString("route_name");
+            const std::optional<std::string> onnx_rel = ev.getString("onnx");
+            if (!route_name.has_value() || route_name->empty()) {
+                return fail("plugin config invalid field: expert_models[].route_name must be non-empty string");
+            }
+            if (!onnx_rel.has_value() || onnx_rel->empty()) {
+                return fail("plugin config invalid field: expert_models[].onnx must be non-empty string");
+            }
+            std::filesystem::path p = std::filesystem::path(*onnx_rel);
+            if (p.is_relative()) p = (cfg_dir / p).lexically_normal();
+            std::error_code expert_ec;
+            if (!std::filesystem::exists(p, expert_ec) || expert_ec) {
+                return fail("plugin config invalid field: expert_models[].onnx file not found -> " + p.generic_string());
+            }
+            PluginArtifactSpec::ExpertModelSpec expert{};
+            expert.route_name = *route_name;
+            expert.onnx_path = p.generic_string();
+            expert.fusion_weight = static_cast<float>(ev.getNumber("fusion_weight").value_or(static_cast<double>(expert.fusion_weight)));
+            if (expert.fusion_weight < 0.0f || expert.fusion_weight > 1.0f) {
+                return fail("plugin config invalid field: expert_models[].fusion_weight must be in [0,1]");
+            }
+            spec.expert_models.push_back(std::move(expert));
         }
     }
 
@@ -779,7 +1163,37 @@ bool ValidatePluginConfig(const JsonValue &root,
         };
     }
 
+    if (const JsonValue *tensor_schema = root.get("tensor_schema"); tensor_schema && tensor_schema->isObject()) {
+        spec.tensor_schema.input_name = tensor_schema->getString("input_name").value_or(spec.tensor_schema.input_name);
+        spec.tensor_schema.output_name = tensor_schema->getString("output_name").value_or(spec.tensor_schema.output_name);
+        spec.tensor_schema.batch = static_cast<std::int64_t>(
+            tensor_schema->getNumber("batch").value_or(static_cast<double>(spec.tensor_schema.batch)));
+        spec.tensor_schema.feature_dim = static_cast<std::int64_t>(
+            tensor_schema->getNumber("feature_dim").value_or(static_cast<double>(spec.tensor_schema.feature_dim)));
+        if (spec.tensor_schema.input_name.empty() || spec.tensor_schema.output_name.empty()) {
+            return fail("plugin config invalid field: tensor_schema input/output name must be non-empty string");
+        }
+        if (spec.tensor_schema.batch <= 0 || spec.tensor_schema.feature_dim <= 0) {
+            return fail("plugin config invalid field: tensor_schema batch/feature_dim must be > 0");
+        }
+    }
+
+    if (const JsonValue *worker = root.get("worker"); worker && worker->isObject()) {
+        ApplyWorkerTuningFromJsonObject(*worker, spec.worker_tuning);
+    }
+
     spec.route_config.default_route = *default_route;
+    spec.route_config.switch_hold_frames = static_cast<int>(routing->getNumber("switch_hold_frames").value_or(static_cast<double>(spec.route_config.switch_hold_frames)));
+    spec.route_config.switch_cooldown_frames = static_cast<int>(routing->getNumber("switch_cooldown_frames").value_or(static_cast<double>(spec.route_config.switch_cooldown_frames)));
+    spec.route_config.switch_score_margin = static_cast<float>(routing->getNumber("switch_score_margin").value_or(static_cast<double>(spec.route_config.switch_score_margin)));
+    spec.route_config.activation_threshold = static_cast<float>(routing->getNumber("activation_threshold").value_or(static_cast<double>(spec.route_config.activation_threshold)));
+    spec.route_config.switch_hold_frames = std::max(0, spec.route_config.switch_hold_frames);
+    spec.route_config.switch_cooldown_frames = std::max(0, spec.route_config.switch_cooldown_frames);
+    spec.route_config.switch_score_margin = std::max(0.0f, spec.route_config.switch_score_margin);
+    spec.route_config.activation_threshold = std::max(0.0f, spec.route_config.activation_threshold);
+    spec.route_config.expert_gating_temperature = static_cast<float>(
+        routing->getNumber("expert_gating_temperature").value_or(static_cast<double>(spec.route_config.expert_gating_temperature)));
+    spec.route_config.expert_gating_temperature = std::max(0.05f, spec.route_config.expert_gating_temperature);
     for (const auto &rv : *rules->asArray()) {
         if (!rv.isObject()) {
             return fail("plugin config invalid field: routing.rules item must be object");
@@ -829,8 +1243,23 @@ std::unique_ptr<IBehaviorPlugin> CreateOnnxBehaviorPlugin(const PluginArtifactSp
     return std::make_unique<OnnxBehaviorPlugin>(spec);
 }
 
+PluginWorkerConfig BuildPluginWorkerConfig(const PluginArtifactSpec::WorkerTuning &tuning) {
+    PluginWorkerConfig cfg{};
+    cfg.update_hz = tuning.update_hz;
+    cfg.frame_budget_ms = tuning.frame_budget_ms;
+    cfg.timeout_degrade_threshold = tuning.timeout_degrade_threshold;
+    cfg.degrade_hz_steps = tuning.degrade_hz_steps;
+    cfg.recover_after_consecutive_successes = tuning.recover_after_consecutive_successes;
+    cfg.avg_latency_budget_ms = tuning.avg_latency_budget_ms;
+    cfg.latency_budget_window_size = tuning.latency_budget_window_size;
+    cfg.disable_after_consecutive_failures = tuning.disable_after_consecutive_failures;
+    cfg.auto_recover_after_ms = tuning.auto_recover_after_ms;
+    return cfg;
+}
+
 std::unique_ptr<IBehaviorPlugin> CreateOnnxBehaviorPluginFromConfig(const std::string &config_path,
-                                                                    std::string *out_error) {
+                                                                    std::string *out_error,
+                                                                    PluginArtifactSpec *out_spec) {
     const std::string text = ReadTextFile(config_path);
     if (text.empty()) {
         if (out_error) *out_error = "failed to read plugin config: " + config_path;
@@ -847,6 +1276,9 @@ std::unique_ptr<IBehaviorPlugin> CreateOnnxBehaviorPluginFromConfig(const std::s
     PluginArtifactSpec spec{};
     if (!ValidatePluginConfig(*root_opt, config_path, &spec, out_error)) {
         return nullptr;
+    }
+    if (out_spec) {
+        *out_spec = spec;
     }
     return CreateOnnxBehaviorPlugin(spec);
 }
@@ -865,6 +1297,7 @@ struct PluginWorker::Impl {
     std::uint64_t consumed_seq = 0;
 
     std::uint64_t total_update_count = 0;
+    std::uint64_t success_count = 0;
     std::uint64_t timeout_count = 0;
     std::uint64_t exception_count = 0;
     std::uint64_t internal_error_count = 0;
@@ -872,10 +1305,51 @@ struct PluginWorker::Impl {
     std::uint64_t recover_count = 0;
     int current_update_hz = 60;
     int consecutive_timeout_count = 0;
+    int consecutive_success_count = 0;
     int consecutive_failures = 0;
     bool auto_disabled = false;
     std::chrono::steady_clock::time_point last_disable_tp{};
     std::string last_error;
+
+    std::string model_id = "unknown";
+    std::string model_version = "0.0.0";
+    std::string backend = "onnxruntime.cpu";
+    int batch = 1;
+    double last_latency_ms = 0.0;
+    std::vector<double> latency_window_ms;
+
+    int PickNextDegradeHz() const {
+        int next_hz = current_update_hz;
+        for (int hz : cfg.degrade_hz_steps) {
+            if (hz < current_update_hz) {
+                next_hz = hz;
+                break;
+            }
+        }
+        return std::max(1, next_hz);
+    }
+
+    int PickNextRecoverHz() const {
+        int next_hz = current_update_hz;
+        for (auto it = cfg.degrade_hz_steps.rbegin(); it != cfg.degrade_hz_steps.rend(); ++it) {
+            if (*it > current_update_hz) {
+                next_hz = *it;
+                break;
+            }
+        }
+        return std::max(1, next_hz);
+    }
+
+    double ComputeAverageLatencyMs() const {
+        if (latency_window_ms.empty()) {
+            return 0.0;
+        }
+        double sum = 0.0;
+        for (double v : latency_window_ms) {
+            sum += v;
+        }
+        return sum / static_cast<double>(latency_window_ms.size());
+    }
 };
 
 PluginWorker::PluginWorker() = default;
@@ -919,17 +1393,41 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
     impl_->cfg.timeout_degrade_threshold = std::max(1, impl_->cfg.timeout_degrade_threshold);
     impl_->cfg.disable_after_consecutive_failures = std::max(1, impl_->cfg.disable_after_consecutive_failures);
     impl_->cfg.auto_recover_after_ms = std::max(100, impl_->cfg.auto_recover_after_ms);
+    impl_->cfg.recover_after_consecutive_successes = std::max(1, impl_->cfg.recover_after_consecutive_successes);
+    impl_->cfg.avg_latency_budget_ms = std::max(0.1, impl_->cfg.avg_latency_budget_ms);
+    impl_->cfg.latency_budget_window_size = std::max<std::size_t>(4, impl_->cfg.latency_budget_window_size);
+    if (impl_->cfg.degrade_hz_steps.empty()) {
+        impl_->cfg.degrade_hz_steps = {impl_->cfg.update_hz, 60, 30, 15, 10};
+    }
+    std::sort(impl_->cfg.degrade_hz_steps.begin(), impl_->cfg.degrade_hz_steps.end(), std::greater<int>());
+    impl_->cfg.degrade_hz_steps.erase(std::remove_if(impl_->cfg.degrade_hz_steps.begin(),
+                                                     impl_->cfg.degrade_hz_steps.end(),
+                                                     [](int hz) { return hz <= 0; }),
+                                      impl_->cfg.degrade_hz_steps.end());
+    if (impl_->cfg.degrade_hz_steps.empty() || impl_->cfg.degrade_hz_steps.front() != impl_->cfg.update_hz) {
+        impl_->cfg.degrade_hz_steps.insert(impl_->cfg.degrade_hz_steps.begin(), impl_->cfg.update_hz);
+        std::sort(impl_->cfg.degrade_hz_steps.begin(), impl_->cfg.degrade_hz_steps.end(), std::greater<int>());
+    }
     impl_->current_update_hz = impl_->cfg.update_hz;
     impl_->consecutive_timeout_count = 0;
+    impl_->consecutive_success_count = 0;
     impl_->consecutive_failures = 0;
     impl_->auto_disabled = false;
     impl_->total_update_count = 0;
+    impl_->success_count = 0;
     impl_->timeout_count = 0;
     impl_->exception_count = 0;
     impl_->internal_error_count = 0;
     impl_->disable_count = 0;
     impl_->recover_count = 0;
+    impl_->last_latency_ms = 0.0;
+    impl_->latency_window_ms.clear();
     impl_->last_error.clear();
+    const PluginDescriptor &desc = manager->Descriptor();
+    impl_->model_id = desc.name ? desc.name : "unknown";
+    impl_->model_version = desc.version ? desc.version : "0.0.0";
+    impl_->backend = "onnxruntime.cpu";
+    impl_->batch = 1;
     impl_->running.store(true);
 
     impl_->worker = std::thread([this]() {
@@ -973,35 +1471,57 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
                 caught_exception = true;
             }
 
+            const double elapsed_ms = static_cast<double>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - t0).count());
+
             {
                 std::lock_guard<std::mutex> lock(impl_->mtx);
                 ++impl_->total_update_count;
+                impl_->last_latency_ms = elapsed_ms;
+                impl_->latency_window_ms.push_back(std::max(0.0, elapsed_ms));
+                if (impl_->latency_window_ms.size() > impl_->cfg.latency_budget_window_size) {
+                    impl_->latency_window_ms.erase(impl_->latency_window_ms.begin());
+                }
+                const double avg_latency_ms = impl_->ComputeAverageLatencyMs();
                 if (st == PluginStatus::Ok) {
                     impl_->latest_out = out;
                     ++impl_->out_seq;
+                    ++impl_->success_count;
+                    ++impl_->consecutive_success_count;
                     impl_->consecutive_timeout_count = 0;
                     impl_->consecutive_failures = 0;
                     impl_->auto_disabled = false;
                     impl_->last_error.clear();
+
+                    if (avg_latency_ms > impl_->cfg.avg_latency_budget_ms) {
+                        const int next_hz = impl_->PickNextDegradeHz();
+                        if (next_hz != impl_->current_update_hz) {
+                            impl_->current_update_hz = next_hz;
+                            impl_->consecutive_success_count = 0;
+                            SDL_Log("PluginWorker degraded update_hz to %d due to avg latency budget %.2fms exceeded (avg=%.2fms)",
+                                    next_hz,
+                                    impl_->cfg.avg_latency_budget_ms,
+                                    avg_latency_ms);
+                        }
+                    } else if (impl_->consecutive_success_count >= impl_->cfg.recover_after_consecutive_successes) {
+                        const int next_hz = impl_->PickNextRecoverHz();
+                        if (next_hz != impl_->current_update_hz) {
+                            impl_->current_update_hz = next_hz;
+                            SDL_Log("PluginWorker recovered update_hz to %d after %d consecutive successes",
+                                    next_hz,
+                                    impl_->consecutive_success_count);
+                        }
+                        impl_->consecutive_success_count = 0;
+                    }
                 } else {
                     ++impl_->consecutive_failures;
+                    impl_->consecutive_success_count = 0;
                     if (st == PluginStatus::Timeout) {
                         ++impl_->timeout_count;
                         ++impl_->consecutive_timeout_count;
 
                         if (impl_->consecutive_timeout_count >= impl_->cfg.timeout_degrade_threshold) {
-                            int next_hz = impl_->current_update_hz;
-                            if (next_hz > 120) {
-                                next_hz = 120;
-                            } else if (next_hz > 60) {
-                                next_hz = 60;
-                            } else if (next_hz > 30) {
-                                next_hz = 30;
-                            } else if (next_hz > 15) {
-                                next_hz = 15;
-                            } else if (next_hz > 10) {
-                                next_hz = 10;
-                            }
+                            const int next_hz = impl_->PickNextDegradeHz();
                             if (next_hz != impl_->current_update_hz) {
                                 impl_->current_update_hz = next_hz;
                                 SDL_Log("PluginWorker degraded update_hz to %d due to consecutive timeouts", next_hz);
@@ -1077,6 +1597,7 @@ PluginWorkerStats PluginWorker::GetStats() const {
     std::lock_guard<std::mutex> lock(impl_->mtx);
     PluginWorkerStats s{};
     s.total_update_count = impl_->total_update_count;
+    s.success_count = impl_->success_count;
     s.timeout_count = impl_->timeout_count;
     s.exception_count = impl_->exception_count;
     s.internal_error_count = impl_->internal_error_count;
@@ -1084,6 +1605,27 @@ PluginWorkerStats PluginWorker::GetStats() const {
     s.recover_count = impl_->recover_count;
     s.current_update_hz = impl_->current_update_hz;
     s.auto_disabled = impl_->auto_disabled;
+    s.model_id = impl_->model_id;
+    s.model_version = impl_->model_version;
+    s.backend = impl_->backend;
+    s.batch = impl_->batch;
+    s.last_latency_ms = impl_->last_latency_ms;
+    s.avg_latency_ms = impl_->ComputeAverageLatencyMs();
+    if (!impl_->latency_window_ms.empty()) {
+        std::vector<double> sorted = impl_->latency_window_ms;
+        std::sort(sorted.begin(), sorted.end());
+        const std::size_t last = sorted.size() - 1;
+        const std::size_t p50_idx = static_cast<std::size_t>(std::floor(0.50 * static_cast<double>(last)));
+        const std::size_t p95_idx = static_cast<std::size_t>(std::floor(0.95 * static_cast<double>(last)));
+        s.latency_p50_ms = sorted[std::min(p50_idx, last)];
+        s.latency_p95_ms = sorted[std::min(p95_idx, last)];
+    }
+    s.success_rate = impl_->total_update_count > 0
+                         ? static_cast<double>(impl_->success_count) / static_cast<double>(impl_->total_update_count)
+                         : 0.0;
+    s.timeout_rate = impl_->total_update_count > 0
+                         ? static_cast<double>(impl_->timeout_count) / static_cast<double>(impl_->total_update_count)
+                         : 0.0;
     s.last_error = impl_->last_error;
     return s;
 }

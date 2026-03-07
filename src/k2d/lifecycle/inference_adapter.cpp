@@ -6,8 +6,9 @@
 namespace k2d {
 
 PluginInferenceAdapter::PluginInferenceAdapter(std::unique_ptr<IBehaviorPlugin> plugin,
-                                               std::string config_path)
-    : config_path_(std::move(config_path)) {
+                                               std::string config_path,
+                                               PluginWorkerConfig worker_cfg)
+    : config_path_(std::move(config_path)), worker_cfg_(std::move(worker_cfg)) {
     manager_.SetPlugin(std::move(plugin));
     hot_reload_enabled_ = !config_path_.empty();
 }
@@ -18,7 +19,9 @@ bool PluginInferenceAdapter::Init(const PluginRuntimeConfig &runtime_cfg,
                                   std::string *out_error) {
     runtime_cfg_ = runtime_cfg;
     host_ = host;
-    worker_cfg_ = worker_cfg;
+    if (worker_cfg.update_hz > 0) {
+        worker_cfg_ = worker_cfg;
+    }
 
     const PluginStatus st = manager_.Init(runtime_cfg, host, out_error);
     if (st != PluginStatus::Ok) {
@@ -26,7 +29,7 @@ bool PluginInferenceAdapter::Init(const PluginRuntimeConfig &runtime_cfg,
         return false;
     }
 
-    if (!worker_.Start(&manager_, worker_cfg, out_error)) {
+    if (!worker_.Start(&manager_, worker_cfg_, out_error)) {
         manager_.Destroy();
         ready_ = false;
         return false;
@@ -66,6 +69,10 @@ bool PluginInferenceAdapter::IsReady() const noexcept {
 
 PluginWorkerStats PluginInferenceAdapter::GetStats() const {
     return worker_.GetStats();
+}
+
+PluginWorkerConfig PluginInferenceAdapter::GetWorkerConfig() const {
+    return worker_cfg_;
 }
 
 const PluginDescriptor &PluginInferenceAdapter::Descriptor() const noexcept {
@@ -148,12 +155,15 @@ std::unique_ptr<IInferenceAdapter> CreateDefaultInferenceAdapter() {
     };
 
     for (const auto &cfg_path : config_candidates) {
-        if (auto plugin = CreateOnnxBehaviorPluginFromConfig(cfg_path, &plugin_err)) {
-            return std::make_unique<PluginInferenceAdapter>(std::move(plugin), cfg_path);
+        PluginArtifactSpec spec{};
+        if (auto plugin = CreateOnnxBehaviorPluginFromConfig(cfg_path, &plugin_err, &spec)) {
+            const PluginWorkerConfig worker_cfg = BuildPluginWorkerConfig(spec.worker_tuning);
+            return std::make_unique<PluginInferenceAdapter>(std::move(plugin), cfg_path, worker_cfg);
         }
     }
 
-    return std::make_unique<PluginInferenceAdapter>(CreateDefaultBehaviorPlugin());
+    PluginWorkerConfig default_worker_cfg{};
+    return std::make_unique<PluginInferenceAdapter>(CreateDefaultBehaviorPlugin(), "", default_worker_cfg);
 }
 
 }  // namespace k2d

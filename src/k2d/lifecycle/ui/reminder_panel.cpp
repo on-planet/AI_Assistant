@@ -8,6 +8,7 @@
 #include "imgui.h"
 
 #include "k2d/lifecycle/state/app_runtime_state.h"
+#include "k2d/lifecycle/ui/ui_empty_state.h"
 
 namespace k2d {
 
@@ -27,6 +28,19 @@ void RenderReminderPanel(AppRuntime &runtime) {
             const std::int64_t due_sec = now_sec + static_cast<std::int64_t>(runtime.reminder_after_min) * 60;
             std::string add_err;
             if (runtime.reminder_service.AddReminder(runtime.reminder_title_input, due_sec, &add_err)) {
+                const std::int64_t new_id = runtime.reminder_service.LastInsertRowId();
+                ReminderItem after_item{};
+                std::string get_err;
+                if (new_id > 0 && runtime.reminder_service.GetReminderById(new_id, &after_item, &get_err)) {
+                    EditCommand cmd{};
+                    cmd.type = EditCommand::Type::Reminder;
+                    cmd.reminder_id = new_id;
+                    cmd.reminder_had_before = false;
+                    cmd.reminder_had_after = true;
+                    cmd.after_reminder = after_item;
+                    PushEditCommand(runtime.undo_stack, runtime.redo_stack, std::move(cmd));
+                    runtime.editor_project_dirty = true;
+                }
                 runtime.reminder_last_error.clear();
                 runtime.reminder_upcoming = runtime.reminder_service.ListActive(64, nullptr);
                 runtime.reminder_page = 0;
@@ -146,8 +160,22 @@ void RenderReminderPanel(AppRuntime &runtime) {
         }
 
         if (ImGui::Button("Complete")) {
+            ReminderItem before_item = item;
             std::string op_err;
             if (runtime.reminder_service.MarkCompleted(item.id, true, &op_err)) {
+                ReminderItem after_item{};
+                std::string get_err;
+                EditCommand cmd{};
+                cmd.type = EditCommand::Type::Reminder;
+                cmd.reminder_id = item.id;
+                cmd.reminder_had_before = true;
+                cmd.before_reminder = before_item;
+                cmd.reminder_had_after = runtime.reminder_service.GetReminderById(item.id, &after_item, &get_err);
+                if (cmd.reminder_had_after) {
+                    cmd.after_reminder = after_item;
+                }
+                PushEditCommand(runtime.undo_stack, runtime.redo_stack, std::move(cmd));
+                runtime.editor_project_dirty = true;
                 runtime.reminder_upcoming = runtime.reminder_service.ListActive(64, nullptr);
                 runtime.reminder_last_error.clear();
                 const bool deleting_last_on_page = (start == end - 1) && (idx == end - 1) && (runtime.reminder_page > 0);
@@ -162,8 +190,17 @@ void RenderReminderPanel(AppRuntime &runtime) {
         }
         ImGui::SameLine();
         if (ImGui::Button("Delete")) {
+            ReminderItem before_item = item;
             std::string op_err;
             if (runtime.reminder_service.DeleteReminder(item.id, &op_err)) {
+                EditCommand cmd{};
+                cmd.type = EditCommand::Type::Reminder;
+                cmd.reminder_id = item.id;
+                cmd.reminder_had_before = true;
+                cmd.before_reminder = before_item;
+                cmd.reminder_had_after = false;
+                PushEditCommand(runtime.undo_stack, runtime.redo_stack, std::move(cmd));
+                runtime.editor_project_dirty = true;
                 runtime.reminder_upcoming = runtime.reminder_service.ListActive(64, nullptr);
                 runtime.reminder_last_error.clear();
                 const bool deleting_last_on_page = (start == end - 1) && (idx == end - 1) && (runtime.reminder_page > 0);
@@ -180,7 +217,12 @@ void RenderReminderPanel(AppRuntime &runtime) {
         ImGui::PopID();
     }
     if (start >= end) {
-        ImGui::TextDisabled("(no reminders on this page)");
+        RenderUnifiedEmptyState("reminder_empty_state",
+                                "无提醒",
+                                total_items == 0
+                                    ? "当前没有符合筛选条件的提醒，可以新增提醒或调整搜索与状态过滤。"
+                                    : "当前分页没有提醒，请切换上一页或调整筛选条件。",
+                                ImVec4(0.72f, 0.82f, 1.0f, 1.0f));
     }
     ImGui::EndChild();
 }

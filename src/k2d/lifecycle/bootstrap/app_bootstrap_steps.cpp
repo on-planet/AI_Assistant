@@ -120,6 +120,9 @@ bool AppLifecycleInitImpl(AppLifecycleContext &ctx) {
     ImGui::StyleColorsDark();
 
     ImGuiIO &io = ImGui::GetIO();
+#if defined(IMGUI_HAS_DOCK)
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+#endif
     io.Fonts->Clear();
 
     ImFontConfig font_cfg{};

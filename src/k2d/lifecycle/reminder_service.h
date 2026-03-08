@@ -31,6 +31,15 @@ public:
                      std::int64_t due_unix_sec,
                      std::string *out_error);
 
+    bool RestoreReminder(const ReminderItem &item,
+                         std::string *out_error);
+
+    bool GetReminderById(std::int64_t id,
+                         ReminderItem *out_item,
+                         std::string *out_error) const;
+
+    std::int64_t LastInsertRowId() const;
+
     std::vector<ReminderItem> ListUpcoming(std::int64_t now_unix_sec,
                                            int limit,
                                            std::string *out_error) const;

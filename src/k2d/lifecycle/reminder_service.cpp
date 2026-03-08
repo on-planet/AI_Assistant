@@ -113,6 +113,87 @@ bool ReminderService::AddReminder(const std::string &title,
     return true;
 }
 
+bool ReminderService::RestoreReminder(const ReminderItem &item,
+                                      std::string *out_error) {
+    if (!db_) {
+        return SetError(out_error, "reminder db not initialized");
+    }
+    if (item.id <= 0) {
+        return SetError(out_error, "reminder id is invalid");
+    }
+    if (item.title.empty()) {
+        return SetError(out_error, "title is empty");
+    }
+
+    const char *sql =
+        "INSERT INTO reminders(id, title, due_unix_sec, completed, notified) "
+        "VALUES(?1, ?2, ?3, ?4, ?5);";
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return SetSqliteError(db_, out_error, "prepare restore reminder failed");
+    }
+
+    sqlite3_bind_int64(stmt, 1, static_cast<sqlite3_int64>(item.id));
+    sqlite3_bind_text(stmt, 2, item.title.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 3, static_cast<sqlite3_int64>(item.due_unix_sec));
+    sqlite3_bind_int(stmt, 4, item.completed ? 1 : 0);
+    sqlite3_bind_int(stmt, 5, item.notified ? 1 : 0);
+
+    const int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        return SetSqliteError(db_, out_error, "execute restore reminder failed");
+    }
+    return true;
+}
+
+bool ReminderService::GetReminderById(std::int64_t id,
+                                      ReminderItem *out_item,
+                                      std::string *out_error) const {
+    if (!db_) {
+        return SetError(out_error, "reminder db not initialized");
+    }
+    if (!out_item) {
+        return SetError(out_error, "out_item is null");
+    }
+
+    const char *sql =
+        "SELECT id, title, due_unix_sec, completed, notified "
+        "FROM reminders WHERE id = ?1 LIMIT 1;";
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return SetSqliteError(db_, out_error, "prepare get reminder failed");
+    }
+
+    sqlite3_bind_int64(stmt, 1, static_cast<sqlite3_int64>(id));
+    const int rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        ReminderItem item{};
+        item.id = static_cast<std::int64_t>(sqlite3_column_int64(stmt, 0));
+        const unsigned char *title_text = sqlite3_column_text(stmt, 1);
+        item.title = title_text ? reinterpret_cast<const char *>(title_text) : "";
+        item.due_unix_sec = static_cast<std::int64_t>(sqlite3_column_int64(stmt, 2));
+        item.completed = sqlite3_column_int(stmt, 3) != 0;
+        item.notified = sqlite3_column_int(stmt, 4) != 0;
+        *out_item = std::move(item);
+        sqlite3_finalize(stmt);
+        return true;
+    }
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        return SetSqliteError(db_, out_error, "execute get reminder failed");
+    }
+    return SetError(out_error, "reminder not found");
+}
+
+std::int64_t ReminderService::LastInsertRowId() const {
+    if (!db_) {
+        return 0;
+    }
+    return static_cast<std::int64_t>(sqlite3_last_insert_rowid(db_));
+}
+
 std::vector<ReminderItem> ReminderService::ListUpcoming(std::int64_t now_unix_sec,
                                                         int limit,
                                                         std::string *out_error) const {

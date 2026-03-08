@@ -73,24 +73,53 @@ void ApplyPivotDelta(ModelPart *part, float delta_x, float delta_y) {
     }
 }
 
-void UndoLastEdit(AppRuntime &runtime) {
-    const bool ok = k2d::UndoLastEdit(
-        runtime.model,
-        runtime.undo_stack,
-        runtime.redo_stack,
-        [](ModelPart *part, float dx, float dy) { ApplyPivotDelta(part, dx, dy); });
-    runtime.editor_status = ok ? "undo" : "undo empty";
+namespace {
+
+const char *EditCommandTypeName(EditCommand::Type type) {
+    switch (type) {
+        case EditCommand::Type::Transform: return "transform";
+        case EditCommand::Type::Timeline: return "timeline";
+        case EditCommand::Type::Param: return "param";
+        case EditCommand::Type::Inspector: return "inspector";
+        case EditCommand::Type::Reminder: return "reminder";
+        default: return "unknown";
+    }
+}
+
+void SetUndoRedoStatus(AppRuntime &runtime, const char *op_name, bool ok, const EditCommand *cmd) {
+    if (!ok) {
+        runtime.editor_status = std::string(op_name) + " empty";
+        runtime.editor_status_ttl = 1.0f;
+        return;
+    }
+    runtime.editor_status = std::string(op_name) + " " + EditCommandTypeName(cmd ? cmd->type : EditCommand::Type::Transform);
     runtime.editor_status_ttl = 1.0f;
 }
 
-void RedoLastEdit(AppRuntime &runtime) {
-    const bool ok = k2d::RedoLastEdit(
+}  // namespace
+
+void UndoLastEdit(AppRuntime &runtime) {
+    const EditCommand *cmd = runtime.undo_stack.empty() ? nullptr : &runtime.undo_stack.back();
+    const bool ok = k2d::UndoLastEdit(
         runtime.model,
+        &runtime.reminder_service,
+        &runtime.reminder_upcoming,
         runtime.undo_stack,
         runtime.redo_stack,
         [](ModelPart *part, float dx, float dy) { ApplyPivotDelta(part, dx, dy); });
-    runtime.editor_status = ok ? "redo" : "redo empty";
-    runtime.editor_status_ttl = 1.0f;
+    SetUndoRedoStatus(runtime, "undo", ok, cmd);
+}
+
+void RedoLastEdit(AppRuntime &runtime) {
+    const EditCommand *cmd = runtime.redo_stack.empty() ? nullptr : &runtime.redo_stack.back();
+    const bool ok = k2d::RedoLastEdit(
+        runtime.model,
+        &runtime.reminder_service,
+        &runtime.reminder_upcoming,
+        runtime.undo_stack,
+        runtime.redo_stack,
+        [](ModelPart *part, float dx, float dy) { ApplyPivotDelta(part, dx, dy); });
+    SetUndoRedoStatus(runtime, "redo", ok, cmd);
 }
 
 bool SaveEditorProjectJsonToDisk(AppRuntime &runtime, const std::string &project_path, std::string *out_error) {
@@ -134,6 +163,26 @@ bool SaveEditorProjectJsonToDisk(AppRuntime &runtime, const std::string &project
     editor.emplace("viewPanX", JsonValue::makeNumber(runtime.editor_view_pan_x));
     editor.emplace("viewPanY", JsonValue::makeNumber(runtime.editor_view_pan_y));
     editor.emplace("viewZoom", JsonValue::makeNumber(runtime.editor_view_zoom));
+    editor.emplace("workspaceMode", JsonValue::makeNumber(static_cast<double>(runtime.workspace_mode == WorkspaceMode::Animation ? 0 :
+                                                                              (runtime.workspace_mode == WorkspaceMode::Debug ? 1 :
+                                                                              (runtime.workspace_mode == WorkspaceMode::Perception ? 2 : 3)))));
+    editor.emplace("workspaceLayoutFollowPreset", JsonValue::makeBool(runtime.workspace_layout_follow_preset));
+    editor.emplace("workspaceDockingIni", JsonValue::makeString(runtime.workspace_docking_ini));
+
+    auto save_window_layout = [](const AppRuntime::WindowLayoutState &layout) {
+        JsonObject obj;
+        obj.emplace("posX", JsonValue::makeNumber(layout.pos_x));
+        obj.emplace("posY", JsonValue::makeNumber(layout.pos_y));
+        obj.emplace("sizeW", JsonValue::makeNumber(layout.size_w));
+        obj.emplace("sizeH", JsonValue::makeNumber(layout.size_h));
+        obj.emplace("collapsed", JsonValue::makeBool(layout.collapsed));
+        obj.emplace("initialized", JsonValue::makeBool(layout.initialized));
+        return JsonValue::makeObject(std::move(obj));
+    };
+
+    editor.emplace("runtimeDebugWindow", save_window_layout(runtime.runtime_debug_window_layout));
+    editor.emplace("inspectorWindow", save_window_layout(runtime.inspector_window_layout));
+    editor.emplace("reminderWindow", save_window_layout(runtime.reminder_window_layout));
     root.emplace("editor", JsonValue::makeObject(std::move(editor)));
 
     JsonObject feature;
@@ -232,9 +281,35 @@ bool LoadEditorProjectJsonFromDisk(AppRuntime &runtime,
         runtime.selected_param_index = static_cast<int>(editor->getNumber("selectedParamIndex").value_or(0.0));
         runtime.manual_param_mode = editor->getBool("manualParamMode").value_or(runtime.manual_param_mode);
         runtime.edit_mode = editor->getBool("editMode").value_or(runtime.edit_mode);
+        runtime.workspace_dock_rebuild_requested = true;
+        runtime.workspace_layout_reset_requested = false;
+        runtime.workspace_layout_follow_preset = editor->getBool("workspaceLayoutFollowPreset").value_or(runtime.workspace_layout_follow_preset);
+        runtime.workspace_docking_ini = editor->getString("workspaceDockingIni").value_or(runtime.workspace_docking_ini);
+        runtime.workspace_docking_ini_pending_load = !runtime.workspace_docking_ini.empty();
+        runtime.last_applied_workspace_mode = runtime.workspace_mode;
         runtime.editor_view_pan_x = static_cast<float>(editor->getNumber("viewPanX").value_or(runtime.editor_view_pan_x));
         runtime.editor_view_pan_y = static_cast<float>(editor->getNumber("viewPanY").value_or(runtime.editor_view_pan_y));
         runtime.editor_view_zoom = static_cast<float>(editor->getNumber("viewZoom").value_or(runtime.editor_view_zoom));
+        const int workspace_mode = static_cast<int>(editor->getNumber("workspaceMode").value_or(1.0));
+        runtime.workspace_mode = workspace_mode == 0 ? WorkspaceMode::Animation :
+                                 (workspace_mode == 1 ? WorkspaceMode::Debug :
+                                 (workspace_mode == 2 ? WorkspaceMode::Perception : WorkspaceMode::Authoring));
+
+        auto load_window_layout = [](const JsonValue *value, AppRuntime::WindowLayoutState &layout) {
+            if (!value || !value->isObject()) {
+                return;
+            }
+            layout.pos_x = static_cast<float>(value->getNumber("posX").value_or(layout.pos_x));
+            layout.pos_y = static_cast<float>(value->getNumber("posY").value_or(layout.pos_y));
+            layout.size_w = static_cast<float>(value->getNumber("sizeW").value_or(layout.size_w));
+            layout.size_h = static_cast<float>(value->getNumber("sizeH").value_or(layout.size_h));
+            layout.collapsed = value->getBool("collapsed").value_or(layout.collapsed);
+            layout.initialized = value->getBool("initialized").value_or(layout.initialized);
+        };
+
+        load_window_layout(editor->get("runtimeDebugWindow"), runtime.runtime_debug_window_layout);
+        load_window_layout(editor->get("inspectorWindow"), runtime.inspector_window_layout);
+        load_window_layout(editor->get("reminderWindow"), runtime.reminder_window_layout);
     }
 
     if (const JsonValue *feature = root.get("feature"); feature && feature->isObject()) {

@@ -78,6 +78,7 @@ add_executable(AI_assistant WIN32
     src/k2d/capture/screen_capture_dxgi.cpp
     src/k2d/lifecycle/camera_facemesh_service.cpp
     src/k2d/lifecycle/utils/app_text_utils.cpp
+    src/k2d/lifecycle/ui/ui_empty_state.cpp
     src/k2d/lifecycle/services/task_category_service.cpp
     src/k2d/lifecycle/asr/offline_asr_provider.cpp
     src/k2d/lifecycle/asr/cloud_asr_provider.cpp

@@ -13,7 +13,9 @@
 #include "imgui.h"
 
 #include "k2d/core/json.h"
+#include "k2d/lifecycle/editor/editor_session_service.h"
 #include "k2d/lifecycle/state/app_runtime_state.h"
+#include "k2d/lifecycle/ui/ui_empty_state.h"
 
 namespace k2d {
 
@@ -388,7 +390,10 @@ void RenderRuntimeErrorClassificationTable(const AppRuntime &runtime, ErrorViewF
     }
 
     if (filtered_rows.empty()) {
-        ImGui::TextDisabled("当前过滤条件下无错误记录（系统可能健康）");
+        RenderUnifiedEmptyState("runtime_error_empty_state",
+                                "无错误",
+                                "当前过滤条件下没有错误记录，系统可能处于健康状态。",
+                                ImVec4(0.45f, 0.85f, 0.45f, 1.0f));
         return;
     }
 
@@ -666,21 +671,51 @@ std::string DetectParamSemanticGroup(const std::string &param_id) {
         return static_cast<char>(std::tolower(c));
     });
 
-    if (id_lower.find("eye") != std::string::npos) return "Eye";
-    if (id_lower.find("brow") != std::string::npos) return "Brow";
-    if (id_lower.find("mouth") != std::string::npos || id_lower.find("lip") != std::string::npos) return "Mouth";
-    if (id_lower.find("head") != std::string::npos || id_lower.find("neck") != std::string::npos) return "Head";
-    if (id_lower.find("hair") != std::string::npos || id_lower.find("bang") != std::string::npos) return "Hair";
-    if (id_lower.find("body") != std::string::npos || id_lower.find("arm") != std::string::npos) return "Body";
-    return "Other";
+    if (id_lower.find("eye") != std::string::npos || id_lower.find("blink") != std::string::npos) return "眼睛";
+    if (id_lower.find("head") != std::string::npos || id_lower.find("neck") != std::string::npos) return "头部";
+    if (id_lower.find("brow") != std::string::npos || id_lower.find("mouth") != std::string::npos ||
+        id_lower.find("lip") != std::string::npos || id_lower.find("cheek") != std::string::npos ||
+        id_lower.find("nose") != std::string::npos || id_lower.find("emotion") != std::string::npos ||
+        id_lower.find("smile") != std::string::npos || id_lower.find("angry") != std::string::npos) {
+        return "表情";
+    }
+    if (id_lower.find("window") != std::string::npos || id_lower.find("opacity") != std::string::npos ||
+        id_lower.find("clickthrough") != std::string::npos || id_lower.find("click_through") != std::string::npos) {
+        return "窗口";
+    }
+    if (id_lower.find("behavior") != std::string::npos || id_lower.find("idle") != std::string::npos ||
+        id_lower.find("debug") != std::string::npos || id_lower.find("manual") != std::string::npos) {
+        return "行为";
+    }
+    if (id_lower.find("hair") != std::string::npos || id_lower.find("bang") != std::string::npos) return "头发";
+    if (id_lower.find("body") != std::string::npos || id_lower.find("arm") != std::string::npos) return "身体";
+    return "其他";
+}
+
+bool ParamMatchesSearch(const std::string &param_id, const char *search_text) {
+    if (search_text == nullptr || search_text[0] == '\0') {
+        return true;
+    }
+    std::string id_lower = param_id;
+    std::transform(id_lower.begin(), id_lower.end(), id_lower.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    std::string needle = search_text;
+    std::transform(needle.begin(), needle.end(), needle.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return id_lower.find(needle) != std::string::npos;
 }
 
 using ParamGroup = std::pair<std::string, std::vector<int>>;
 
-std::vector<ParamGroup> BuildParamGroups(const AppRuntime &runtime, int group_mode) {
+std::vector<ParamGroup> BuildParamGroups(const AppRuntime &runtime, int group_mode, const char *search_text) {
     std::map<std::string, std::vector<int>, std::less<>> grouped;
     for (int i = 0; i < static_cast<int>(runtime.model.parameters.size()); ++i) {
         const auto &p = runtime.model.parameters[static_cast<std::size_t>(i)];
+        if (!ParamMatchesSearch(p.id, search_text)) {
+            continue;
+        }
         const std::string key = (group_mode == 1) ? DetectParamSemanticGroup(p.id) : DetectParamPrefix(p.id);
         grouped[key].push_back(i);
     }
@@ -737,6 +772,131 @@ void UpsertTimelineKeyframe(AnimationChannel &ch, float time_sec, float value) {
     std::sort(ch.keyframes.begin(), ch.keyframes.end(), [](const TimelineKeyframe &a, const TimelineKeyframe &b) {
         return a.time_sec < b.time_sec;
     });
+}
+
+float EvalTimelinePreviewValue(const AnimationChannel &channel, float time_sec) {
+    if (channel.keyframes.empty()) {
+        return 0.0f;
+    }
+    if (channel.keyframes.size() == 1) {
+        return channel.keyframes.front().value;
+    }
+
+    const auto &kfs = channel.keyframes;
+    const float start_t = kfs.front().time_sec;
+    const float end_t = kfs.back().time_sec;
+    const float duration = std::max(1e-6f, end_t - start_t);
+
+    float eval_t = time_sec;
+    if (channel.timeline_wrap == TimelineWrapMode::Loop) {
+        const float x = std::fmod(time_sec - start_t, duration);
+        eval_t = start_t + (x < 0.0f ? (x + duration) : x);
+    } else if (channel.timeline_wrap == TimelineWrapMode::PingPong) {
+        const float period = duration * 2.0f;
+        float x = std::fmod(time_sec - start_t, period);
+        if (x < 0.0f) x += period;
+        eval_t = (x <= duration) ? (start_t + x) : (end_t - (x - duration));
+    }
+
+    if (eval_t <= start_t) {
+        return kfs.front().value;
+    }
+    if (eval_t >= end_t) {
+        return kfs.back().value;
+    }
+
+    for (std::size_t i = 1; i < kfs.size(); ++i) {
+        const TimelineKeyframe &a = kfs[i - 1];
+        const TimelineKeyframe &b = kfs[i];
+        if (eval_t <= b.time_sec) {
+            if (channel.timeline_interp == TimelineInterpolation::Step) {
+                return a.value;
+            }
+            const float span = std::max(1e-6f, b.time_sec - a.time_sec);
+            const float t = std::clamp((eval_t - a.time_sec) / span, 0.0f, 1.0f);
+            if (channel.timeline_interp == TimelineInterpolation::Linear) {
+                return a.value + (b.value - a.value) * t;
+            }
+
+            const float t2 = t * t;
+            const float t3 = t2 * t;
+            const float h00 = 2.0f * t3 - 3.0f * t2 + 1.0f;
+            const float h10 = t3 - 2.0f * t2 + t;
+            const float h01 = -2.0f * t3 + 3.0f * t2;
+            const float h11 = t3 - t2;
+            const float w0 = std::clamp(a.out_weight, 0.0f, 1.0f);
+            const float w1 = std::clamp(b.in_weight, 0.0f, 1.0f);
+            const float m0 = a.out_tangent * span * w0;
+            const float m1 = b.in_tangent * span * w1;
+            return h00 * a.value + h10 * m0 + h01 * b.value + h11 * m1;
+        }
+    }
+
+    return kfs.back().value;
+}
+
+float SnapTimelineTime(const AppRuntime &runtime, float t) {
+    t = std::clamp(t, 0.0f, std::max(0.0f, runtime.timeline_duration_sec));
+    if (!runtime.timeline_snap_enabled) {
+        return t;
+    }
+    switch (runtime.timeline_snap_mode) {
+        case 0: {
+            const float fps = std::max(1.0f, runtime.timeline_snap_fps);
+            return std::round(t * fps) / fps;
+        }
+        case 1:
+            return std::round(t * 10.0f) / 10.0f;
+        case 2:
+            return runtime.timeline_cursor_sec;
+        default:
+            return t;
+    }
+}
+
+EditCommand MakeTimelineEditCommand(const AnimationChannel &channel,
+                                    const std::vector<TimelineKeyframe> &before_keyframes,
+                                    const std::vector<TimelineKeyframe> &after_keyframes) {
+    EditCommand cmd{};
+    cmd.type = EditCommand::Type::Timeline;
+    cmd.channel_id = channel.id;
+    cmd.before_keyframes = before_keyframes;
+    cmd.after_keyframes = after_keyframes;
+    return cmd;
+}
+
+bool TimelineKeyframeNearlyEqual(const TimelineKeyframe &a, const TimelineKeyframe &b) {
+    return std::abs(a.time_sec - b.time_sec) < 1e-6f &&
+           std::abs(a.value - b.value) < 1e-6f &&
+           std::abs(a.in_tangent - b.in_tangent) < 1e-6f &&
+           std::abs(a.out_tangent - b.out_tangent) < 1e-6f &&
+           std::abs(a.in_weight - b.in_weight) < 1e-6f &&
+           std::abs(a.out_weight - b.out_weight) < 1e-6f;
+}
+
+bool TimelineKeyframeListEqual(const std::vector<TimelineKeyframe> &lhs,
+                               const std::vector<TimelineKeyframe> &rhs) {
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < lhs.size(); ++i) {
+        if (!TimelineKeyframeNearlyEqual(lhs[i], rhs[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void PushTimelineEditCommand(AppRuntime &runtime,
+                             const AnimationChannel &channel,
+                             const std::vector<TimelineKeyframe> &before_keyframes,
+                             const std::vector<TimelineKeyframe> &after_keyframes) {
+    if (TimelineKeyframeListEqual(before_keyframes, after_keyframes)) {
+        return;
+    }
+    PushEditCommand(runtime.undo_stack,
+                    runtime.redo_stack,
+                    MakeTimelineEditCommand(channel, before_keyframes, after_keyframes));
 }
 
 void RenderOverviewRuntimeHealth(const AppRuntime &runtime) {
@@ -853,12 +1013,24 @@ void RenderEditorTab(AppRuntime &runtime) {
         ImGui::Checkbox("Enable ASR", &runtime.feature_asr_enabled);
         ImGui::TextDisabled("运行时 GUI 可通过 F1 或 FPS Overlay 快速开关；OCR 详细调参已收纳到“感知”页。");
 
-        ImGui::SeparatorText("Param Panel Enhanced (Group/Batch Bind)");
-        if (runtime.model_loaded && !runtime.model.parameters.empty()) {
+        ImGui::SeparatorText("Param Panel Enhanced (Group/Search/Batch Bind)");
+        if (!runtime.model_loaded) {
+            RenderUnifiedEmptyState("editor_no_model_empty_state",
+                                    "无模型",
+                                    "当前尚未加载模型，参数分组、批量绑定与编辑能力暂不可用。",
+                                    ImVec4(0.70f, 0.78f, 1.0f, 1.0f));
+        } else if (runtime.model.parameters.empty()) {
+            RenderUnifiedEmptyState("editor_no_params_empty_state",
+                                    "无参数",
+                                    "当前模型没有可编辑参数，请先检查模型参数定义或导入结果。",
+                                    ImVec4(0.70f, 0.78f, 1.0f, 1.0f));
+        } else {
             const char *group_modes[] = {"Prefix", "Semantic"};
             ImGui::Combo("Param Group Mode", &runtime.param_group_mode, group_modes, 2);
+            ImGui::InputTextWithHint("Param Search", "fuzzy search by parameter name...", runtime.param_search,
+                                     static_cast<int>(sizeof(runtime.param_search)));
 
-            std::vector<ParamGroup> groups = BuildParamGroups(runtime, runtime.param_group_mode);
+            std::vector<ParamGroup> groups = BuildParamGroups(runtime, runtime.param_group_mode, runtime.param_search);
             if (!groups.empty()) {
                 runtime.selected_param_group_index = std::clamp(runtime.selected_param_group_index, 0, static_cast<int>(groups.size()) - 1);
 
@@ -877,6 +1049,10 @@ void RenderEditorTab(AppRuntime &runtime) {
 
                 const auto &selected_group = groups[static_cast<std::size_t>(runtime.selected_param_group_index)];
                 ImGui::Text("Group Param Count: %d", static_cast<int>(selected_group.second.size()));
+                if (runtime.param_search[0] != '\0') {
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("| filter: %s", runtime.param_search);
+                }
                 if (!selected_group.second.empty()) {
                     std::string preview;
                     const int max_preview = std::min(5, static_cast<int>(selected_group.second.size()));
@@ -888,6 +1064,60 @@ void RenderEditorTab(AppRuntime &runtime) {
                         }
                     }
                     ImGui::TextWrapped("Preview: %s%s", preview.c_str(), selected_group.second.size() > static_cast<std::size_t>(max_preview) ? " ..." : "");
+                }
+
+                ImGui::SeparatorText("Selected Group Parameters");
+                if (ImGui::BeginTable("selected_group_param_table",
+                                      6,
+                                      ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+                    ImGui::TableSetupColumn("Param", ImGuiTableColumnFlags_WidthStretch, 0.28f);
+                    ImGui::TableSetupColumn("Min", ImGuiTableColumnFlags_WidthStretch, 0.12f);
+                    ImGui::TableSetupColumn("Max", ImGuiTableColumnFlags_WidthStretch, 0.12f);
+                    ImGui::TableSetupColumn("Default", ImGuiTableColumnFlags_WidthStretch, 0.14f);
+                    ImGui::TableSetupColumn("Current", ImGuiTableColumnFlags_WidthStretch, 0.14f);
+                    ImGui::TableSetupColumn("Target", ImGuiTableColumnFlags_WidthStretch, 0.20f);
+                    ImGui::TableHeadersRow();
+
+                    for (int param_idx : selected_group.second) {
+                        if (param_idx < 0 || param_idx >= static_cast<int>(runtime.model.parameters.size())) {
+                            continue;
+                        }
+                        auto &model_param = runtime.model.parameters[static_cast<std::size_t>(param_idx)];
+                        auto &param = model_param.param;
+                        const auto &spec = param.spec();
+                        float target_value = param.target();
+
+                        ImGui::PushID(param_idx);
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        const bool is_selected = runtime.selected_param_index == param_idx;
+                        if (ImGui::Selectable(model_param.id.c_str(), is_selected, ImGuiSelectableFlags_SpanAllColumns)) {
+                            runtime.selected_param_index = param_idx;
+                        }
+
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::Text("%.3f", spec.min_value);
+                        ImGui::TableSetColumnIndex(2);
+                        ImGui::Text("%.3f", spec.max_value);
+                        ImGui::TableSetColumnIndex(3);
+                        ImGui::Text("%.3f", spec.default_value);
+                        ImGui::TableSetColumnIndex(4);
+                        ImGui::Text("%.3f", param.value());
+                        ImGui::TableSetColumnIndex(5);
+                        const float before_target_value = param.target();
+                        if (ImGui::SliderFloat("##target", &target_value, spec.min_value, spec.max_value, "%.3f")) {
+                            param.SetTarget(target_value);
+                            EditCommand cmd{};
+                            cmd.type = EditCommand::Type::Param;
+                            cmd.param_id = model_param.id;
+                            cmd.before_param_value = before_target_value;
+                            cmd.after_param_value = target_value;
+                            PushEditCommand(runtime.undo_stack, runtime.redo_stack, std::move(cmd));
+                            runtime.editor_project_dirty = true;
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::EndTable();
                 }
 
                 const char *binding_props[] = {"PosX", "PosY", "RotDeg", "ScaleX", "ScaleY", "Opacity"};
@@ -942,10 +1172,13 @@ void RenderEditorTab(AppRuntime &runtime) {
                                             " | prop=" + BindingTypeNameUi(bt);
                     runtime.editor_status_ttl = 2.5f;
                 }
+            } else {
+                RenderUnifiedEmptyState("editor_filtered_no_params_empty_state",
+                                        "无参数",
+                                        "当前搜索或分组条件下没有匹配参数，请调整关键字或切换分组方式。",
+                                        ImVec4(0.70f, 0.78f, 1.0f, 1.0f));
             }
-    } else {
-        ImGui::TextDisabled("model/parameters unavailable");
-    }
+        }
     ImGui::EndChild();
 }
 
@@ -956,9 +1189,19 @@ void RenderTimelineTab(AppRuntime &runtime) {
 
         ImGui::SliderFloat("Timeline Cursor (s)", &runtime.timeline_cursor_sec, 0.0f, std::max(0.1f, runtime.timeline_duration_sec), "%.2f");
         ImGui::SliderFloat("Timeline Duration (s)", &runtime.timeline_duration_sec, 0.5f, 30.0f, "%.1f");
+        ImGui::Checkbox("Enable Snap", &runtime.timeline_snap_enabled);
+        const char *snap_modes[] = {"整数帧", "0.1s", "播放头"};
+        ImGui::Combo("Snap Mode", &runtime.timeline_snap_mode, snap_modes, 3);
+        runtime.timeline_snap_mode = std::clamp(runtime.timeline_snap_mode, 0, 2);
+        if (runtime.timeline_snap_mode == 0) {
+            ImGui::SliderFloat("Snap FPS", &runtime.timeline_snap_fps, 1.0f, 120.0f, "%.0f");
+        }
 
         if (runtime.model.parameters.empty()) {
-            ImGui::TextDisabled("no parameters");
+            RenderUnifiedEmptyState("timeline_no_params_empty_state",
+                                    "无参数",
+                                    "时间轴需要至少一个参数通道才能进行预览与关键帧编辑。",
+                                    ImVec4(0.70f, 0.78f, 1.0f, 1.0f));
         } else {
             if (ImGui::Button("Add Channel")) {
                 const int pidx = runtime.selected_param_index >= 0 &&
@@ -1024,13 +1267,65 @@ void RenderTimelineTab(AppRuntime &runtime) {
                 ch.param_index = param_idx;
 
                 if (ImGui::Button("Add/Update Keyframe At Cursor")) {
+                    const auto before_keyframes = ch.keyframes;
                     const auto &p = runtime.model.parameters[static_cast<std::size_t>(param_idx)].param;
                     const float v = p.target();
-                    UpsertTimelineKeyframe(ch, runtime.timeline_cursor_sec, v);
+                    UpsertTimelineKeyframe(ch, SnapTimelineTime(runtime, runtime.timeline_cursor_sec), v);
+                    PushTimelineEditCommand(runtime, ch, before_keyframes, ch.keyframes);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Copy Selected Keyframes")) {
+                    runtime.timeline_keyframe_clipboard.clear();
+                    for (int idx : runtime.timeline_selected_keyframe_indices) {
+                        if (idx >= 0 && idx < static_cast<int>(ch.keyframes.size())) {
+                            runtime.timeline_keyframe_clipboard.push_back(ch.keyframes[static_cast<std::size_t>(idx)]);
+                        }
+                    }
+                    if (!runtime.timeline_keyframe_clipboard.empty()) {
+                        std::sort(runtime.timeline_keyframe_clipboard.begin(),
+                                  runtime.timeline_keyframe_clipboard.end(),
+                                  [](const TimelineKeyframe &a, const TimelineKeyframe &b) { return a.time_sec < b.time_sec; });
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Paste At Cursor") && !runtime.timeline_keyframe_clipboard.empty()) {
+                    const auto before_keyframes = ch.keyframes;
+                    const float base_time = runtime.timeline_keyframe_clipboard.front().time_sec;
+                    runtime.timeline_selected_keyframe_indices.clear();
+                    for (const auto &src_kf : runtime.timeline_keyframe_clipboard) {
+                        TimelineKeyframe pasted = src_kf;
+                        pasted.time_sec = SnapTimelineTime(runtime, runtime.timeline_cursor_sec + (src_kf.time_sec - base_time));
+                        bool updated = false;
+                        for (auto &dst_kf : ch.keyframes) {
+                            if (std::abs(dst_kf.time_sec - pasted.time_sec) < 1e-4f) {
+                                dst_kf = pasted;
+                                updated = true;
+                                break;
+                            }
+                        }
+                        if (!updated) {
+                            ch.keyframes.push_back(pasted);
+                        }
+                    }
+                    std::sort(ch.keyframes.begin(), ch.keyframes.end(), [](const TimelineKeyframe &a, const TimelineKeyframe &b) {
+                        return a.time_sec < b.time_sec;
+                    });
+                    for (std::size_t i = 0; i < ch.keyframes.size(); ++i) {
+                        for (const auto &src_kf : runtime.timeline_keyframe_clipboard) {
+                            const float pasted_time = SnapTimelineTime(runtime, runtime.timeline_cursor_sec + (src_kf.time_sec - base_time));
+                            if (std::abs(ch.keyframes[i].time_sec - pasted_time) < 1e-4f) {
+                                runtime.timeline_selected_keyframe_indices.push_back(static_cast<int>(i));
+                                break;
+                            }
+                        }
+                    }
+                    PushTimelineEditCommand(runtime, ch, before_keyframes, ch.keyframes);
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Remove Last Keyframe") && !ch.keyframes.empty()) {
+                    const auto before_keyframes = ch.keyframes;
                     ch.keyframes.pop_back();
+                    PushTimelineEditCommand(runtime, ch, before_keyframes, ch.keyframes);
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Delete Channel")) {
@@ -1038,7 +1333,28 @@ void RenderTimelineTab(AppRuntime &runtime) {
                     runtime.timeline_selected_channel_index = std::max(0, runtime.timeline_selected_channel_index - 1);
                 }
 
-                ImGui::Text("Keyframes: %d", static_cast<int>(ch.keyframes.size()));
+                if (ImGui::Button("Undo") && !runtime.undo_stack.empty()) {
+                    UndoLastEdit(runtime);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Redo") && !runtime.redo_stack.empty()) {
+                    RedoLastEdit(runtime);
+                }
+                if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)) {
+                    if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z) && !runtime.undo_stack.empty()) {
+                        UndoLastEdit(runtime);
+                    }
+                    if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y) && !runtime.redo_stack.empty()) {
+                        RedoLastEdit(runtime);
+                    }
+                }
+
+                ImGui::Text("Keyframes: %d | Selected: %d | Clipboard: %d | Undo: %d | Redo: %d",
+                            static_cast<int>(ch.keyframes.size()),
+                            static_cast<int>(runtime.timeline_selected_keyframe_indices.size()),
+                            static_cast<int>(runtime.timeline_keyframe_clipboard.size()),
+                            static_cast<int>(runtime.undo_stack.size()),
+                            static_cast<int>(runtime.redo_stack.size()));
 
                 ImGui::SeparatorText("Track Editor (Drag)");
                 const float track_h = 180.0f;
@@ -1114,6 +1430,12 @@ void RenderTimelineTab(AppRuntime &runtime) {
                 const bool hovered = ImGui::IsItemHovered();
                 const ImVec2 mouse = ImGui::GetIO().MousePos;
 
+                auto is_kf_selected = [&](int idx) {
+                    return std::find(runtime.timeline_selected_keyframe_indices.begin(),
+                                     runtime.timeline_selected_keyframe_indices.end(),
+                                     idx) != runtime.timeline_selected_keyframe_indices.end();
+                };
+
                 for (std::size_t i = 1; i < ch.keyframes.size(); ++i) {
                     const auto &a = ch.keyframes[i - 1];
                     const auto &b = ch.keyframes[i];
@@ -1135,30 +1457,111 @@ void RenderTimelineTab(AppRuntime &runtime) {
                 }
 
                 if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hovered_kf_idx >= 0) {
+                    if (!ImGui::GetIO().KeyShift && !is_kf_selected(hovered_kf_idx)) {
+                        runtime.timeline_selected_keyframe_indices.clear();
+                    }
+                    if (!is_kf_selected(hovered_kf_idx)) {
+                        runtime.timeline_selected_keyframe_indices.push_back(hovered_kf_idx);
+                    }
                     dragging_kf_idx = hovered_kf_idx;
                     dragging_channel_idx = runtime.timeline_selected_channel_index;
+                } else if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hovered_kf_idx < 0) {
+                    if (!ImGui::GetIO().KeyShift) {
+                        runtime.timeline_selected_keyframe_indices.clear();
+                    }
+                    runtime.timeline_box_select_active = true;
+                    runtime.timeline_box_select_start_x = mouse.x;
+                    runtime.timeline_box_select_start_y = mouse.y;
+                    runtime.timeline_box_select_end_x = mouse.x;
+                    runtime.timeline_box_select_end_y = mouse.y;
+                }
+                if (runtime.timeline_box_select_active && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                    runtime.timeline_box_select_end_x = mouse.x;
+                    runtime.timeline_box_select_end_y = mouse.y;
                 }
                 if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
                     dragging_kf_idx = -1;
                     dragging_channel_idx = -1;
+                    if (runtime.timeline_drag_snapshot_captured) {
+                        PushTimelineEditCommand(runtime, ch, runtime.timeline_keyframe_undo_snapshot, ch.keyframes);
+                        runtime.timeline_drag_snapshot_captured = false;
+                    }
+                    if (runtime.timeline_box_select_active) {
+                        const float sel_min_x = std::min(runtime.timeline_box_select_start_x, runtime.timeline_box_select_end_x);
+                        const float sel_max_x = std::max(runtime.timeline_box_select_start_x, runtime.timeline_box_select_end_x);
+                        const float sel_min_y = std::min(runtime.timeline_box_select_start_y, runtime.timeline_box_select_end_y);
+                        const float sel_max_y = std::max(runtime.timeline_box_select_start_y, runtime.timeline_box_select_end_y);
+                        for (std::size_t i = 0; i < ch.keyframes.size(); ++i) {
+                            const auto &kf = ch.keyframes[i];
+                            const ImVec2 p(time_to_x(kf.time_sec), value_to_y(kf.value));
+                            if (p.x >= sel_min_x && p.x <= sel_max_x && p.y >= sel_min_y && p.y <= sel_max_y) {
+                                if (!is_kf_selected(static_cast<int>(i))) {
+                                    runtime.timeline_selected_keyframe_indices.push_back(static_cast<int>(i));
+                                }
+                            }
+                        }
+                    }
+                    runtime.timeline_box_select_active = false;
                 }
 
                 if (dragging_channel_idx == runtime.timeline_selected_channel_index &&
                     dragging_kf_idx >= 0 && dragging_kf_idx < static_cast<int>(ch.keyframes.size()) &&
                     ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-                    auto &kf = ch.keyframes[static_cast<std::size_t>(dragging_kf_idx)];
-                    float t_new = x_to_time(mouse.x);
-                    float v_new = y_to_value(mouse.y);
+                    if (!runtime.timeline_drag_snapshot_captured) {
+                        runtime.timeline_keyframe_undo_snapshot = ch.keyframes;
+                        runtime.timeline_drag_snapshot_captured = true;
+                    }
+                    if (dragging_kf_idx >= static_cast<int>(runtime.timeline_keyframe_undo_snapshot.size())) {
+                        runtime.timeline_drag_snapshot_captured = false;
+                    } else {
+                        const auto &anchor = runtime.timeline_keyframe_undo_snapshot[static_cast<std::size_t>(dragging_kf_idx)];
+                        const float target_t = SnapTimelineTime(runtime, x_to_time(mouse.x));
+                        const float target_v = y_to_value(mouse.y);
+                        const float delta_t = target_t - anchor.time_sec;
+                        const float delta_v = target_v - anchor.value;
 
-                    const float eps = 0.0001f;
-                    if (dragging_kf_idx > 0) {
-                        t_new = std::max(t_new, ch.keyframes[static_cast<std::size_t>(dragging_kf_idx - 1)].time_sec + eps);
+                        ch.keyframes = runtime.timeline_keyframe_undo_snapshot;
+                        for (int selected_idx : runtime.timeline_selected_keyframe_indices) {
+                            if (selected_idx < 0 || selected_idx >= static_cast<int>(ch.keyframes.size()) ||
+                                selected_idx >= static_cast<int>(runtime.timeline_keyframe_undo_snapshot.size())) {
+                                continue;
+                            }
+                            const auto &src_kf = runtime.timeline_keyframe_undo_snapshot[static_cast<std::size_t>(selected_idx)];
+                            auto &kf = ch.keyframes[static_cast<std::size_t>(selected_idx)];
+                            kf.time_sec = SnapTimelineTime(runtime, src_kf.time_sec + delta_t);
+                            kf.value = std::clamp(src_kf.value + delta_v, vmin, vmax);
+                        }
+                        std::vector<TimelineKeyframe> selected_after_drag;
+                        selected_after_drag.reserve(runtime.timeline_selected_keyframe_indices.size());
+                        for (int selected_idx : runtime.timeline_selected_keyframe_indices) {
+                            if (selected_idx < 0 || selected_idx >= static_cast<int>(ch.keyframes.size())) {
+                                continue;
+                            }
+                            selected_after_drag.push_back(ch.keyframes[static_cast<std::size_t>(selected_idx)]);
+                        }
+                        std::sort(ch.keyframes.begin(), ch.keyframes.end(), [](const TimelineKeyframe &a, const TimelineKeyframe &b) {
+                            return a.time_sec < b.time_sec;
+                        });
+                        runtime.timeline_selected_keyframe_indices.clear();
+                        for (std::size_t i = 0; i < ch.keyframes.size(); ++i) {
+                            for (const auto &selected_kf : selected_after_drag) {
+                                if (TimelineKeyframeNearlyEqual(ch.keyframes[i], selected_kf)) {
+                                    runtime.timeline_selected_keyframe_indices.push_back(static_cast<int>(i));
+                                    break;
+                                }
+                            }
+                        }
                     }
-                    if (dragging_kf_idx + 1 < static_cast<int>(ch.keyframes.size())) {
-                        t_new = std::min(t_new, ch.keyframes[static_cast<std::size_t>(dragging_kf_idx + 1)].time_sec - eps);
-                    }
-                    kf.time_sec = std::clamp(t_new, 0.0f, duration);
-                    kf.value = std::clamp(v_new, vmin, vmax);
+                }
+
+
+                if (runtime.timeline_box_select_active) {
+                    const ImVec2 sel_min(std::min(runtime.timeline_box_select_start_x, runtime.timeline_box_select_end_x),
+                                         std::min(runtime.timeline_box_select_start_y, runtime.timeline_box_select_end_y));
+                    const ImVec2 sel_max(std::max(runtime.timeline_box_select_start_x, runtime.timeline_box_select_end_x),
+                                         std::max(runtime.timeline_box_select_start_y, runtime.timeline_box_select_end_y));
+                    dl->AddRectFilled(sel_min, sel_max, IM_COL32(120, 180, 255, 36));
+                    dl->AddRect(sel_min, sel_max, IM_COL32(120, 180, 255, 180), 0.0f, 0, 1.0f);
                 }
 
                 for (std::size_t i = 0; i < ch.keyframes.size(); ++i) {
@@ -1166,14 +1569,22 @@ void RenderTimelineTab(AppRuntime &runtime) {
                     const ImVec2 p(time_to_x(kf.time_sec), value_to_y(kf.value));
                     const bool active = dragging_channel_idx == runtime.timeline_selected_channel_index &&
                                         dragging_kf_idx == static_cast<int>(i);
-                    dl->AddCircleFilled(p, active ? 5.5f : 4.5f, active ? IM_COL32(255, 190, 70, 255) : IM_COL32(210, 230, 255, 255));
-                    dl->AddCircle(p, active ? 5.5f : 4.5f, IM_COL32(20, 24, 30, 255), 0, 1.0f);
+                    const bool selected = is_kf_selected(static_cast<int>(i));
+                    const ImU32 fill = active ? IM_COL32(255, 190, 70, 255)
+                                              : (selected ? IM_COL32(120, 220, 140, 255) : IM_COL32(210, 230, 255, 255));
+                    dl->AddCircleFilled(p, active ? 6.0f : (selected ? 5.5f : 4.5f), fill);
+                    dl->AddCircle(p, active ? 6.0f : (selected ? 5.5f : 4.5f), IM_COL32(20, 24, 30, 255), 0, 1.0f);
                 }
 
                 if (hovered && hovered_kf_idx >= 0) {
                     const auto &hkf = ch.keyframes[static_cast<std::size_t>(hovered_kf_idx)];
-                    ImGui::SetTooltip("KF[%d]\nt=%.3f\nv=%.3f", hovered_kf_idx, hkf.time_sec, hkf.value);
+                    ImGui::SetTooltip("KF[%d]\nt=%.3f\nv=%.3f\nselected=%s",
+                                      hovered_kf_idx,
+                                      hkf.time_sec,
+                                      hkf.value,
+                                      is_kf_selected(hovered_kf_idx) ? "yes" : "no");
                 }
+                ImGui::TextDisabled("左键点选；Shift+左键追加选择；空白区域拖拽框选关键帧");
 
                 for (std::size_t i = 0; i < ch.keyframes.size(); ++i) {
                     auto &kf = ch.keyframes[i];
@@ -1190,7 +1601,10 @@ void RenderTimelineTab(AppRuntime &runtime) {
                     ImGui::PopID();
                 }
             } else {
-                ImGui::TextDisabled("no channels");
+                RenderUnifiedEmptyState("timeline_no_keyframes_empty_state",
+                                        "无关键帧",
+                                        "当前还没有时间轴通道或关键帧，请先添加通道并在播放头位置写入关键帧。",
+                                        ImVec4(1.0f, 0.82f, 0.25f, 1.0f));
             }
     }
     ImGui::EndChild();
@@ -1307,7 +1721,10 @@ void RenderPerceptionTab(AppRuntime &runtime) {
                     mid_pct,
                     high_pct);
     } else {
-        ImGui::Text("Confidence Dist: (no samples)");
+        RenderUnifiedEmptyState("perception_confidence_no_samples_empty_state",
+                                "无采样",
+                                "当前还没有 OCR 置信度样本，请等待识别结果产生后再查看分布统计。",
+                                ImVec4(0.72f, 0.82f, 1.0f, 1.0f));
     }
 
     if (!runtime.perception_state.ocr_last_error.empty()) {
@@ -1401,7 +1818,10 @@ void RenderAsrChatTab(AppRuntime &runtime) {
     ImGui::Text("Presence Score: %.2f", runtime.plugin_route_presence_score);
     ImGui::Text("Total Score: %.2f", runtime.plugin_route_total_score);
     if (runtime.plugin_route_rejected_summary.empty()) {
-        ImGui::TextDisabled("Rejected: (none)");
+        RenderUnifiedEmptyState("plugin_route_no_rejected_empty_state",
+                                "无拒绝记录",
+                                "当前没有被拒绝的路由候选，说明候选链路较干净或尚未产生对比结果。",
+                                ImVec4(0.45f, 0.85f, 0.45f, 1.0f));
     } else {
         ImGui::BeginChild("plugin_route_trace_child", ImVec2(-1.0f, 88.0f), ImGuiChildFlags_Borders);
         for (const auto &line : runtime.plugin_route_rejected_summary) {
@@ -1525,6 +1945,47 @@ void RenderOpsTab(AppRuntime &runtime, std::string &runtime_ops_status) {
     ImGui::SameLine();
     ImGui::TextDisabled("(Esc)");
     ImGui::EndChild();
+}
+
+void RenderWorkspaceToolbar(AppRuntime &runtime) {
+    const char *workspace_label = runtime.workspace_mode == WorkspaceMode::Animation ? "Animation" :
+                                  (runtime.workspace_mode == WorkspaceMode::Debug ? "Debug" :
+                                  (runtime.workspace_mode == WorkspaceMode::Perception ? "Perception" : "Authoring"));
+    ImGui::SeparatorText("Workspace");
+    ImGui::SetNextItemWidth(180.0f);
+    if (ImGui::BeginCombo("Workspace Mode", workspace_label)) {
+        if (ImGui::Selectable("Animation", runtime.workspace_mode == WorkspaceMode::Animation)) {
+            runtime.workspace_mode = WorkspaceMode::Animation;
+            runtime.workspace_dock_rebuild_requested = true;
+            runtime.workspace_layout_follow_preset = true;
+        }
+        if (ImGui::Selectable("Debug", runtime.workspace_mode == WorkspaceMode::Debug)) {
+            runtime.workspace_mode = WorkspaceMode::Debug;
+            runtime.workspace_dock_rebuild_requested = true;
+            runtime.workspace_layout_follow_preset = true;
+        }
+        if (ImGui::Selectable("Perception", runtime.workspace_mode == WorkspaceMode::Perception)) {
+            runtime.workspace_mode = WorkspaceMode::Perception;
+            runtime.workspace_dock_rebuild_requested = true;
+            runtime.workspace_layout_follow_preset = true;
+        }
+        if (ImGui::Selectable("Authoring", runtime.workspace_mode == WorkspaceMode::Authoring)) {
+            runtime.workspace_mode = WorkspaceMode::Authoring;
+            runtime.workspace_dock_rebuild_requested = true;
+            runtime.workspace_layout_follow_preset = true;
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Reset Layout")) {
+        runtime.workspace_layout_reset_requested = true;
+        runtime.workspace_dock_rebuild_requested = true;
+        runtime.workspace_layout_follow_preset = true;
+    }
+    ImGui::SameLine();
+    ImGui::Checkbox("Follow Preset", &runtime.workspace_layout_follow_preset);
+    ImGui::SameLine();
+    ImGui::TextDisabled("Mode=%s", workspace_label);
 }
 
 void RenderAppDebugUi(AppRuntime &runtime) {

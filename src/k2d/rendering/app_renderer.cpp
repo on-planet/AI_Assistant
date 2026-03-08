@@ -9,7 +9,7 @@ namespace k2d {
 namespace {
 
 void RenderPartEditorOverlay(const AppRenderContext &ctx) {
-    if (!ctx.renderer || !ctx.edit_mode || !ctx.model || !ctx.has_model_parts || !ctx.has_model_parts()) {
+    if (!ctx.renderer || !ctx.model || !ctx.has_model_parts || !ctx.has_model_parts()) {
         return;
     }
 
@@ -28,20 +28,29 @@ void RenderPartEditorOverlay(const AppRenderContext &ctx) {
 
     SDL_FRect box{};
     if (ctx.compute_part_aabb && ctx.compute_part_aabb(part, &box)) {
-        SDL_SetRenderDrawColor(ctx.renderer, 255, 220, 64, 230);
+        const SDL_FRect glow_box{
+            box.x - 3.0f,
+            box.y - 3.0f,
+            box.w + 6.0f,
+            box.h + 6.0f,
+        };
+        SDL_SetRenderDrawColor(ctx.renderer, 255, 220, 64, ctx.edit_mode ? 230 : 180);
+        SDL_RenderRect(ctx.renderer, &glow_box);
+        SDL_SetRenderDrawColor(ctx.renderer, 255, 220, 64, 255);
         SDL_RenderRect(ctx.renderer, &box);
     }
 
     const float px = part.runtime_pos_x;
     const float py = part.runtime_pos_y;
 
-    SDL_SetRenderDrawColor(ctx.renderer, 255, 64, 64, 240);
+    SDL_SetRenderDrawColor(ctx.renderer, 255, 64, 64, ctx.edit_mode ? 240 : 180);
     SDL_RenderLine(ctx.renderer, px - 10.0f, py, px + 10.0f, py);
     SDL_RenderLine(ctx.renderer, px, py - 10.0f, px, py + 10.0f);
 
     char part_line[256]{};
     std::snprintf(part_line, sizeof(part_line),
-                  "EDIT part[%d/%zu]: %s pos(%.1f,%.1f) pivot(%.1f,%.1f)",
+                  "%s part[%d/%zu]: %s pos(%.1f,%.1f) pivot(%.1f,%.1f)",
+                  ctx.edit_mode ? "EDIT" : "SELECT",
                   ctx.selected_part_index + 1,
                   ctx.model->parts.size(),
                   part.id.c_str(),
@@ -51,12 +60,13 @@ void RenderPartEditorOverlay(const AppRenderContext &ctx) {
                   part.pivot_y);
     SDL_RenderDebugText(ctx.renderer, 12.0f, 108.0f, part_line);
 
-    RenderGizmoOverlay(ctx.renderer, part, ctx.gizmo_hover_handle, ctx.gizmo_active_handle);
-
-    SDL_RenderDebugText(ctx.renderer,
-                        12.0f,
-                        124.0f,
-                        "EditKeys: E toggle | LMB Gizmo(X/Y/Rotate/Scale) | Shift+LMB pivot | Tab prev/next | Ctrl+S save project | Ctrl+O load project");
+    if (ctx.edit_mode) {
+        RenderGizmoOverlay(ctx.renderer, part, ctx.gizmo_hover_handle, ctx.gizmo_active_handle);
+        SDL_RenderDebugText(ctx.renderer,
+                            12.0f,
+                            124.0f,
+                            "EditKeys: E toggle | LMB Gizmo(X/Y/Rotate/Scale) | Shift+LMB pivot | Tab prev/next | Ctrl+S save project | Ctrl+O load project");
+    }
 }
 
 void RenderEditorStatus(const AppRenderContext &ctx) {

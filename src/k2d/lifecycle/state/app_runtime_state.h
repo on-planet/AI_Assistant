@@ -49,6 +49,13 @@ enum class AxisConstraint {
     YOnly,
 };
 
+enum class WorkspaceMode {
+    Animation,
+    Debug,
+    Perception,
+    Authoring,
+};
+
 enum class EditorProp {
     PosX,
     PosY,
@@ -131,9 +138,27 @@ struct AppRuntime {
     bool resource_tree_auto_expand_matches = true;
     int selected_deformer_type = 0; // 0=Warp, 1=Rotation
 
-    // 参数面板增强：分组与批量绑定（UI 状态）
+    struct WindowLayoutState {
+        float pos_x = 0.0f;
+        float pos_y = 0.0f;
+        float size_w = 0.0f;
+        float size_h = 0.0f;
+        bool collapsed = false;
+        bool initialized = false;
+    };
+    WindowLayoutState runtime_debug_window_layout{};
+    WindowLayoutState inspector_window_layout{};
+    WindowLayoutState reminder_window_layout{};
+    std::string workspace_docking_ini;
+    WorkspaceMode last_applied_workspace_mode = WorkspaceMode::Debug;
+    bool workspace_layout_reset_requested = false;
+    bool workspace_layout_follow_preset = true;
+    bool workspace_docking_ini_pending_load = false;
+
+    // 参数面板增强：分组、搜索与批量绑定（UI 状态）
     int param_group_mode = 0; // 0=prefix, 1=semantic
     int selected_param_group_index = 0;
+    char param_search[128] = "";
     int batch_bind_prop_type = 0; // 对应 BindingType 枚举值
     float batch_bind_in_min = -1.0f;
     float batch_bind_in_max = 1.0f;
@@ -145,7 +170,20 @@ struct AppRuntime {
     int timeline_selected_channel_index = 0;
     float timeline_cursor_sec = 0.0f;
     float timeline_duration_sec = 3.0f;
+    bool timeline_snap_enabled = true;
+    int timeline_snap_mode = 0; // 0=整数帧, 1=0.1s, 2=播放头
+    float timeline_snap_fps = 30.0f;
+    std::vector<int> timeline_selected_keyframe_indices;
+    bool timeline_box_select_active = false;
+    float timeline_box_select_start_x = 0.0f;
+    float timeline_box_select_start_y = 0.0f;
+    float timeline_box_select_end_x = 0.0f;
+    float timeline_box_select_end_y = 0.0f;
 
+    std::vector<TimelineKeyframe> timeline_keyframe_clipboard;
+    std::vector<TimelineKeyframe> timeline_keyframe_undo_snapshot;
+    std::vector<TimelineKeyframe> timeline_keyframe_redo_snapshot;
+    bool timeline_drag_snapshot_captured = false;
     std::vector<EditCommand> undo_stack;
     std::vector<EditCommand> redo_stack;
 
@@ -170,6 +208,7 @@ struct AppRuntime {
 
     // 工程级会话文件（project.json）路径
     std::string current_project_path = "assets/project.json";
+    bool editor_project_dirty = false;
 
     float debug_fps = 0.0f;
     float debug_frame_ms = 0.0f;
@@ -177,6 +216,8 @@ struct AppRuntime {
     int debug_fps_accum_frames = 0;
 
     bool gui_enabled = true;
+    WorkspaceMode workspace_mode = WorkspaceMode::Debug;
+    bool workspace_dock_rebuild_requested = false;
 
     InteractionControllerState interaction_state{};
 

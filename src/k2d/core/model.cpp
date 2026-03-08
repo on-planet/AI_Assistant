@@ -22,6 +22,12 @@ namespace k2d {
 
 namespace {
 
+static std::uint64_t g_next_timeline_keyframe_stable_id = 1;
+
+static std::uint64_t NextTimelineKeyframeStableId() {
+    return g_next_timeline_keyframe_stable_id++;
+}
+
 static float Clamp01(float v) {
     return std::clamp(v, 0.0f, 1.0f);
 }
@@ -352,6 +358,7 @@ bool LoadModelRuntime(SDL_Renderer *renderer,
                     const float in_w = static_cast<float>(kv.getNumber("inWeight").value_or(0.333));
                     const float out_w = static_cast<float>(kv.getNumber("outWeight").value_or(0.333));
                     ch.keyframes.push_back(TimelineKeyframe{
+                        .stable_id = NextTimelineKeyframeStableId(),
                         .time_sec = t,
                         .value = v,
                         .in_tangent = tin,

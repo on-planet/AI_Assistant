@@ -61,6 +61,8 @@ struct EditCommand {
 
     std::vector<TimelineKeyframe> before_keyframes;
     std::vector<TimelineKeyframe> after_keyframes;
+    std::vector<std::uint64_t> before_selected_keyframe_ids;
+    std::vector<std::uint64_t> after_selected_keyframe_ids;
 };
 
 int FindPartIndexById(const ModelRuntime &model, const std::string &id);
@@ -74,21 +76,24 @@ void ApplyEditCommand(ModelRuntime &model,
                       std::vector<ReminderItem> *reminder_items,
                       const EditCommand &cmd,
                       bool use_after,
-                      const std::function<void(ModelPart *, float, float)> &apply_pivot_delta);
+                      const std::function<void(ModelPart *, float, float)> &apply_pivot_delta,
+                      const std::function<void(const std::vector<std::uint64_t> &)> &apply_timeline_selection = {});
 
 bool UndoLastEdit(ModelRuntime &model,
                   ReminderService *reminder_service,
                   std::vector<ReminderItem> *reminder_items,
                   std::vector<EditCommand> &undo_stack,
                   std::vector<EditCommand> &redo_stack,
-                  const std::function<void(ModelPart *, float, float)> &apply_pivot_delta);
+                  const std::function<void(ModelPart *, float, float)> &apply_pivot_delta,
+                  const std::function<void(const std::vector<std::uint64_t> &)> &apply_timeline_selection = {});
 
 bool RedoLastEdit(ModelRuntime &model,
                   ReminderService *reminder_service,
                   std::vector<ReminderItem> *reminder_items,
                   std::vector<EditCommand> &undo_stack,
                   std::vector<EditCommand> &redo_stack,
-                  const std::function<void(ModelPart *, float, float)> &apply_pivot_delta);
+                  const std::function<void(ModelPart *, float, float)> &apply_pivot_delta,
+                  const std::function<void(const std::vector<std::uint64_t> &)> &apply_timeline_selection = {});
 
 }  // namespace k2d
 

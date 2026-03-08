@@ -761,14 +761,116 @@ void UpsertBinding(ModelPart &part, int param_index, BindingType type, float in_
     part.bindings.push_back(b);
 }
 
+std::uint64_t NextUiTimelineStableId() {
+    static std::uint64_t next_id = 1ull << 62;
+    return next_id++;
+}
+
+void EnsureTimelineKeyframeStableIds(AnimationChannel &ch) {
+    for (auto &kf : ch.keyframes) {
+        if (kf.stable_id == 0) {
+            kf.stable_id = NextUiTimelineStableId();
+        }
+    }
+}
+
+std::vector<int> BuildTimelineSelectedIndices(const AnimationChannel &ch,
+                                              const std::vector<std::uint64_t> &selected_ids) {
+    std::vector<int> indices;
+    indices.reserve(selected_ids.size());
+    for (std::size_t i = 0; i < ch.keyframes.size(); ++i) {
+        if (std::find(selected_ids.begin(), selected_ids.end(), ch.keyframes[i].stable_id) != selected_ids.end()) {
+            indices.push_back(static_cast<int>(i));
+        }
+    }
+    return indices;
+}
+
+void NormalizeTimelineSelection(AppRuntime &runtime, AnimationChannel &ch) {
+    EnsureTimelineKeyframeStableIds(ch);
+
+    std::vector<std::uint64_t> normalized_ids;
+    normalized_ids.reserve(runtime.timeline_selected_keyframe_ids.size() + runtime.timeline_selected_keyframe_indices.size());
+
+    auto append_id = [&](std::uint64_t stable_id) {
+        if (stable_id == 0) {
+            return;
+        }
+        if (std::find(normalized_ids.begin(), normalized_ids.end(), stable_id) == normalized_ids.end()) {
+            normalized_ids.push_back(stable_id);
+        }
+    };
+
+    for (std::uint64_t stable_id : runtime.timeline_selected_keyframe_ids) {
+        append_id(stable_id);
+    }
+    for (int idx : runtime.timeline_selected_keyframe_indices) {
+        if (idx >= 0 && idx < static_cast<int>(ch.keyframes.size())) {
+            append_id(ch.keyframes[static_cast<std::size_t>(idx)].stable_id);
+        }
+    }
+
+    runtime.timeline_selected_keyframe_ids.clear();
+    for (std::uint64_t stable_id : normalized_ids) {
+        for (const auto &kf : ch.keyframes) {
+            if (kf.stable_id == stable_id) {
+                runtime.timeline_selected_keyframe_ids.push_back(stable_id);
+                break;
+            }
+        }
+    }
+    runtime.timeline_selected_keyframe_indices = BuildTimelineSelectedIndices(ch, runtime.timeline_selected_keyframe_ids);
+}
+
+bool IsTimelineKeyframeSelected(const AppRuntime &runtime, const TimelineKeyframe &kf) {
+    return std::find(runtime.timeline_selected_keyframe_ids.begin(),
+                     runtime.timeline_selected_keyframe_ids.end(),
+                     kf.stable_id) != runtime.timeline_selected_keyframe_ids.end();
+}
+
+void SelectTimelineKeyframeById(AppRuntime &runtime, AnimationChannel &ch, std::uint64_t stable_id, bool additive) {
+    EnsureTimelineKeyframeStableIds(ch);
+    if (!additive) {
+        runtime.timeline_selected_keyframe_ids.clear();
+    }
+    if (stable_id != 0 && std::find(runtime.timeline_selected_keyframe_ids.begin(),
+                                    runtime.timeline_selected_keyframe_ids.end(),
+                                    stable_id) == runtime.timeline_selected_keyframe_ids.end()) {
+        runtime.timeline_selected_keyframe_ids.push_back(stable_id);
+    }
+    NormalizeTimelineSelection(runtime, ch);
+}
+
+void ClearTimelineSelection(AppRuntime &runtime, AnimationChannel &ch) {
+    runtime.timeline_selected_keyframe_ids.clear();
+    runtime.timeline_selected_keyframe_indices.clear();
+    NormalizeTimelineSelection(runtime, ch);
+}
+
+EditCommand MakeTimelineEditCommand(const AnimationChannel &channel,
+                                    const std::vector<TimelineKeyframe> &before_keyframes,
+                                    const std::vector<TimelineKeyframe> &after_keyframes,
+                                    const std::vector<std::uint64_t> &before_selected_ids,
+                                    const std::vector<std::uint64_t> &after_selected_ids) {
+    EditCommand cmd{};
+    cmd.type = EditCommand::Type::Timeline;
+    cmd.channel_id = channel.id;
+    cmd.before_keyframes = before_keyframes;
+    cmd.after_keyframes = after_keyframes;
+    cmd.before_selected_keyframe_ids = before_selected_ids;
+    cmd.after_selected_keyframe_ids = after_selected_ids;
+    return cmd;
+}
+
 void UpsertTimelineKeyframe(AnimationChannel &ch, float time_sec, float value) {
+    EnsureTimelineKeyframeStableIds(ch);
     for (auto &kf : ch.keyframes) {
         if (std::abs(kf.time_sec - time_sec) < 1e-4f) {
             kf.value = value;
             return;
         }
     }
-    ch.keyframes.push_back(TimelineKeyframe{.time_sec = time_sec, .value = value});
+    ch.keyframes.push_back(TimelineKeyframe{.stable_id = NextUiTimelineStableId(), .time_sec = time_sec, .value = value});
     std::sort(ch.keyframes.begin(), ch.keyframes.end(), [](const TimelineKeyframe &a, const TimelineKeyframe &b) {
         return a.time_sec < b.time_sec;
     });
@@ -854,16 +956,6 @@ float SnapTimelineTime(const AppRuntime &runtime, float t) {
     }
 }
 
-EditCommand MakeTimelineEditCommand(const AnimationChannel &channel,
-                                    const std::vector<TimelineKeyframe> &before_keyframes,
-                                    const std::vector<TimelineKeyframe> &after_keyframes) {
-    EditCommand cmd{};
-    cmd.type = EditCommand::Type::Timeline;
-    cmd.channel_id = channel.id;
-    cmd.before_keyframes = before_keyframes;
-    cmd.after_keyframes = after_keyframes;
-    return cmd;
-}
 
 bool TimelineKeyframeNearlyEqual(const TimelineKeyframe &a, const TimelineKeyframe &b) {
     return std::abs(a.time_sec - b.time_sec) < 1e-6f &&
@@ -890,13 +982,19 @@ bool TimelineKeyframeListEqual(const std::vector<TimelineKeyframe> &lhs,
 void PushTimelineEditCommand(AppRuntime &runtime,
                              const AnimationChannel &channel,
                              const std::vector<TimelineKeyframe> &before_keyframes,
-                             const std::vector<TimelineKeyframe> &after_keyframes) {
-    if (TimelineKeyframeListEqual(before_keyframes, after_keyframes)) {
+                             const std::vector<TimelineKeyframe> &after_keyframes,
+                             const std::vector<std::uint64_t> &before_selected_ids,
+                             const std::vector<std::uint64_t> &after_selected_ids) {
+    if (TimelineKeyframeListEqual(before_keyframes, after_keyframes) && before_selected_ids == after_selected_ids) {
         return;
     }
     PushEditCommand(runtime.undo_stack,
                     runtime.redo_stack,
-                    MakeTimelineEditCommand(channel, before_keyframes, after_keyframes));
+                    MakeTimelineEditCommand(channel,
+                                            before_keyframes,
+                                            after_keyframes,
+                                            before_selected_ids,
+                                            after_selected_ids));
 }
 
 void RenderOverviewRuntimeHealth(const AppRuntime &runtime) {
@@ -941,7 +1039,7 @@ void RenderRuntimeDebugSummary(const AppRuntime &runtime) {
     ImGui::Text("PartCount: %d", static_cast<int>(runtime.model.parts.size()));
 }
 
-void RenderOverviewTab(AppRuntime &runtime) {
+void RenderRuntimeOverviewPanel(AppRuntime &runtime) {
     ImGui::SeparatorText("Status Card (Read Only)");
     if (ImGui::BeginTable("overview_status_table", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV)) {
         ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthStretch, 0.55f);
@@ -983,7 +1081,7 @@ void RenderOverviewTab(AppRuntime &runtime) {
     ImGui::Text("Secondary: %s", TaskSecondaryCategoryNameUi(runtime.task_secondary));
 }
 
-void RenderEditorTab(AppRuntime &runtime) {
+void RenderRuntimeEditorPanel(AppRuntime &runtime) {
     ImGui::BeginChild("editor_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
     ImGui::SeparatorText("Param Card (Editable)");
     ImGui::Checkbox("Show Debug Stats", &runtime.show_debug_stats);
@@ -1182,7 +1280,7 @@ void RenderEditorTab(AppRuntime &runtime) {
     ImGui::EndChild();
 }
 
-void RenderTimelineTab(AppRuntime &runtime) {
+void RenderRuntimeTimelinePanel(AppRuntime &runtime) {
     ImGui::BeginChild("timeline_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
     ImGui::Checkbox("Enable Timeline", &runtime.timeline_enabled);
     runtime.model.animation_channels_enabled = runtime.timeline_enabled;
@@ -1268,10 +1366,17 @@ void RenderTimelineTab(AppRuntime &runtime) {
 
                 if (ImGui::Button("Add/Update Keyframe At Cursor")) {
                     const auto before_keyframes = ch.keyframes;
+                    const auto before_selected_ids = runtime.timeline_selected_keyframe_ids;
                     const auto &p = runtime.model.parameters[static_cast<std::size_t>(param_idx)].param;
                     const float v = p.target();
                     UpsertTimelineKeyframe(ch, SnapTimelineTime(runtime, runtime.timeline_cursor_sec), v);
-                    PushTimelineEditCommand(runtime, ch, before_keyframes, ch.keyframes);
+                    NormalizeTimelineSelection(runtime, ch);
+                    PushTimelineEditCommand(runtime,
+                                            ch,
+                                            before_keyframes,
+                                            ch.keyframes,
+                                            before_selected_ids,
+                                            runtime.timeline_selected_keyframe_ids);
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Copy Selected Keyframes")) {
@@ -1290,6 +1395,7 @@ void RenderTimelineTab(AppRuntime &runtime) {
                 ImGui::SameLine();
                 if (ImGui::Button("Paste At Cursor") && !runtime.timeline_keyframe_clipboard.empty()) {
                     const auto before_keyframes = ch.keyframes;
+                    const auto before_selected_ids = runtime.timeline_selected_keyframe_ids;
                     const float base_time = runtime.timeline_keyframe_clipboard.front().time_sec;
                     runtime.timeline_selected_keyframe_indices.clear();
                     for (const auto &src_kf : runtime.timeline_keyframe_clipboard) {
@@ -1319,13 +1425,26 @@ void RenderTimelineTab(AppRuntime &runtime) {
                             }
                         }
                     }
-                    PushTimelineEditCommand(runtime, ch, before_keyframes, ch.keyframes);
+                    NormalizeTimelineSelection(runtime, ch);
+                    PushTimelineEditCommand(runtime,
+                                            ch,
+                                            before_keyframes,
+                                            ch.keyframes,
+                                            before_selected_ids,
+                                            runtime.timeline_selected_keyframe_ids);
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Remove Last Keyframe") && !ch.keyframes.empty()) {
                     const auto before_keyframes = ch.keyframes;
+                    const auto before_selected_ids = runtime.timeline_selected_keyframe_ids;
                     ch.keyframes.pop_back();
-                    PushTimelineEditCommand(runtime, ch, before_keyframes, ch.keyframes);
+                    NormalizeTimelineSelection(runtime, ch);
+                    PushTimelineEditCommand(runtime,
+                                            ch,
+                                            before_keyframes,
+                                            ch.keyframes,
+                                            before_selected_ids,
+                                            runtime.timeline_selected_keyframe_ids);
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Delete Channel")) {
@@ -1483,7 +1602,12 @@ void RenderTimelineTab(AppRuntime &runtime) {
                     dragging_kf_idx = -1;
                     dragging_channel_idx = -1;
                     if (runtime.timeline_drag_snapshot_captured) {
-                        PushTimelineEditCommand(runtime, ch, runtime.timeline_keyframe_undo_snapshot, ch.keyframes);
+                        PushTimelineEditCommand(runtime,
+                                                ch,
+                                                runtime.timeline_keyframe_undo_snapshot,
+                                                ch.keyframes,
+                                                runtime.timeline_keyframe_undo_selected_ids,
+                                                runtime.timeline_selected_keyframe_ids);
                         runtime.timeline_drag_snapshot_captured = false;
                     }
                     if (runtime.timeline_box_select_active) {
@@ -1509,6 +1633,7 @@ void RenderTimelineTab(AppRuntime &runtime) {
                     ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                     if (!runtime.timeline_drag_snapshot_captured) {
                         runtime.timeline_keyframe_undo_snapshot = ch.keyframes;
+                        runtime.timeline_keyframe_undo_selected_ids = runtime.timeline_selected_keyframe_ids;
                         runtime.timeline_drag_snapshot_captured = true;
                     }
                     if (dragging_kf_idx >= static_cast<int>(runtime.timeline_keyframe_undo_snapshot.size())) {
@@ -1610,7 +1735,7 @@ void RenderTimelineTab(AppRuntime &runtime) {
     ImGui::EndChild();
 }
 
-void RenderPerceptionTab(AppRuntime &runtime) {
+void RenderRuntimePerceptionPanel(AppRuntime &runtime) {
     ImGui::BeginChild("perception_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
     ImGui::SeparatorText("Status Card (Read Only)");
     ImGui::Text("Capture: %s", runtime.perception_state.screen_capture_ready ? "ready" : "not ready");
@@ -1742,7 +1867,7 @@ void RenderPerceptionTab(AppRuntime &runtime) {
     ImGui::EndChild();
 }
 
-void RenderMappingTab(AppRuntime &runtime) {
+void RenderRuntimeMappingPanel(AppRuntime &runtime) {
     ImGui::BeginChild("mapping_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
     ImGui::SeparatorText("Status Card (Read Only)");
     ImGui::Text("Gate: %s", runtime.face_map_gate_reason.empty() ? "(none)" : runtime.face_map_gate_reason.c_str());
@@ -1780,7 +1905,7 @@ void RenderMappingTab(AppRuntime &runtime) {
     ImGui::EndChild();
 }
 
-void RenderAsrChatTab(AppRuntime &runtime) {
+void RenderRuntimeAsrChatPanel(AppRuntime &runtime) {
     ImGui::BeginChild("asr_chat_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
     ImGui::SeparatorText("Status Card (Read Only)");
     ImGui::Text("ASR: %s (%s)", runtime.asr_ready ? "ready" : "not ready", runtime.feature_asr_enabled ? "enabled" : "disabled");
@@ -1897,7 +2022,7 @@ void RenderAsrChatTab(AppRuntime &runtime) {
     ImGui::EndChild();
 }
 
-void RenderErrorTab(AppRuntime &runtime) {
+void RenderRuntimeErrorPanel(AppRuntime &runtime) {
     static int error_filter_idx = 1; // 默认 Non-OK
     const char *filters[] = {"All", "Non-OK", "Failed", "Degraded"};
     error_filter_idx = std::clamp(error_filter_idx, 0, 3);
@@ -1909,7 +2034,7 @@ void RenderErrorTab(AppRuntime &runtime) {
     ImGui::EndChild();
 }
 
-void RenderOpsTab(AppRuntime &runtime, std::string &runtime_ops_status) {
+void RenderRuntimeOpsPanel(AppRuntime &runtime, std::string &runtime_ops_status) {
     ImGui::BeginChild("ops_tab_scroll", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
     ImGui::SeparatorText("Runtime Operations");
         if (ImGui::Button("Reset Perception State")) {
@@ -1951,80 +2076,95 @@ void RenderWorkspaceToolbar(AppRuntime &runtime) {
     const char *workspace_label = runtime.workspace_mode == WorkspaceMode::Animation ? "Animation" :
                                   (runtime.workspace_mode == WorkspaceMode::Debug ? "Debug" :
                                   (runtime.workspace_mode == WorkspaceMode::Perception ? "Perception" : "Authoring"));
-    ImGui::SeparatorText("Workspace");
-    ImGui::SetNextItemWidth(180.0f);
-    if (ImGui::BeginCombo("Workspace Mode", workspace_label)) {
-        if (ImGui::Selectable("Animation", runtime.workspace_mode == WorkspaceMode::Animation)) {
-            runtime.workspace_mode = WorkspaceMode::Animation;
-            runtime.workspace_dock_rebuild_requested = true;
-            runtime.workspace_layout_follow_preset = true;
-        }
-        if (ImGui::Selectable("Debug", runtime.workspace_mode == WorkspaceMode::Debug)) {
-            runtime.workspace_mode = WorkspaceMode::Debug;
-            runtime.workspace_dock_rebuild_requested = true;
-            runtime.workspace_layout_follow_preset = true;
-        }
-        if (ImGui::Selectable("Perception", runtime.workspace_mode == WorkspaceMode::Perception)) {
-            runtime.workspace_mode = WorkspaceMode::Perception;
-            runtime.workspace_dock_rebuild_requested = true;
-            runtime.workspace_layout_follow_preset = true;
-        }
-        if (ImGui::Selectable("Authoring", runtime.workspace_mode == WorkspaceMode::Authoring)) {
-            runtime.workspace_mode = WorkspaceMode::Authoring;
-            runtime.workspace_dock_rebuild_requested = true;
-            runtime.workspace_layout_follow_preset = true;
-        }
-        ImGui::EndCombo();
+    if (!ImGui::BeginMenu("Workspace")) {
+        return;
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Reset Layout")) {
-        runtime.workspace_layout_reset_requested = true;
+
+    if (ImGui::MenuItem("Animation", nullptr, runtime.workspace_mode == WorkspaceMode::Animation)) {
+        runtime.workspace_mode = WorkspaceMode::Animation;
+        if (runtime.workspace_layout_mode == WorkspaceLayoutMode::Preset) {
+            runtime.workspace_preset_apply_requested = true;
+            runtime.workspace_dock_rebuild_requested = true;
+        }
+    }
+    if (ImGui::MenuItem("Debug", nullptr, runtime.workspace_mode == WorkspaceMode::Debug)) {
+        runtime.workspace_mode = WorkspaceMode::Debug;
+        if (runtime.workspace_layout_mode == WorkspaceLayoutMode::Preset) {
+            runtime.workspace_preset_apply_requested = true;
+            runtime.workspace_dock_rebuild_requested = true;
+        }
+    }
+    if (ImGui::MenuItem("Perception", nullptr, runtime.workspace_mode == WorkspaceMode::Perception)) {
+        runtime.workspace_mode = WorkspaceMode::Perception;
+        if (runtime.workspace_layout_mode == WorkspaceLayoutMode::Preset) {
+            runtime.workspace_preset_apply_requested = true;
+            runtime.workspace_dock_rebuild_requested = true;
+        }
+    }
+    if (ImGui::MenuItem("Authoring", nullptr, runtime.workspace_mode == WorkspaceMode::Authoring)) {
+        runtime.workspace_mode = WorkspaceMode::Authoring;
+        if (runtime.workspace_layout_mode == WorkspaceLayoutMode::Preset) {
+            runtime.workspace_preset_apply_requested = true;
+            runtime.workspace_dock_rebuild_requested = true;
+        }
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Apply Preset Layout")) {
+        runtime.workspace_layout_mode = WorkspaceLayoutMode::Preset;
+        runtime.workspace_preset_apply_requested = true;
         runtime.workspace_dock_rebuild_requested = true;
-        runtime.workspace_layout_follow_preset = true;
+        runtime.last_applied_workspace_mode = static_cast<WorkspaceMode>(-1);
     }
-    ImGui::SameLine();
-    ImGui::Checkbox("Follow Preset", &runtime.workspace_layout_follow_preset);
-    ImGui::SameLine();
-    ImGui::TextDisabled("Mode=%s", workspace_label);
+    if (ImGui::MenuItem("Reset Manual Layout")) {
+        runtime.workspace_manual_docking_ini.clear();
+        runtime.workspace_manual_layout_pending_load = false;
+        runtime.workspace_manual_layout_reset_requested = true;
+        runtime.workspace_layout_mode = WorkspaceLayoutMode::Preset;
+        runtime.workspace_preset_apply_requested = true;
+        runtime.workspace_dock_rebuild_requested = true;
+        runtime.last_applied_workspace_mode = static_cast<WorkspaceMode>(-1);
+    }
+    bool use_manual_layout = runtime.workspace_layout_mode == WorkspaceLayoutMode::Manual;
+    if (ImGui::MenuItem("Manual Layout", nullptr, &use_manual_layout)) {
+        runtime.workspace_layout_mode = use_manual_layout ? WorkspaceLayoutMode::Manual : WorkspaceLayoutMode::Preset;
+        if (runtime.workspace_layout_mode == WorkspaceLayoutMode::Manual) {
+            runtime.workspace_manual_layout_pending_load = !runtime.workspace_manual_docking_ini.empty();
+        } else {
+            runtime.workspace_preset_apply_requested = true;
+            runtime.workspace_dock_rebuild_requested = true;
+        }
+    }
+    ImGui::Separator();
+    ImGui::TextDisabled("Mode=%s | Layout=%s",
+                        workspace_label,
+                        runtime.workspace_layout_mode == WorkspaceLayoutMode::Manual ? "Manual" : "Preset");
+    ImGui::EndMenu();
+
+    if (ImGui::BeginMenu("Windows")) {
+        ImGui::MenuItem("Workspace Toolbar", nullptr, &runtime.show_workspace_window);
+        ImGui::MenuItem("Overview", nullptr, &runtime.show_overview_window);
+        ImGui::MenuItem("Editor", nullptr, &runtime.show_editor_window);
+        ImGui::MenuItem("Timeline", nullptr, &runtime.show_timeline_window);
+        ImGui::MenuItem("Perception", nullptr, &runtime.show_perception_window);
+        ImGui::MenuItem("Mapping", nullptr, &runtime.show_mapping_window);
+        ImGui::MenuItem("ASR/Chat", nullptr, &runtime.show_asr_chat_window);
+        ImGui::MenuItem("Errors", nullptr, &runtime.show_error_window);
+        ImGui::MenuItem("Ops", nullptr, &runtime.show_ops_window);
+        ImGui::MenuItem("Inspector", nullptr, &runtime.show_inspector_window);
+        ImGui::MenuItem("Reminder", nullptr, &runtime.show_reminder_window);
+        ImGui::EndMenu();
+    }
 }
 
-void RenderAppDebugUi(AppRuntime &runtime) {
+namespace {
+std::string &RuntimeOpsStatusStorage() {
     static std::string runtime_ops_status;
-    if (ImGui::BeginTabBar("runtime_debug_tabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
-        if (ImGui::BeginTabItem("总览")) {
-            RenderOverviewTab(runtime);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("编辑")) {
-            RenderEditorTab(runtime);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("时间轴")) {
-            RenderTimelineTab(runtime);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("感知")) {
-            RenderPerceptionTab(runtime);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("映射")) {
-            RenderMappingTab(runtime);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("语音/对话")) {
-            RenderAsrChatTab(runtime);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("错误")) {
-            RenderErrorTab(runtime);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("运维")) {
-            RenderOpsTab(runtime, runtime_ops_status);
-            ImGui::EndTabItem();
-        }
-        ImGui::EndTabBar();
-    }
+    return runtime_ops_status;
+}
+}  // namespace
+
+void RenderRuntimeOpsPanel(AppRuntime &runtime) {
+    RenderRuntimeOpsPanel(runtime, RuntimeOpsStatusStorage());
 }
 
 }  // namespace k2d

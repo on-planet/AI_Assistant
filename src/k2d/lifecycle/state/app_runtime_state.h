@@ -56,6 +56,11 @@ enum class WorkspaceMode {
     Authoring,
 };
 
+enum class WorkspaceLayoutMode {
+    Preset,
+    Manual,
+};
+
 enum class EditorProp {
     PosX,
     PosY,
@@ -149,11 +154,23 @@ struct AppRuntime {
     WindowLayoutState runtime_debug_window_layout{};
     WindowLayoutState inspector_window_layout{};
     WindowLayoutState reminder_window_layout{};
-    std::string workspace_docking_ini;
+    bool show_workspace_window = true;
+    bool show_overview_window = true;
+    bool show_editor_window = true;
+    bool show_timeline_window = true;
+    bool show_perception_window = true;
+    bool show_mapping_window = true;
+    bool show_asr_chat_window = true;
+    bool show_error_window = true;
+    bool show_ops_window = true;
+    bool show_inspector_window = true;
+    bool show_reminder_window = true;
+    std::string workspace_manual_docking_ini;
+    WorkspaceLayoutMode workspace_layout_mode = WorkspaceLayoutMode::Preset;
     WorkspaceMode last_applied_workspace_mode = WorkspaceMode::Debug;
-    bool workspace_layout_reset_requested = false;
-    bool workspace_layout_follow_preset = true;
-    bool workspace_docking_ini_pending_load = false;
+    bool workspace_preset_apply_requested = false;
+    bool workspace_manual_layout_reset_requested = false;
+    bool workspace_manual_layout_pending_load = false;
 
     // 参数面板增强：分组、搜索与批量绑定（UI 状态）
     int param_group_mode = 0; // 0=prefix, 1=semantic
@@ -174,6 +191,7 @@ struct AppRuntime {
     int timeline_snap_mode = 0; // 0=整数帧, 1=0.1s, 2=播放头
     float timeline_snap_fps = 30.0f;
     std::vector<int> timeline_selected_keyframe_indices;
+    std::vector<std::uint64_t> timeline_selected_keyframe_ids;
     bool timeline_box_select_active = false;
     float timeline_box_select_start_x = 0.0f;
     float timeline_box_select_start_y = 0.0f;
@@ -182,6 +200,7 @@ struct AppRuntime {
 
     std::vector<TimelineKeyframe> timeline_keyframe_clipboard;
     std::vector<TimelineKeyframe> timeline_keyframe_undo_snapshot;
+    std::vector<std::uint64_t> timeline_keyframe_undo_selected_ids;
     std::vector<TimelineKeyframe> timeline_keyframe_redo_snapshot;
     bool timeline_drag_snapshot_captured = false;
     std::vector<EditCommand> undo_stack;

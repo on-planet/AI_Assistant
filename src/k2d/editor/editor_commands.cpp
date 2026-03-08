@@ -26,7 +26,8 @@ void ApplyEditCommand(ModelRuntime &model,
                       std::vector<ReminderItem> *reminder_items,
                       const EditCommand &cmd,
                       bool use_after,
-                      const std::function<void(ModelPart *, float, float)> &apply_pivot_delta) {
+                      const std::function<void(ModelPart *, float, float)> &apply_pivot_delta,
+                      const std::function<void(const std::vector<std::uint64_t> &)> &apply_timeline_selection) {
     if (cmd.type == EditCommand::Type::Timeline) {
         for (auto &channel : model.animation_channels) {
             if (channel.id == cmd.channel_id) {
@@ -34,8 +35,14 @@ void ApplyEditCommand(ModelRuntime &model,
                 std::sort(channel.keyframes.begin(), channel.keyframes.end(), [](const TimelineKeyframe &a, const TimelineKeyframe &b) {
                     return a.time_sec < b.time_sec;
                 });
+                if (apply_timeline_selection) {
+                    apply_timeline_selection(use_after ? cmd.after_selected_keyframe_ids : cmd.before_selected_keyframe_ids);
+                }
                 return;
             }
+        }
+        if (apply_timeline_selection) {
+            apply_timeline_selection({});
         }
         return;
     }
@@ -135,13 +142,14 @@ bool UndoLastEdit(ModelRuntime &model,
                   std::vector<ReminderItem> *reminder_items,
                   std::vector<EditCommand> &undo_stack,
                   std::vector<EditCommand> &redo_stack,
-                  const std::function<void(ModelPart *, float, float)> &apply_pivot_delta) {
+                  const std::function<void(ModelPart *, float, float)> &apply_pivot_delta,
+                  const std::function<void(const std::vector<std::uint64_t> &)> &apply_timeline_selection) {
     if (undo_stack.empty()) {
         return false;
     }
     EditCommand cmd = undo_stack.back();
     undo_stack.pop_back();
-    ApplyEditCommand(model, reminder_service, reminder_items, cmd, false, apply_pivot_delta);
+    ApplyEditCommand(model, reminder_service, reminder_items, cmd, false, apply_pivot_delta, apply_timeline_selection);
     redo_stack.push_back(std::move(cmd));
     return true;
 }
@@ -151,13 +159,14 @@ bool RedoLastEdit(ModelRuntime &model,
                   std::vector<ReminderItem> *reminder_items,
                   std::vector<EditCommand> &undo_stack,
                   std::vector<EditCommand> &redo_stack,
-                  const std::function<void(ModelPart *, float, float)> &apply_pivot_delta) {
+                  const std::function<void(ModelPart *, float, float)> &apply_pivot_delta,
+                  const std::function<void(const std::vector<std::uint64_t> &)> &apply_timeline_selection) {
     if (redo_stack.empty()) {
         return false;
     }
     EditCommand cmd = redo_stack.back();
     redo_stack.pop_back();
-    ApplyEditCommand(model, reminder_service, reminder_items, cmd, true, apply_pivot_delta);
+    ApplyEditCommand(model, reminder_service, reminder_items, cmd, true, apply_pivot_delta, apply_timeline_selection);
     undo_stack.push_back(std::move(cmd));
     return true;
 }

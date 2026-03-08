@@ -106,7 +106,10 @@ void UndoLastEdit(AppRuntime &runtime) {
         &runtime.reminder_upcoming,
         runtime.undo_stack,
         runtime.redo_stack,
-        [](ModelPart *part, float dx, float dy) { ApplyPivotDelta(part, dx, dy); });
+        [](ModelPart *part, float dx, float dy) { ApplyPivotDelta(part, dx, dy); },
+        [&](const std::vector<std::uint64_t> &selected_ids) {
+            runtime.timeline_selected_keyframe_ids = selected_ids;
+        });
     SetUndoRedoStatus(runtime, "undo", ok, cmd);
 }
 
@@ -118,7 +121,10 @@ void RedoLastEdit(AppRuntime &runtime) {
         &runtime.reminder_upcoming,
         runtime.undo_stack,
         runtime.redo_stack,
-        [](ModelPart *part, float dx, float dy) { ApplyPivotDelta(part, dx, dy); });
+        [](ModelPart *part, float dx, float dy) { ApplyPivotDelta(part, dx, dy); },
+        [&](const std::vector<std::uint64_t> &selected_ids) {
+            runtime.timeline_selected_keyframe_ids = selected_ids;
+        });
     SetUndoRedoStatus(runtime, "redo", ok, cmd);
 }
 
@@ -166,8 +172,21 @@ bool SaveEditorProjectJsonToDisk(AppRuntime &runtime, const std::string &project
     editor.emplace("workspaceMode", JsonValue::makeNumber(static_cast<double>(runtime.workspace_mode == WorkspaceMode::Animation ? 0 :
                                                                               (runtime.workspace_mode == WorkspaceMode::Debug ? 1 :
                                                                               (runtime.workspace_mode == WorkspaceMode::Perception ? 2 : 3)))));
-    editor.emplace("workspaceLayoutFollowPreset", JsonValue::makeBool(runtime.workspace_layout_follow_preset));
-    editor.emplace("workspaceDockingIni", JsonValue::makeString(runtime.workspace_docking_ini));
+    editor.emplace("workspaceLayoutMode", JsonValue::makeNumber(static_cast<double>(runtime.workspace_layout_mode == WorkspaceLayoutMode::Preset ? 0 : 1)));
+    editor.emplace("workspaceManualDockingIni", JsonValue::makeString(runtime.workspace_manual_docking_ini));
+    JsonObject workspace_windows;
+    workspace_windows.emplace("workspace", JsonValue::makeBool(runtime.show_workspace_window));
+    workspace_windows.emplace("overview", JsonValue::makeBool(runtime.show_overview_window));
+    workspace_windows.emplace("editor", JsonValue::makeBool(runtime.show_editor_window));
+    workspace_windows.emplace("timeline", JsonValue::makeBool(runtime.show_timeline_window));
+    workspace_windows.emplace("perception", JsonValue::makeBool(runtime.show_perception_window));
+    workspace_windows.emplace("mapping", JsonValue::makeBool(runtime.show_mapping_window));
+    workspace_windows.emplace("asrChat", JsonValue::makeBool(runtime.show_asr_chat_window));
+    workspace_windows.emplace("errors", JsonValue::makeBool(runtime.show_error_window));
+    workspace_windows.emplace("ops", JsonValue::makeBool(runtime.show_ops_window));
+    workspace_windows.emplace("inspector", JsonValue::makeBool(runtime.show_inspector_window));
+    workspace_windows.emplace("reminder", JsonValue::makeBool(runtime.show_reminder_window));
+    editor.emplace("workspaceWindows", JsonValue::makeObject(std::move(workspace_windows)));
 
     auto save_window_layout = [](const AppRuntime::WindowLayoutState &layout) {
         JsonObject obj;
@@ -281,11 +300,14 @@ bool LoadEditorProjectJsonFromDisk(AppRuntime &runtime,
         runtime.selected_param_index = static_cast<int>(editor->getNumber("selectedParamIndex").value_or(0.0));
         runtime.manual_param_mode = editor->getBool("manualParamMode").value_or(runtime.manual_param_mode);
         runtime.edit_mode = editor->getBool("editMode").value_or(runtime.edit_mode);
-        runtime.workspace_dock_rebuild_requested = true;
-        runtime.workspace_layout_reset_requested = false;
-        runtime.workspace_layout_follow_preset = editor->getBool("workspaceLayoutFollowPreset").value_or(runtime.workspace_layout_follow_preset);
-        runtime.workspace_docking_ini = editor->getString("workspaceDockingIni").value_or(runtime.workspace_docking_ini);
-        runtime.workspace_docking_ini_pending_load = !runtime.workspace_docking_ini.empty();
+        const int workspace_layout_mode = static_cast<int>(editor->getNumber("workspaceLayoutMode").value_or(0.0));
+        runtime.workspace_layout_mode = workspace_layout_mode == 1 ? WorkspaceLayoutMode::Manual : WorkspaceLayoutMode::Preset;
+        runtime.workspace_preset_apply_requested = runtime.workspace_layout_mode == WorkspaceLayoutMode::Preset;
+        runtime.workspace_dock_rebuild_requested = runtime.workspace_layout_mode == WorkspaceLayoutMode::Preset;
+        runtime.workspace_manual_layout_reset_requested = false;
+        runtime.workspace_manual_docking_ini = editor->getString("workspaceManualDockingIni").value_or(runtime.workspace_manual_docking_ini);
+        runtime.workspace_manual_layout_pending_load = runtime.workspace_layout_mode == WorkspaceLayoutMode::Manual &&
+                                                       !runtime.workspace_manual_docking_ini.empty();
         runtime.last_applied_workspace_mode = runtime.workspace_mode;
         runtime.editor_view_pan_x = static_cast<float>(editor->getNumber("viewPanX").value_or(runtime.editor_view_pan_x));
         runtime.editor_view_pan_y = static_cast<float>(editor->getNumber("viewPanY").value_or(runtime.editor_view_pan_y));
@@ -306,10 +328,28 @@ bool LoadEditorProjectJsonFromDisk(AppRuntime &runtime,
             layout.collapsed = value->getBool("collapsed").value_or(layout.collapsed);
             layout.initialized = value->getBool("initialized").value_or(layout.initialized);
         };
+        auto load_window_visible = [](const JsonValue *value, const char *key, bool current) {
+            if (!value || !value->isObject()) {
+                return current;
+            }
+            return value->getBool(key).value_or(current);
+        };
 
         load_window_layout(editor->get("runtimeDebugWindow"), runtime.runtime_debug_window_layout);
         load_window_layout(editor->get("inspectorWindow"), runtime.inspector_window_layout);
         load_window_layout(editor->get("reminderWindow"), runtime.reminder_window_layout);
+        const JsonValue *workspace_windows = editor->get("workspaceWindows");
+        runtime.show_workspace_window = load_window_visible(workspace_windows, "workspace", runtime.show_workspace_window);
+        runtime.show_overview_window = load_window_visible(workspace_windows, "overview", runtime.show_overview_window);
+        runtime.show_editor_window = load_window_visible(workspace_windows, "editor", runtime.show_editor_window);
+        runtime.show_timeline_window = load_window_visible(workspace_windows, "timeline", runtime.show_timeline_window);
+        runtime.show_perception_window = load_window_visible(workspace_windows, "perception", runtime.show_perception_window);
+        runtime.show_mapping_window = load_window_visible(workspace_windows, "mapping", runtime.show_mapping_window);
+        runtime.show_asr_chat_window = load_window_visible(workspace_windows, "asrChat", runtime.show_asr_chat_window);
+        runtime.show_error_window = load_window_visible(workspace_windows, "errors", runtime.show_error_window);
+        runtime.show_ops_window = load_window_visible(workspace_windows, "ops", runtime.show_ops_window);
+        runtime.show_inspector_window = load_window_visible(workspace_windows, "inspector", runtime.show_inspector_window);
+        runtime.show_reminder_window = load_window_visible(workspace_windows, "reminder", runtime.show_reminder_window);
     }
 
     if (const JsonValue *feature = root.get("feature"); feature && feature->isObject()) {

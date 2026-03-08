@@ -61,6 +61,7 @@ enum class TimelineWrapMode {
 };
 
 struct TimelineKeyframe {
+    std::uint64_t stable_id = 0;
     float time_sec = 0.0f;
     float value = 0.0f;
     // dv/dt（每秒）

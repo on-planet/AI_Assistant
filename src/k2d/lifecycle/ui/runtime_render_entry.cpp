@@ -13,7 +13,14 @@
 namespace k2d {
 namespace {
 
-constexpr const char *kRuntimeDebugWindowName = "Runtime Debug";
+constexpr const char *kOverviewWindowName = "Runtime Overview";
+constexpr const char *kEditorWindowName = "Runtime Editor";
+constexpr const char *kTimelineWindowName = "Runtime Timeline";
+constexpr const char *kPerceptionWindowName = "Runtime Perception";
+constexpr const char *kMappingWindowName = "Runtime Mapping";
+constexpr const char *kAsrChatWindowName = "Runtime ASR + Chat";
+constexpr const char *kErrorWindowName = "Runtime Errors";
+constexpr const char *kOpsWindowName = "Runtime Ops";
 constexpr const char *kInspectorWindowName = "Model Hierarchy + Inspector";
 constexpr const char *kReminderWindowName = "Reminder";
 constexpr const char *kWorkspaceDockspaceName = "Runtime Workspace DockSpace";
@@ -29,42 +36,110 @@ const char *WorkspaceModeName(WorkspaceMode mode) {
 }
 
 #if defined(IMGUI_HAS_DOCK)
+void ApplyWorkspacePresetVisibility(AppRuntime &runtime) {
+    runtime.show_workspace_window = true;
+    runtime.show_overview_window = true;
+    runtime.show_editor_window = true;
+    runtime.show_timeline_window = true;
+    runtime.show_perception_window = true;
+    runtime.show_mapping_window = true;
+    runtime.show_asr_chat_window = true;
+    runtime.show_error_window = true;
+    runtime.show_ops_window = true;
+    runtime.show_inspector_window = true;
+    runtime.show_reminder_window = true;
+
+    switch (runtime.workspace_mode) {
+        case WorkspaceMode::Debug:
+            runtime.show_editor_window = false;
+            runtime.show_timeline_window = false;
+            runtime.show_mapping_window = false;
+            break;
+        case WorkspaceMode::Perception:
+            runtime.show_editor_window = false;
+            runtime.show_timeline_window = false;
+            runtime.show_mapping_window = false;
+            runtime.show_asr_chat_window = false;
+            break;
+        case WorkspaceMode::Animation:
+            runtime.show_error_window = false;
+            runtime.show_ops_window = false;
+            runtime.show_asr_chat_window = false;
+            runtime.show_reminder_window = false;
+            break;
+        case WorkspaceMode::Authoring:
+            runtime.show_asr_chat_window = false;
+            break;
+        default:
+            break;
+    }
+}
+
 void ApplyWorkspaceDockLayout(AppRuntime &runtime, const ImGuiID dockspace_id) {
     ImGui::DockBuilderRemoveNode(dockspace_id);
     ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
     ImGui::DockBuilderSetNodeSize(dockspace_id, ImGui::GetMainViewport()->WorkSize);
 
     ImGuiID dock_main = dockspace_id;
+    ImGuiID dock_left = 0;
     ImGuiID dock_right = 0;
+    ImGuiID dock_bottom = 0;
     ImGuiID dock_right_bottom = 0;
 
-    const float right_ratio = runtime.workspace_mode == WorkspaceMode::Perception ? 0.22f : 0.34f;
-    ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Right, right_ratio, &dock_right, &dock_main);
+    switch (runtime.workspace_mode) {
+        case WorkspaceMode::Debug: {
+            ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Left, 0.24f, &dock_left, &dock_main);
+            ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Right, 0.30f, &dock_right, &dock_main);
+            ImGui::DockBuilderSplitNode(dock_right, ImGuiDir_Down, 0.32f, &dock_right_bottom, &dock_right);
+            ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Down, 0.24f, &dock_bottom, &dock_main);
 
-    if (runtime.workspace_mode != WorkspaceMode::Perception) {
-        const float reminder_ratio = runtime.workspace_mode == WorkspaceMode::Animation ? 0.30f : 0.38f;
-        ImGui::DockBuilderSplitNode(dock_right, ImGuiDir_Down, reminder_ratio, &dock_right_bottom, &dock_right);
-    }
-
-    ImGui::DockBuilderDockWindow(kRuntimeDebugWindowName, dock_main);
-
-    if (runtime.workspace_mode == WorkspaceMode::Perception) {
-        ImGui::DockBuilderDockWindow(kInspectorWindowName, dock_right);
-        ImGui::DockBuilderDockWindow(kReminderWindowName, dock_right);
-    } else {
-        ImGui::DockBuilderDockWindow(kInspectorWindowName, dock_right);
-        if (dock_right_bottom != 0) {
+            ImGui::DockBuilderDockWindow(kOverviewWindowName, dock_left);
+            ImGui::DockBuilderDockWindow(kErrorWindowName, dock_main);
+            ImGui::DockBuilderDockWindow(kPerceptionWindowName, dock_right);
+            ImGui::DockBuilderDockWindow(kOpsWindowName, dock_right_bottom);
+            ImGui::DockBuilderDockWindow(kAsrChatWindowName, dock_bottom);
+            ImGui::DockBuilderDockWindow(kInspectorWindowName, dock_left);
             ImGui::DockBuilderDockWindow(kReminderWindowName, dock_right_bottom);
-        } else {
-            ImGui::DockBuilderDockWindow(kReminderWindowName, dock_right);
+            break;
         }
+        case WorkspaceMode::Perception: {
+            ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Left, 0.34f, &dock_left, &dock_main);
+            ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Right, 0.30f, &dock_right, &dock_main);
+            ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Down, 0.22f, &dock_bottom, &dock_main);
+
+            ImGui::DockBuilderDockWindow(kPerceptionWindowName, dock_left);
+            ImGui::DockBuilderDockWindow(kOverviewWindowName, dock_main);
+            ImGui::DockBuilderDockWindow(kErrorWindowName, dock_right);
+            ImGui::DockBuilderDockWindow(kOpsWindowName, dock_bottom);
+            ImGui::DockBuilderDockWindow(kReminderWindowName, dock_bottom);
+            ImGui::DockBuilderDockWindow(kInspectorWindowName, dock_right);
+            break;
+        }
+        case WorkspaceMode::Animation:
+        case WorkspaceMode::Authoring: {
+            ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Left, 0.28f, &dock_left, &dock_main);
+            ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Right, 0.24f, &dock_right, &dock_main);
+            ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Down, 0.22f, &dock_bottom, &dock_main);
+
+            ImGui::DockBuilderDockWindow(kEditorWindowName, dock_left);
+            ImGui::DockBuilderDockWindow(kTimelineWindowName, dock_main);
+            ImGui::DockBuilderDockWindow(kMappingWindowName, dock_right);
+            ImGui::DockBuilderDockWindow(kOverviewWindowName, dock_bottom);
+            ImGui::DockBuilderDockWindow(kInspectorWindowName, dock_right);
+            ImGui::DockBuilderDockWindow(kReminderWindowName, dock_bottom);
+            ImGui::DockBuilderDockWindow(kPerceptionWindowName, dock_left);
+            break;
+        }
+        default:
+            ImGui::DockBuilderDockWindow(kOverviewWindowName, dock_main);
+            break;
     }
 
     ImGui::DockBuilderFinish(dockspace_id);
-    runtime.workspace_docking_ini = ImGui::SaveIniSettingsToMemory();
+    ApplyWorkspacePresetVisibility(runtime);
     runtime.last_applied_workspace_mode = runtime.workspace_mode;
     runtime.workspace_dock_rebuild_requested = false;
-    runtime.workspace_layout_reset_requested = false;
+    runtime.workspace_manual_layout_reset_requested = false;
 }
 #endif
 
@@ -148,24 +223,23 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
             ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode;
             const ImGuiID dockspace_id = ImGui::GetID("RuntimeWorkspaceDockspaceId");
 
-            if (runtime.workspace_docking_ini_pending_load &&
-                !runtime.workspace_docking_ini.empty() &&
-                !runtime.workspace_layout_reset_requested &&
-                !runtime.workspace_layout_follow_preset) {
-                ImGui::LoadIniSettingsFromMemory(runtime.workspace_docking_ini.c_str(), runtime.workspace_docking_ini.size());
-                runtime.workspace_docking_ini_pending_load = false;
-                runtime.last_applied_workspace_mode = runtime.workspace_mode;
+            if (runtime.workspace_layout_mode == WorkspaceLayoutMode::Manual &&
+                runtime.workspace_manual_layout_pending_load &&
+                !runtime.workspace_manual_docking_ini.empty()) {
+                ImGui::LoadIniSettingsFromMemory(runtime.workspace_manual_docking_ini.c_str(), runtime.workspace_manual_docking_ini.size());
+                runtime.workspace_manual_layout_pending_load = false;
+                runtime.workspace_preset_apply_requested = false;
                 runtime.workspace_dock_rebuild_requested = false;
+                runtime.last_applied_workspace_mode = runtime.workspace_mode;
             }
 
             ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
 
-            if (runtime.workspace_layout_follow_preset &&
+            if (runtime.workspace_layout_mode == WorkspaceLayoutMode::Preset &&
                 (runtime.workspace_dock_rebuild_requested ||
-                 runtime.workspace_layout_reset_requested ||
+                 runtime.workspace_preset_apply_requested ||
                  runtime.last_applied_workspace_mode != runtime.workspace_mode)) {
                 ApplyWorkspaceDockLayout(runtime, dockspace_id);
-                runtime.workspace_docking_ini_pending_load = false;
             }
         } else {
             ImGui::PopStyleVar(3);
@@ -174,33 +248,90 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
 
         ImGuiWindowFlags panel_flags = ImGuiWindowFlags_NoCollapse;
 
-        if (ImGui::Begin(kRuntimeDebugWindowName, nullptr, panel_flags)) {
+        if (ImGui::BeginMainMenuBar()) {
             RenderWorkspaceToolbar(runtime);
-            RenderAppDebugUi(runtime);
-        }
-        ImGui::End();
-
-        if (!runtime.workspace_layout_reset_requested) {
-            runtime.workspace_docking_ini = ImGui::SaveIniSettingsToMemory();
+            ImGui::EndMainMenuBar();
         }
 
-        if (ImGui::Begin(kInspectorWindowName, nullptr, panel_flags)) {
-            bridge.RenderResourceTreeInspector();
-        }
-        ImGui::End();
-
-        bool reminder_open = runtime.workspace_mode != WorkspaceMode::Animation;
-        if (!reminder_open && runtime.workspace_layout_follow_preset) {
-            ImGui::SetNextWindowCollapsed(true, ImGuiCond_Appearing);
-        }
-        if (ImGui::Begin(kReminderWindowName, nullptr, panel_flags)) {
-            if (!reminder_open) {
-                ImGui::TextDisabled("Workspace %s 默认弱化 Reminder 面板，可手动展开或切换布局跟随。",
-                                    WorkspaceModeName(runtime.workspace_mode));
+        if (runtime.show_overview_window) {
+            if (ImGui::Begin(kOverviewWindowName, &runtime.show_overview_window, panel_flags)) {
+                RenderRuntimeOverviewPanel(runtime);
             }
-            RenderReminderPanel(runtime);
+            ImGui::End();
         }
-        ImGui::End();
+
+        if (runtime.show_editor_window) {
+            if (ImGui::Begin(kEditorWindowName, &runtime.show_editor_window, panel_flags)) {
+                RenderRuntimeEditorPanel(runtime);
+            }
+            ImGui::End();
+        }
+
+        if (runtime.show_timeline_window) {
+            if (ImGui::Begin(kTimelineWindowName, &runtime.show_timeline_window, panel_flags)) {
+                RenderRuntimeTimelinePanel(runtime);
+            }
+            ImGui::End();
+        }
+
+        if (runtime.show_perception_window) {
+            if (ImGui::Begin(kPerceptionWindowName, &runtime.show_perception_window, panel_flags)) {
+                RenderRuntimePerceptionPanel(runtime);
+            }
+            ImGui::End();
+        }
+
+        if (runtime.show_mapping_window) {
+            if (ImGui::Begin(kMappingWindowName, &runtime.show_mapping_window, panel_flags)) {
+                RenderRuntimeMappingPanel(runtime);
+            }
+            ImGui::End();
+        }
+
+        if (runtime.show_asr_chat_window) {
+            if (ImGui::Begin(kAsrChatWindowName, &runtime.show_asr_chat_window, panel_flags)) {
+                RenderRuntimeAsrChatPanel(runtime);
+            }
+            ImGui::End();
+        }
+
+        if (runtime.show_error_window) {
+            if (ImGui::Begin(kErrorWindowName, &runtime.show_error_window, panel_flags)) {
+                RenderRuntimeErrorPanel(runtime);
+            }
+            ImGui::End();
+        }
+
+        if (runtime.show_ops_window) {
+            if (ImGui::Begin(kOpsWindowName, &runtime.show_ops_window, panel_flags)) {
+                RenderRuntimeOpsPanel(runtime);
+            }
+            ImGui::End();
+        }
+
+        if (runtime.workspace_layout_mode == WorkspaceLayoutMode::Manual &&
+            !runtime.workspace_manual_layout_reset_requested) {
+            runtime.workspace_manual_docking_ini = ImGui::SaveIniSettingsToMemory();
+        }
+
+        if (runtime.show_inspector_window) {
+            if (ImGui::Begin(kInspectorWindowName, &runtime.show_inspector_window, panel_flags)) {
+                bridge.RenderResourceTreeInspector();
+            }
+            ImGui::End();
+        }
+
+        const bool reminder_open = runtime.workspace_mode != WorkspaceMode::Animation;
+        if (runtime.show_reminder_window) {
+            if (ImGui::Begin(kReminderWindowName, &runtime.show_reminder_window, panel_flags)) {
+                if (!reminder_open) {
+                    ImGui::TextDisabled("Workspace %s 默认弱化 Reminder 面板，可手动停靠到边缘区域。",
+                                        WorkspaceModeName(runtime.workspace_mode));
+                }
+                RenderReminderPanel(runtime);
+            }
+            ImGui::End();
+        }
 #else
         const float base_x = vp ? vp->WorkPos.x : 0.0f;
         const float base_y = vp ? vp->WorkPos.y : 0.0f;
@@ -225,27 +356,37 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
         const float inspector_h = compact_layout ? std::max(140.0f, right_h * 0.62f) : std::max(300.0f, right_h * 0.68f);
         const float reminder_h = std::max(120.0f, right_h - inspector_h - gap);
 
-        ImGui::SetNextWindowPos(ImVec2(base_x + margin, base_y + top_offset), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(debug_w, debug_h), ImGuiCond_FirstUseEver);
-        if (ImGui::Begin(kRuntimeDebugWindowName)) {
+        if (ImGui::BeginMainMenuBar()) {
             RenderWorkspaceToolbar(runtime);
-            RenderAppDebugUi(runtime);
+            ImGui::EndMainMenuBar();
         }
-        ImGui::End();
 
-        ImGui::SetNextWindowPos(ImVec2(right_x, right_y), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(right_w, inspector_h), ImGuiCond_FirstUseEver);
-        if (ImGui::Begin(kInspectorWindowName)) {
-            bridge.RenderResourceTreeInspector();
+        if (runtime.show_overview_window) {
+            ImGui::SetNextWindowPos(ImVec2(base_x + margin, base_y + top_offset), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(debug_w, std::max(220.0f, debug_h - 104.0f)), ImGuiCond_FirstUseEver);
+            if (ImGui::Begin(kOverviewWindowName, &runtime.show_overview_window)) {
+                RenderRuntimeOverviewPanel(runtime);
+            }
+            ImGui::End();
         }
-        ImGui::End();
 
-        ImGui::SetNextWindowPos(ImVec2(right_x, right_y + inspector_h + gap), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(right_w, reminder_h), ImGuiCond_FirstUseEver);
-        if (ImGui::Begin(kReminderWindowName)) {
-            RenderReminderPanel(runtime);
+        if (runtime.show_error_window) {
+            ImGui::SetNextWindowPos(ImVec2(right_x, right_y), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(right_w, inspector_h), ImGuiCond_FirstUseEver);
+            if (ImGui::Begin(kErrorWindowName, &runtime.show_error_window)) {
+                RenderRuntimeErrorPanel(runtime);
+            }
+            ImGui::End();
         }
-        ImGui::End();
+
+        if (runtime.show_ops_window) {
+            ImGui::SetNextWindowPos(ImVec2(right_x, right_y + inspector_h + gap), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(right_w, reminder_h), ImGuiCond_FirstUseEver);
+            if (ImGui::Begin(kOpsWindowName, &runtime.show_ops_window)) {
+                RenderRuntimeOpsPanel(runtime);
+            }
+            ImGui::End();
+        }
 #endif
     }
 

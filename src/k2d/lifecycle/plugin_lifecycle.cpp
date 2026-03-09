@@ -1316,7 +1316,10 @@ struct PluginWorker::Impl {
     std::string backend = "onnxruntime.cpu";
     int batch = 1;
     double last_latency_ms = 0.0;
-    std::vector<double> latency_window_ms;
+    std::vector<double> latency_ring_ms;
+    std::size_t latency_ring_head = 0;
+    std::size_t latency_ring_size = 0;
+    double latency_ring_sum_ms = 0.0;
 
     int PickNextDegradeHz() const {
         int next_hz = current_update_hz;
@@ -1340,15 +1343,53 @@ struct PluginWorker::Impl {
         return std::max(1, next_hz);
     }
 
+    void ResetLatencyRing() {
+        latency_ring_ms.clear();
+        latency_ring_head = 0;
+        latency_ring_size = 0;
+        latency_ring_sum_ms = 0.0;
+    }
+
+    void PushLatencyMs(double ms) {
+        const std::size_t cap = std::max<std::size_t>(1, cfg.latency_budget_window_size);
+        if (latency_ring_ms.size() != cap) {
+            ResetLatencyRing();
+            latency_ring_ms.assign(cap, 0.0);
+        }
+
+        const double v = std::max(0.0, ms);
+        if (latency_ring_size < cap) {
+            const std::size_t idx = (latency_ring_head + latency_ring_size) % cap;
+            latency_ring_ms[idx] = v;
+            latency_ring_sum_ms += v;
+            ++latency_ring_size;
+        } else {
+            const std::size_t idx = latency_ring_head;
+            latency_ring_sum_ms -= latency_ring_ms[idx];
+            latency_ring_ms[idx] = v;
+            latency_ring_sum_ms += v;
+            latency_ring_head = (latency_ring_head + 1) % cap;
+        }
+    }
+
     double ComputeAverageLatencyMs() const {
-        if (latency_window_ms.empty()) {
+        if (latency_ring_size == 0) {
             return 0.0;
         }
-        double sum = 0.0;
-        for (double v : latency_window_ms) {
-            sum += v;
+        return latency_ring_sum_ms / static_cast<double>(latency_ring_size);
+    }
+
+    std::vector<double> SnapshotLatency() const {
+        std::vector<double> out;
+        out.reserve(latency_ring_size);
+        if (latency_ring_size == 0 || latency_ring_ms.empty()) {
+            return out;
         }
-        return sum / static_cast<double>(latency_window_ms.size());
+        const std::size_t cap = latency_ring_ms.size();
+        for (std::size_t i = 0; i < latency_ring_size; ++i) {
+            out.push_back(latency_ring_ms[(latency_ring_head + i) % cap]);
+        }
+        return out;
     }
 };
 
@@ -1421,7 +1462,7 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
     impl_->disable_count = 0;
     impl_->recover_count = 0;
     impl_->last_latency_ms = 0.0;
-    impl_->latency_window_ms.clear();
+    impl_->ResetLatencyRing();
     impl_->last_error.clear();
     const PluginDescriptor &desc = manager->Descriptor();
     impl_->model_id = desc.name ? desc.name : "unknown";
@@ -1478,10 +1519,7 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
                 std::lock_guard<std::mutex> lock(impl_->mtx);
                 ++impl_->total_update_count;
                 impl_->last_latency_ms = elapsed_ms;
-                impl_->latency_window_ms.push_back(std::max(0.0, elapsed_ms));
-                if (impl_->latency_window_ms.size() > impl_->cfg.latency_budget_window_size) {
-                    impl_->latency_window_ms.erase(impl_->latency_window_ms.begin());
-                }
+                impl_->PushLatencyMs(elapsed_ms);
                 const double avg_latency_ms = impl_->ComputeAverageLatencyMs();
                 if (st == PluginStatus::Ok) {
                     impl_->latest_out = out;
@@ -1611,8 +1649,9 @@ PluginWorkerStats PluginWorker::GetStats() const {
     s.batch = impl_->batch;
     s.last_latency_ms = impl_->last_latency_ms;
     s.avg_latency_ms = impl_->ComputeAverageLatencyMs();
-    if (!impl_->latency_window_ms.empty()) {
-        std::vector<double> sorted = impl_->latency_window_ms;
+    const std::vector<double> latency_samples = impl_->SnapshotLatency();
+    if (!latency_samples.empty()) {
+        std::vector<double> sorted = latency_samples;
         std::sort(sorted.begin(), sorted.end());
         const std::size_t last = sorted.size() - 1;
         const std::size_t p50_idx = static_cast<std::size_t>(std::floor(0.50 * static_cast<double>(last)));

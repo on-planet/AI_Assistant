@@ -169,14 +169,23 @@ public:
 
         out.width = static_cast<int>(src_desc.Width);
         out.height = static_cast<int>(src_desc.Height);
-        out.bgra.resize(static_cast<std::size_t>(out.width) * static_cast<std::size_t>(out.height) * 4);
 
         const std::size_t row_bytes = static_cast<std::size_t>(out.width) * 4;
+        const std::size_t total_bytes = row_bytes * static_cast<std::size_t>(out.height);
+        if (out.bgra.size() != total_bytes) {
+            out.bgra.resize(total_bytes);
+        }
+
         const auto *src = static_cast<const std::uint8_t *>(mapped.pData);
-        for (int y = 0; y < out.height; ++y) {
-            std::memcpy(out.bgra.data() + static_cast<std::size_t>(y) * row_bytes,
-                        src + static_cast<std::size_t>(y) * mapped.RowPitch,
-                        row_bytes);
+        auto *dst = out.bgra.data();
+        if (mapped.RowPitch == row_bytes) {
+            std::memcpy(dst, src, total_bytes);
+        } else {
+            for (int y = 0; y < out.height; ++y) {
+                std::memcpy(dst + static_cast<std::size_t>(y) * row_bytes,
+                            src + static_cast<std::size_t>(y) * mapped.RowPitch,
+                            row_bytes);
+            }
         }
 
         context_->Unmap(staging_tex_.Get(), 0);
@@ -368,14 +377,23 @@ public:
 
         out.width = static_cast<int>(src_desc.Width);
         out.height = static_cast<int>(src_desc.Height);
-        out.bgra.resize(static_cast<std::size_t>(out.width) * static_cast<std::size_t>(out.height) * 4);
 
         const std::size_t row_bytes = static_cast<std::size_t>(out.width) * 4;
+        const std::size_t total_bytes = row_bytes * static_cast<std::size_t>(out.height);
+        if (out.bgra.size() != total_bytes) {
+            out.bgra.resize(total_bytes);
+        }
+
         const auto *src = static_cast<const std::uint8_t *>(mapped.pData);
-        for (int y = 0; y < out.height; ++y) {
-            std::memcpy(out.bgra.data() + static_cast<std::size_t>(y) * row_bytes,
-                        src + static_cast<std::size_t>(y) * mapped.RowPitch,
-                        row_bytes);
+        auto *dst = out.bgra.data();
+        if (mapped.RowPitch == row_bytes) {
+            std::memcpy(dst, src, total_bytes);
+        } else {
+            for (int y = 0; y < out.height; ++y) {
+                std::memcpy(dst + static_cast<std::size_t>(y) * row_bytes,
+                            src + static_cast<std::size_t>(y) * mapped.RowPitch,
+                            row_bytes);
+            }
         }
 
         context_->Unmap(staging_tex_.Get(), 0);

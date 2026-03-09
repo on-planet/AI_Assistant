@@ -11,6 +11,7 @@
 #include <utility>
 
 #include <onnxruntime_cxx_api.h>
+#include <opencv2/imgproc.hpp>
 
 namespace k2d {
 namespace {
@@ -115,37 +116,6 @@ void L2Normalize(std::vector<float> &v) {
     for (float &x : v) x /= n;
 }
 
-float SampleBgraBilinearAsRgb01(const ScreenCaptureFrame &frame, float xf, float yf, int c) {
-    const float x = std::clamp(xf, 0.0f, static_cast<float>(frame.width - 1));
-    const float y = std::clamp(yf, 0.0f, static_cast<float>(frame.height - 1));
-
-    const int x0 = static_cast<int>(std::floor(x));
-    const int y0 = static_cast<int>(std::floor(y));
-    const int x1 = std::min(x0 + 1, frame.width - 1);
-    const int y1 = std::min(y0 + 1, frame.height - 1);
-
-    const float tx = x - static_cast<float>(x0);
-    const float ty = y - static_cast<float>(y0);
-
-    auto get_rgb01 = [&](int px, int py, int ch) -> float {
-        const std::size_t idx = (static_cast<std::size_t>(py) * static_cast<std::size_t>(frame.width) + static_cast<std::size_t>(px)) * 4ull;
-        const std::uint8_t b = frame.bgra[idx + 0];
-        const std::uint8_t g = frame.bgra[idx + 1];
-        const std::uint8_t r = frame.bgra[idx + 2];
-        if (ch == 0) return static_cast<float>(r) / 255.0f;
-        if (ch == 1) return static_cast<float>(g) / 255.0f;
-        return static_cast<float>(b) / 255.0f;
-    };
-
-    const float v00 = get_rgb01(x0, y0, c);
-    const float v10 = get_rgb01(x1, y0, c);
-    const float v01 = get_rgb01(x0, y1, c);
-    const float v11 = get_rgb01(x1, y1, c);
-
-    const float vx0 = v00 + (v10 - v00) * tx;
-    const float vx1 = v01 + (v11 - v01) * tx;
-    return vx0 + (vx1 - vx0) * ty;
-}
 
 }  // namespace
 
@@ -260,44 +230,51 @@ bool SceneClassifier::Classify(const ScreenCaptureFrame &frame,
     std::fill(impl_->input_buffer.begin(), impl_->input_buffer.end(), 0.0f);
     auto &input = impl_->input_buffer;
 
-    // 与常见 CLIP 图像预处理对齐：
-    // 1) 保持纵横比，将短边缩放到约 256（当输入为 224 时）
-    // 2) 再做中心裁剪到模型输入尺寸
-    // 3) 双线性采样，RGB 通道，范围 [0,1]
+    cv::Mat bgra(frame.height, frame.width, CV_8UC4, const_cast<std::uint8_t *>(frame.bgra.data()));
+    cv::Mat rgb;
+    cv::cvtColor(bgra, rgb, cv::COLOR_BGRA2RGB);
+
+    // 与常见 CLIP 图像预处理对齐：保持比例缩放到短边 256（224 输入时），再中心裁剪到输入尺寸。
     const float resize_scale = 256.0f / 224.0f;
     const int resize_short = std::max(1, static_cast<int>(std::round(static_cast<float>(std::min(target_h, target_w)) * resize_scale)));
-
     const int src_w = frame.width;
     const int src_h = frame.height;
     const float scale = static_cast<float>(resize_short) / static_cast<float>(std::min(src_w, src_h));
     const int resized_w = std::max(1, static_cast<int>(std::round(static_cast<float>(src_w) * scale)));
     const int resized_h = std::max(1, static_cast<int>(std::round(static_cast<float>(src_h) * scale)));
 
-    const float crop_x0 = static_cast<float>(resized_w - target_w) * 0.5f;
-    const float crop_y0 = static_cast<float>(resized_h - target_h) * 0.5f;
+    cv::Mat resized_rgb;
+    cv::resize(rgb, resized_rgb, cv::Size(resized_w, resized_h), 0.0, 0.0, cv::INTER_LINEAR);
 
-    // 与官方 preprocess 对齐：RGB [0,1] 后再按通道做 normalize。
+    const int crop_x = std::max(0, (resized_w - target_w) / 2);
+    const int crop_y = std::max(0, (resized_h - target_h) / 2);
+    const int crop_w = std::min(target_w, resized_w - crop_x);
+    const int crop_h = std::min(target_h, resized_h - crop_y);
+    cv::Rect roi(crop_x, crop_y, crop_w, crop_h);
+    cv::Mat cropped_rgb = resized_rgb(roi);
+
+    cv::Mat final_rgb;
+    if (cropped_rgb.cols != target_w || cropped_rgb.rows != target_h) {
+        cv::resize(cropped_rgb, final_rgb, cv::Size(target_w, target_h), 0.0, 0.0, cv::INTER_LINEAR);
+    } else {
+        final_rgb = cropped_rgb;
+    }
+
+    cv::Mat final_rgb_f32;
+    final_rgb.convertTo(final_rgb_f32, CV_32FC3, 1.0 / 255.0);
+
     constexpr float kMean[3] = {0.48145466f, 0.4578275f, 0.40821073f};
     constexpr float kStd[3] = {0.26862954f, 0.26130258f, 0.27577711f};
 
     const std::size_t plane = static_cast<std::size_t>(target_h) * static_cast<std::size_t>(target_w);
     for (int y = 0; y < target_h; ++y) {
+        const auto *row = final_rgb_f32.ptr<cv::Vec3f>(y);
         for (int x = 0; x < target_w; ++x) {
-            const float rx = crop_x0 + static_cast<float>(x) + 0.5f;
-            const float ry = crop_y0 + static_cast<float>(y) + 0.5f;
-
-            // 反向映射到原图坐标（像素中心对齐）
-            const float src_xf = rx / scale - 0.5f;
-            const float src_yf = ry / scale - 0.5f;
-
-            const float r = SampleBgraBilinearAsRgb01(frame, src_xf, src_yf, 0);
-            const float g = SampleBgraBilinearAsRgb01(frame, src_xf, src_yf, 1);
-            const float b = SampleBgraBilinearAsRgb01(frame, src_xf, src_yf, 2);
-
+            const cv::Vec3f px = row[x];
             const std::size_t o0 = static_cast<std::size_t>(y) * static_cast<std::size_t>(target_w) + static_cast<std::size_t>(x);
-            input[o0] = (r - kMean[0]) / kStd[0];
-            input[plane + o0] = (g - kMean[1]) / kStd[1];
-            input[plane * 2 + o0] = (b - kMean[2]) / kStd[2];
+            input[o0] = (px[0] - kMean[0]) / kStd[0];
+            input[plane + o0] = (px[1] - kMean[1]) / kStd[1];
+            input[plane * 2 + o0] = (px[2] - kMean[2]) / kStd[2];
         }
     }
 

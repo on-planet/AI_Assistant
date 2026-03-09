@@ -2,9 +2,10 @@
 
 #include <atomic>
 #include <cstdint>
-#include <future>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include <string>
 #include <vector>
 
@@ -77,6 +78,10 @@ struct PerceptionPipelineState {
     std::int64_t ocr_conf_low_count = 0;
     std::int64_t ocr_conf_mid_count = 0;
     std::int64_t ocr_conf_high_count = 0;
+    float ocr_preprocess_det_avg_ms = 0.0f;
+    float ocr_infer_det_avg_ms = 0.0f;
+    float ocr_preprocess_rec_avg_ms = 0.0f;
+    float ocr_infer_rec_avg_ms = 0.0f;
     RuntimeErrorInfo ocr_error_info{};
 
     std::string ocr_summary_candidate;
@@ -120,6 +125,7 @@ private:
         OcrResult result;
         std::string error;
         int elapsed_ms = 0;
+        OcrPerfBreakdown perf{};
     };
 
     struct AsyncScenePacket {
@@ -131,10 +137,19 @@ private:
         int elapsed_ms = 0;
     };
 
-    std::future<void> scene_future_;
+    struct SceneTaskRequest {
+        bool pending = false;
+        std::uint64_t seq = 0;
+        ScreenCaptureFrame frame;
+    };
+
+    std::thread scene_worker_;
     std::atomic<bool> scene_running_{false};
     std::mutex scene_mutex_;
     AsyncScenePacket scene_packet_;
+    std::mutex scene_task_mutex_;
+    std::condition_variable scene_task_cv_;
+    SceneTaskRequest scene_task_;
 
     struct AsyncFacePacket {
         bool ready = false;
@@ -145,15 +160,33 @@ private:
         int elapsed_ms = 0;
     };
 
-    std::future<void> face_future_;
+    struct FaceTaskRequest {
+        bool pending = false;
+        std::uint64_t seq = 0;
+    };
+
+    std::thread face_worker_;
     std::atomic<bool> face_running_{false};
     std::mutex face_mutex_;
     AsyncFacePacket face_packet_;
+    std::mutex face_task_mutex_;
+    std::condition_variable face_task_cv_;
+    FaceTaskRequest face_task_;
 
-    std::future<void> ocr_future_;
+    struct OcrTaskRequest {
+        bool pending = false;
+        std::uint64_t seq = 0;
+        ScreenCaptureFrame frame;
+        OcrSystemContext context;
+    };
+
+    std::thread ocr_worker_;
     std::atomic<bool> ocr_running_{false};
     std::mutex ocr_mutex_;
     AsyncOcrPacket ocr_packet_;
+    std::mutex ocr_task_mutex_;
+    std::condition_variable ocr_task_cv_;
+    OcrTaskRequest ocr_task_;
 
     std::atomic<std::uint64_t> scene_submit_seq_{0};
     std::atomic<std::uint64_t> ocr_submit_seq_{0};
@@ -162,6 +195,11 @@ private:
     std::uint64_t scene_applied_seq_ = 0;
     std::uint64_t ocr_applied_seq_ = 0;
     std::uint64_t face_applied_seq_ = 0;
+
+    std::atomic<bool> workers_stop_{false};
+
+    void StartWorkers();
+    void StopWorkers() noexcept;
 };
 
 }  // namespace k2d

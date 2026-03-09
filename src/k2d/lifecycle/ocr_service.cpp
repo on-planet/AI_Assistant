@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <fstream>
 #include <memory>
@@ -10,6 +11,7 @@
 #include <utility>
 
 #include <onnxruntime_cxx_api.h>
+#include <opencv2/imgproc.hpp>
 
 namespace k2d {
 namespace {
@@ -260,8 +262,12 @@ int OcrService::GetDetInputSize() const noexcept {
 bool OcrService::Recognize(const ScreenCaptureFrame &frame,
                            const OcrSystemContext *context,
                            OcrResult &out,
-                           std::string *out_error) {
+                           std::string *out_error,
+                           OcrPerfBreakdown *out_perf) {
     out = OcrResult{};
+    if (out_perf) {
+        *out_perf = OcrPerfBreakdown{};
+    }
     if (!IsReady()) {
         if (out_error) *out_error = "ocr service not ready";
         return false;
@@ -280,30 +286,33 @@ bool OcrService::Recognize(const ScreenCaptureFrame &frame,
     std::fill(impl_->det_input_buffer.begin(), impl_->det_input_buffer.end(), 0.0f);
     auto &det_input = impl_->det_input_buffer;
 
-    auto sample_rgb01 = [&](int x, int y, int c) -> float {
-        x = std::clamp(x, 0, frame.width - 1);
-        y = std::clamp(y, 0, frame.height - 1);
-        const std::size_t idx = (static_cast<std::size_t>(y) * static_cast<std::size_t>(frame.width) + static_cast<std::size_t>(x)) * 4ull;
-        const std::uint8_t b = frame.bgra[idx + 0];
-        const std::uint8_t g = frame.bgra[idx + 1];
-        const std::uint8_t r = frame.bgra[idx + 2];
-        if (c == 0) return static_cast<float>(r) / 255.0f;
-        if (c == 1) return static_cast<float>(g) / 255.0f;
-        return static_cast<float>(b) / 255.0f;
-    };
+    cv::Mat bgra(frame.height, frame.width, CV_8UC4, const_cast<std::uint8_t *>(frame.bgra.data()));
+    cv::Mat rgb;
+    cv::cvtColor(bgra, rgb, cv::COLOR_BGRA2RGB);
+
+    const auto det_pre_t0 = std::chrono::steady_clock::now();
+    cv::Mat det_rgb;
+    cv::resize(rgb, det_rgb, cv::Size(det_w, det_h), 0.0, 0.0, cv::INTER_LINEAR);
+
+    cv::Mat det_rgb_f32;
+    det_rgb.convertTo(det_rgb_f32, CV_32FC3, 1.0 / 255.0);
 
     const std::size_t plane = static_cast<std::size_t>(det_h) * static_cast<std::size_t>(det_w);
     for (int y = 0; y < det_h; ++y) {
-        const float syf = (static_cast<float>(y) + 0.5f) * static_cast<float>(frame.height) / static_cast<float>(det_h) - 0.5f;
-        const int sy = static_cast<int>(std::round(syf));
+        const auto *row = det_rgb_f32.ptr<cv::Vec3f>(y);
         for (int x = 0; x < det_w; ++x) {
-            const float sxf = (static_cast<float>(x) + 0.5f) * static_cast<float>(frame.width) / static_cast<float>(det_w) - 0.5f;
-            const int sx = static_cast<int>(std::round(sxf));
+            const cv::Vec3f px = row[x];
             const std::size_t o = static_cast<std::size_t>(y) * static_cast<std::size_t>(det_w) + static_cast<std::size_t>(x);
-            det_input[o] = sample_rgb01(sx, sy, 0);
-            det_input[plane + o] = sample_rgb01(sx, sy, 1);
-            det_input[plane * 2 + o] = sample_rgb01(sx, sy, 2);
+            det_input[o] = px[0];
+            det_input[plane + o] = px[1];
+            det_input[plane * 2 + o] = px[2];
         }
+    }
+
+    const auto det_pre_t1 = std::chrono::steady_clock::now();
+    if (out_perf) {
+        out_perf->preprocess_det_ms = static_cast<int>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(det_pre_t1 - det_pre_t0).count());
     }
 
     try {
@@ -317,7 +326,13 @@ bool OcrService::Recognize(const ScreenCaptureFrame &frame,
 
         const char *in_names[] = {impl_->det_input_name.c_str()};
         const char *out_names[] = {impl_->det_output_name.c_str()};
+        const auto det_infer_t0 = std::chrono::steady_clock::now();
         auto det_out = impl_->det_session->Run(Ort::RunOptions{nullptr}, in_names, &det_tensor, 1, out_names, 1);
+        const auto det_infer_t1 = std::chrono::steady_clock::now();
+        if (out_perf) {
+            out_perf->infer_det_ms = static_cast<int>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(det_infer_t1 - det_infer_t0).count());
+        }
         if (det_out.empty() || !det_out[0].IsTensor()) {
             if (out_error) *out_error = "ocr det output invalid";
             return false;
@@ -344,22 +359,36 @@ bool OcrService::Recognize(const ScreenCaptureFrame &frame,
         impl_->rec_input_buffer.resize(rec_count);
         std::fill(impl_->rec_input_buffer.begin(), impl_->rec_input_buffer.end(), 0.0f);
         auto &rec_input = impl_->rec_input_buffer;
+        const auto rec_pre_t0 = std::chrono::steady_clock::now();
+        cv::Rect box_rect(box.x, box.y, box.w, box.h);
+        box_rect &= cv::Rect(0, 0, frame.width, frame.height);
+        if (box_rect.width <= 0 || box_rect.height <= 0) {
+            box_rect = cv::Rect(0, 0, frame.width, frame.height);
+        }
+
+        cv::Mat rec_rgb = rgb(box_rect);
+        cv::Mat rec_resized;
+        cv::resize(rec_rgb, rec_resized, cv::Size(impl_->rec_w, impl_->rec_h), 0.0, 0.0, cv::INTER_LINEAR);
+
+        cv::Mat rec_rgb_f32;
+        rec_resized.convertTo(rec_rgb_f32, CV_32FC3, 1.0 / 255.0);
+
         const std::size_t rec_plane = static_cast<std::size_t>(impl_->rec_h) * static_cast<std::size_t>(impl_->rec_w);
         for (int y = 0; y < impl_->rec_h; ++y) {
-            const float syf = static_cast<float>(box.y) +
-                              (static_cast<float>(y) + 0.5f) * static_cast<float>(box.h) / static_cast<float>(impl_->rec_h) -
-                              0.5f;
-            const int sy = static_cast<int>(std::round(syf));
+            const auto *row = rec_rgb_f32.ptr<cv::Vec3f>(y);
             for (int x = 0; x < impl_->rec_w; ++x) {
-                const float sxf = static_cast<float>(box.x) +
-                                  (static_cast<float>(x) + 0.5f) * static_cast<float>(box.w) / static_cast<float>(impl_->rec_w) -
-                                  0.5f;
-                const int sx = static_cast<int>(std::round(sxf));
+                const cv::Vec3f px = row[x];
                 const std::size_t o = static_cast<std::size_t>(y) * static_cast<std::size_t>(impl_->rec_w) + static_cast<std::size_t>(x);
-                rec_input[o] = sample_rgb01(sx, sy, 0);
-                rec_input[rec_plane + o] = sample_rgb01(sx, sy, 1);
-                rec_input[rec_plane * 2 + o] = sample_rgb01(sx, sy, 2);
+                rec_input[o] = px[0];
+                rec_input[rec_plane + o] = px[1];
+                rec_input[rec_plane * 2 + o] = px[2];
             }
+        }
+
+        const auto rec_pre_t1 = std::chrono::steady_clock::now();
+        if (out_perf) {
+            out_perf->preprocess_rec_ms = static_cast<int>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(rec_pre_t1 - rec_pre_t0).count());
         }
 
         std::vector<int64_t> rec_shape = {1, 3, impl_->rec_h, impl_->rec_w};
@@ -370,7 +399,13 @@ bool OcrService::Recognize(const ScreenCaptureFrame &frame,
                                                                  rec_shape.size());
         const char *rec_in_names[] = {impl_->rec_input_name.c_str()};
         const char *rec_out_names[] = {impl_->rec_output_name.c_str()};
+        const auto rec_infer_t0 = std::chrono::steady_clock::now();
         auto rec_out = impl_->rec_session->Run(Ort::RunOptions{nullptr}, rec_in_names, &rec_tensor, 1, rec_out_names, 1);
+        const auto rec_infer_t1 = std::chrono::steady_clock::now();
+        if (out_perf) {
+            out_perf->infer_rec_ms = static_cast<int>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(rec_infer_t1 - rec_infer_t0).count());
+        }
         if (rec_out.empty() || !rec_out[0].IsTensor()) {
             if (out_error) *out_error = "ocr rec output invalid";
             return false;

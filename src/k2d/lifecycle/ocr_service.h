@@ -28,6 +28,13 @@ struct OcrResult {
     std::vector<std::string> domain_tags;
 };
 
+struct OcrPerfBreakdown {
+    int preprocess_det_ms = 0;
+    int infer_det_ms = 0;
+    int preprocess_rec_ms = 0;
+    int infer_rec_ms = 0;
+};
+
 // PP-OCR(ONNX) det + rec 两模型拆分部署的最小可用服务。
 class OcrService {
 public:
@@ -46,7 +53,8 @@ public:
     bool Recognize(const ScreenCaptureFrame &frame,
                    const OcrSystemContext *context,
                    OcrResult &out,
-                   std::string *out_error);
+                   std::string *out_error,
+                   OcrPerfBreakdown *out_perf = nullptr);
 
 private:
     struct Impl;

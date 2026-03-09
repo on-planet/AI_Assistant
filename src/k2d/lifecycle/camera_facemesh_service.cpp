@@ -102,6 +102,9 @@ struct CameraFacemeshService::Impl {
 
     // 低光降级阈值（灰度均值，0~255）
     float low_light_mean_luma_min = 48.0f;
+
+    // 复用 facemesh 输入缓冲，减少每帧堆分配。
+    std::vector<float> input_buffer;
 };
 
 bool CameraFacemeshService::Init(const std::string &model_path,
@@ -333,9 +336,13 @@ bool CameraFacemeshService::RecognizeFromFrame(const ScreenCaptureFrame &frame,
     cv::Mat rgb;
     cv::cvtColor(resized, rgb, cv::COLOR_BGR2RGB);
 
-    std::vector<float> input(1ull * 3ull * static_cast<std::size_t>(impl_->input_h) * static_cast<std::size_t>(impl_->input_w), 0.0f);
-    const std::size_t plane = static_cast<std::size_t>(impl_->input_h) * static_cast<std::size_t>(impl_->input_w);
+    const std::size_t input_count = 1ull * 3ull * static_cast<std::size_t>(impl_->input_h) * static_cast<std::size_t>(impl_->input_w);
+    if (impl_->input_buffer.size() != input_count) {
+        impl_->input_buffer.resize(input_count);
+    }
+    auto &input = impl_->input_buffer;
 
+    const std::size_t plane = static_cast<std::size_t>(impl_->input_h) * static_cast<std::size_t>(impl_->input_w);
     for (int yy = 0; yy < impl_->input_h; ++yy) {
         const auto *row = rgb.ptr<cv::Vec3b>(yy);
         for (int xx = 0; xx < impl_->input_w; ++xx) {

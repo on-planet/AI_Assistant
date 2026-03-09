@@ -320,12 +320,20 @@ struct AppRuntime {
     std::vector<double> scene_latency_window_ms;
     std::vector<double> ocr_latency_window_ms;
     std::vector<double> face_latency_window_ms;
+    std::size_t scene_latency_ring_head = 0;
+    std::size_t scene_latency_ring_size = 0;
+    std::size_t ocr_latency_ring_head = 0;
+    std::size_t ocr_latency_ring_size = 0;
+    std::size_t face_latency_ring_head = 0;
+    std::size_t face_latency_ring_size = 0;
     double scene_p95_latency_ms = 0.0;
     double ocr_p95_latency_ms = 0.0;
     double face_p95_latency_ms = 0.0;
     std::size_t runtime_metrics_window_size = 120;
 
     std::vector<RuntimeMetricsSample> runtime_metrics_series;
+    std::size_t runtime_metrics_series_head = 0;
+    std::size_t runtime_metrics_series_size = 0;
     std::size_t runtime_metrics_series_capacity = 2048;
     std::uint64_t runtime_metrics_seq = 0;
 

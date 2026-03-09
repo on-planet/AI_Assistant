@@ -94,6 +94,12 @@ void RenderRuntimePerceptionPanel(AppRuntime &runtime) {
 
     ImGui::SeparatorText("OCR Quality Metrics");
     ImGui::Text("Avg Latency: %.1f ms", runtime.perception_state.ocr_avg_latency_ms);
+    ImGui::Text("Det Preprocess Avg: %.1f ms | Det ONNX Avg: %.1f ms",
+                runtime.perception_state.ocr_preprocess_det_avg_ms,
+                runtime.perception_state.ocr_infer_det_avg_ms);
+    ImGui::Text("Rec Preprocess Avg: %.1f ms | Rec ONNX Avg: %.1f ms",
+                runtime.perception_state.ocr_preprocess_rec_avg_ms,
+                runtime.perception_state.ocr_infer_rec_avg_ms);
     ImGui::Text("Discard Rate: %.2f%%", runtime.perception_state.ocr_discard_rate * 100.0f);
     ImGui::Text("Kept / Raw Lines: %lld / %lld",
                 static_cast<long long>(runtime.perception_state.ocr_total_kept_lines),

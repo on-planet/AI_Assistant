@@ -272,9 +272,11 @@ bool AppLifecycleBootstrapImpl(AppLifecycleContext &ctx) {
     }
 
     {
-        std::unique_ptr<IAsrProvider> offline = std::make_unique<OfflineAsrProvider>("assets/whisper/ggml-base.bin");
+        std::unique_ptr<IAsrProvider> offline = std::make_unique<OfflineAsrProvider>("assets/sense-voice-encoder-int8.onnx");
         std::unique_ptr<IAsrProvider> cloud = std::make_unique<CloudAsrProvider>("https://api.openai.com/v1/audio/transcriptions", "YOUR_API_KEY");
-        g_runtime.asr_provider = std::make_unique<HybridAsrProvider>(std::move(offline), std::move(cloud));
+        HybridAsrConfig asr_cfg{};
+        asr_cfg.cloud_fallback_enabled = false;
+        g_runtime.asr_provider = std::make_unique<HybridAsrProvider>(std::move(offline), std::move(cloud), asr_cfg);
 
         std::string asr_err;
         g_runtime.asr_ready = g_runtime.asr_provider->Init(&asr_err);

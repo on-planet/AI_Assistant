@@ -25,14 +25,42 @@ double ComputeP95(std::vector<double> samples) {
     return samples[std::min(idx, samples.size() - 1)];
 }
 
-void PushLatency(std::vector<double> &window, std::size_t cap, double ms) {
+void PushLatency(std::vector<double> &window,
+                 std::size_t cap,
+                 std::size_t &head,
+                 std::size_t &size,
+                 double ms) {
     if (cap == 0) {
+        window.clear();
+        head = 0;
+        size = 0;
         return;
     }
-    window.push_back(std::max(0.0, ms));
-    if (window.size() > cap) {
-        window.erase(window.begin());
+    if (window.size() != cap) {
+        window.assign(cap, 0.0);
+        head = 0;
+        size = 0;
     }
+    const std::size_t idx = (head + size) % cap;
+    window[idx] = std::max(0.0, ms);
+    if (size < cap) {
+        ++size;
+    } else {
+        head = (head + 1) % cap;
+    }
+}
+
+std::vector<double> SnapshotRing(const std::vector<double> &ring, std::size_t head, std::size_t size) {
+    std::vector<double> out;
+    out.reserve(size);
+    if (ring.empty() || size == 0) {
+        return out;
+    }
+    const std::size_t cap = ring.size();
+    for (std::size_t i = 0; i < size; ++i) {
+        out.push_back(ring[(head + i) % cap]);
+    }
+    return out;
 }
 
 void PushMetricsSample(AppRuntime &runtime) {
@@ -54,9 +82,23 @@ void PushMetricsSample(AppRuntime &runtime) {
     sample.asr_timeout_rate = runtime.asr_timeout_rate;
     sample.plugin_timeout_rate = runtime.plugin_timeout_rate;
 
-    runtime.runtime_metrics_series.push_back(sample);
-    if (runtime.runtime_metrics_series.size() > runtime.runtime_metrics_series_capacity) {
-        runtime.runtime_metrics_series.erase(runtime.runtime_metrics_series.begin());
+    if (runtime.runtime_metrics_series_capacity == 0) {
+        runtime.runtime_metrics_series.clear();
+        runtime.runtime_metrics_series_head = 0;
+        runtime.runtime_metrics_series_size = 0;
+    } else {
+        if (runtime.runtime_metrics_series.size() != runtime.runtime_metrics_series_capacity) {
+            runtime.runtime_metrics_series.assign(runtime.runtime_metrics_series_capacity, RuntimeMetricsSample{});
+            runtime.runtime_metrics_series_head = 0;
+            runtime.runtime_metrics_series_size = 0;
+        }
+        const std::size_t idx = (runtime.runtime_metrics_series_head + runtime.runtime_metrics_series_size) % runtime.runtime_metrics_series_capacity;
+        runtime.runtime_metrics_series[idx] = sample;
+        if (runtime.runtime_metrics_series_size < runtime.runtime_metrics_series_capacity) {
+            ++runtime.runtime_metrics_series_size;
+        } else {
+            runtime.runtime_metrics_series_head = (runtime.runtime_metrics_series_head + 1) % runtime.runtime_metrics_series_capacity;
+        }
     }
 
     LogObsInfo("runtime.metrics",
@@ -296,17 +338,29 @@ void TickAppSystems(AppRuntime &runtime, float dt) {
 
         PushLatency(runtime.scene_latency_window_ms,
                     runtime.runtime_metrics_window_size,
+                    runtime.scene_latency_ring_head,
+                    runtime.scene_latency_ring_size,
                     static_cast<double>(runtime.perception_state.scene_avg_latency_ms));
         PushLatency(runtime.ocr_latency_window_ms,
                     runtime.runtime_metrics_window_size,
+                    runtime.ocr_latency_ring_head,
+                    runtime.ocr_latency_ring_size,
                     static_cast<double>(runtime.perception_state.ocr_avg_latency_ms));
         PushLatency(runtime.face_latency_window_ms,
                     runtime.runtime_metrics_window_size,
+                    runtime.face_latency_ring_head,
+                    runtime.face_latency_ring_size,
                     static_cast<double>(runtime.perception_state.face_avg_latency_ms));
 
-        runtime.scene_p95_latency_ms = ComputeP95(runtime.scene_latency_window_ms);
-        runtime.ocr_p95_latency_ms = ComputeP95(runtime.ocr_latency_window_ms);
-        runtime.face_p95_latency_ms = ComputeP95(runtime.face_latency_window_ms);
+        runtime.scene_p95_latency_ms = ComputeP95(SnapshotRing(runtime.scene_latency_window_ms,
+                                                               runtime.scene_latency_ring_head,
+                                                               runtime.scene_latency_ring_size));
+        runtime.ocr_p95_latency_ms = ComputeP95(SnapshotRing(runtime.ocr_latency_window_ms,
+                                                             runtime.ocr_latency_ring_head,
+                                                             runtime.ocr_latency_ring_size));
+        runtime.face_p95_latency_ms = ComputeP95(SnapshotRing(runtime.face_latency_window_ms,
+                                                              runtime.face_latency_ring_head,
+                                                              runtime.face_latency_ring_size));
 
         PushMetricsSample(runtime);
 

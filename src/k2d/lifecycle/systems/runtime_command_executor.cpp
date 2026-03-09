@@ -42,22 +42,8 @@ void ReduceSwitchWorkspaceMode(AppRuntime &runtime, const UiCommand &cmd) {
         runtime.workspace_dock_rebuild_requested = true;
         runtime.last_applied_workspace_mode = static_cast<WorkspaceMode>(-1);
     } else {
-        bool any_window_visible = false;
-        any_window_visible = any_window_visible || runtime.show_overview_window;
-        any_window_visible = any_window_visible || runtime.show_editor_window;
-        any_window_visible = any_window_visible || runtime.show_timeline_window;
-        any_window_visible = any_window_visible || runtime.show_perception_window;
-        any_window_visible = any_window_visible || runtime.show_mapping_window;
-        any_window_visible = any_window_visible || runtime.show_asr_chat_window;
-        any_window_visible = any_window_visible || runtime.show_error_window;
-        any_window_visible = any_window_visible || runtime.show_ops_window;
-        any_window_visible = any_window_visible || runtime.show_inspector_window;
-        any_window_visible = any_window_visible || runtime.show_reminder_window;
-
-        if (!any_window_visible) {
-            runtime.show_overview_window = true;
-            runtime.show_error_window = true;
-            runtime.show_ops_window = true;
+        if (!HasAnyWorkspaceChildWindowVisible(runtime)) {
+            ApplyWorkspaceWindowVisibility(runtime, BuildWorkspaceDefaultVisibility(runtime.workspace_mode));
         }
 
         // 手动布局下切换 Workspace 时，强制重建当前工作区的 Dock，避免载入旧 ini 后出现面板内容空白。

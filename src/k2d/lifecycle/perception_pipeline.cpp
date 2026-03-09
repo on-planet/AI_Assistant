@@ -18,6 +18,118 @@ RuntimeErrorCode ClassifyInitErrorCode(const std::string &err) {
 
 }  // namespace
 
+void PerceptionPipeline::StartWorkers() {
+    workers_stop_.store(false, std::memory_order_release);
+
+    scene_worker_ = std::thread([this]() {
+        while (true) {
+            SceneTaskRequest req;
+            {
+                std::unique_lock<std::mutex> lk(scene_task_mutex_);
+                scene_task_cv_.wait(lk, [this]() { return workers_stop_.load(std::memory_order_acquire) || scene_task_.pending; });
+                if (workers_stop_.load(std::memory_order_acquire) && !scene_task_.pending) {
+                    break;
+                }
+                req = std::move(scene_task_);
+                scene_task_ = SceneTaskRequest{};
+            }
+
+            AsyncScenePacket local{};
+            local.ready = true;
+            local.seq = req.seq;
+            const auto t0 = std::chrono::steady_clock::now();
+            local.ok = scene_classifier_.Classify(req.frame, local.result, &local.error);
+            const auto t1 = std::chrono::steady_clock::now();
+            local.elapsed_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
+
+            {
+                std::lock_guard<std::mutex> lk(scene_mutex_);
+                if (!scene_packet_.ready || local.seq >= scene_packet_.seq) {
+                    scene_packet_ = std::move(local);
+                }
+            }
+            scene_running_.store(false, std::memory_order_release);
+        }
+    });
+
+    ocr_worker_ = std::thread([this]() {
+        while (true) {
+            OcrTaskRequest req;
+            {
+                std::unique_lock<std::mutex> lk(ocr_task_mutex_);
+                ocr_task_cv_.wait(lk, [this]() { return workers_stop_.load(std::memory_order_acquire) || ocr_task_.pending; });
+                if (workers_stop_.load(std::memory_order_acquire) && !ocr_task_.pending) {
+                    break;
+                }
+                req = std::move(ocr_task_);
+                ocr_task_ = OcrTaskRequest{};
+            }
+
+            AsyncOcrPacket local{};
+            local.ready = true;
+            local.seq = req.seq;
+            const auto t0 = std::chrono::steady_clock::now();
+            local.ok = ocr_service_.Recognize(req.frame, &req.context, local.result, &local.error, &local.perf);
+            const auto t1 = std::chrono::steady_clock::now();
+            local.elapsed_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
+
+            {
+                std::lock_guard<std::mutex> lk(ocr_mutex_);
+                if (!ocr_packet_.ready || local.seq >= ocr_packet_.seq) {
+                    ocr_packet_ = std::move(local);
+                }
+            }
+            ocr_running_.store(false, std::memory_order_release);
+        }
+    });
+
+    face_worker_ = std::thread([this]() {
+        while (true) {
+            FaceTaskRequest req;
+            {
+                std::unique_lock<std::mutex> lk(face_task_mutex_);
+                face_task_cv_.wait(lk, [this]() { return workers_stop_.load(std::memory_order_acquire) || face_task_.pending; });
+                if (workers_stop_.load(std::memory_order_acquire) && !face_task_.pending) {
+                    break;
+                }
+                req = std::move(face_task_);
+                face_task_ = FaceTaskRequest{};
+            }
+
+            AsyncFacePacket local{};
+            local.ready = true;
+            local.seq = req.seq;
+            const auto t0 = std::chrono::steady_clock::now();
+            local.ok = camera_facemesh_service_.RecognizeFromCamera(local.result, &local.error);
+            const auto t1 = std::chrono::steady_clock::now();
+            local.elapsed_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
+
+            {
+                std::lock_guard<std::mutex> lk(face_mutex_);
+                if (!face_packet_.ready || local.seq >= face_packet_.seq) {
+                    face_packet_ = std::move(local);
+                }
+            }
+            face_running_.store(false, std::memory_order_release);
+        }
+    });
+}
+
+void PerceptionPipeline::StopWorkers() noexcept {
+    workers_stop_.store(true, std::memory_order_release);
+    scene_task_cv_.notify_all();
+    ocr_task_cv_.notify_all();
+    face_task_cv_.notify_all();
+
+    if (scene_worker_.joinable()) scene_worker_.join();
+    if (ocr_worker_.joinable()) ocr_worker_.join();
+    if (face_worker_.joinable()) face_worker_.join();
+
+    scene_running_.store(false, std::memory_order_release);
+    ocr_running_.store(false, std::memory_order_release);
+    face_running_.store(false, std::memory_order_release);
+}
+
 bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_error) {
     state = PerceptionPipelineState{};
 
@@ -232,6 +344,8 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
         }
     }
 
+    StartWorkers();
+
     if (out_error) {
         out_error->clear();
     }
@@ -239,20 +353,7 @@ bool PerceptionPipeline::Init(PerceptionPipelineState &state, std::string *out_e
 }
 
 void PerceptionPipeline::Shutdown(PerceptionPipelineState &state) noexcept {
-    if (scene_future_.valid()) {
-        scene_future_.wait();
-    }
-    scene_running_.store(false, std::memory_order_release);
-
-    if (face_future_.valid()) {
-        face_future_.wait();
-    }
-    face_running_.store(false, std::memory_order_release);
-
-    if (ocr_future_.valid()) {
-        ocr_future_.wait();
-    }
-    ocr_running_.store(false, std::memory_order_release);
+    StopWorkers();
 
     ocr_service_.Shutdown();
     scene_classifier_.Shutdown();
@@ -299,11 +400,6 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
                       "perception-tick");
 
     if (state.scene_classifier_enabled && state.scene_classifier_ready) {
-        if (scene_future_.valid() &&
-            scene_future_.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-            scene_future_.get();
-            scene_running_.store(false, std::memory_order_release);
-        }
 
         AsyncScenePacket scene_packet;
         bool has_scene_packet = false;
@@ -340,20 +436,13 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
         if (!scene_running_.load(std::memory_order_acquire)) {
             const std::uint64_t seq = scene_submit_seq_.fetch_add(1, std::memory_order_acq_rel) + 1;
             scene_running_.store(true, std::memory_order_release);
-            scene_future_ = std::async(std::launch::async, [this, seq, scene_frame = frame]() mutable {
-                AsyncScenePacket local{};
-                local.ready = true;
-                local.seq = seq;
-                const auto t0 = std::chrono::steady_clock::now();
-                local.ok = scene_classifier_.Classify(scene_frame, local.result, &local.error);
-                const auto t1 = std::chrono::steady_clock::now();
-                local.elapsed_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
-
-                std::lock_guard<std::mutex> lk(scene_mutex_);
-                if (!scene_packet_.ready || local.seq >= scene_packet_.seq) {
-                    scene_packet_ = std::move(local);
-                }
-            });
+            {
+                std::lock_guard<std::mutex> lk(scene_task_mutex_);
+                scene_task_.pending = true;
+                scene_task_.seq = seq;
+                scene_task_.frame = frame;
+            }
+            scene_task_cv_.notify_one();
         }
     }
 
@@ -381,11 +470,6 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
         state.ocr_low_conf_threshold = std::clamp(state.ocr_low_conf_threshold, 0.0f, 1.0f);
         ocr_service_.SetDetInputSize(state.ocr_det_input_size);
 
-        if (ocr_future_.valid() &&
-            ocr_future_.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-            ocr_future_.get();
-            ocr_running_.store(false, std::memory_order_release);
-        }
 
         AsyncOcrPacket packet;
         bool has_packet = false;
@@ -418,6 +502,26 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
                                             ? static_cast<float>(static_cast<double>(state.ocr_total_latency_ms) /
                                                                  static_cast<double>(state.ocr_total_runs))
                                             : 0.0f;
+                state.ocr_preprocess_det_avg_ms = state.ocr_total_runs > 0
+                                                       ? static_cast<float>((state.ocr_preprocess_det_avg_ms * static_cast<float>(state.ocr_total_runs - 1) +
+                                                                            static_cast<float>(packet.perf.preprocess_det_ms)) /
+                                                                           static_cast<float>(state.ocr_total_runs))
+                                                       : 0.0f;
+                state.ocr_infer_det_avg_ms = state.ocr_total_runs > 0
+                                                  ? static_cast<float>((state.ocr_infer_det_avg_ms * static_cast<float>(state.ocr_total_runs - 1) +
+                                                                       static_cast<float>(packet.perf.infer_det_ms)) /
+                                                                      static_cast<float>(state.ocr_total_runs))
+                                                  : 0.0f;
+                state.ocr_preprocess_rec_avg_ms = state.ocr_total_runs > 0
+                                                       ? static_cast<float>((state.ocr_preprocess_rec_avg_ms * static_cast<float>(state.ocr_total_runs - 1) +
+                                                                            static_cast<float>(packet.perf.preprocess_rec_ms)) /
+                                                                           static_cast<float>(state.ocr_total_runs))
+                                                       : 0.0f;
+                state.ocr_infer_rec_avg_ms = state.ocr_total_runs > 0
+                                                  ? static_cast<float>((state.ocr_infer_rec_avg_ms * static_cast<float>(state.ocr_total_runs - 1) +
+                                                                       static_cast<float>(packet.perf.infer_rec_ms)) /
+                                                                      static_cast<float>(state.ocr_total_runs))
+                                                  : 0.0f;
 
                 OcrResult filtered_result = packet.result;
                 const auto raw_lines = packet.result.lines;
@@ -482,21 +586,14 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
             ocr_context.url = state.system_context_snapshot.url_hint;
 
             ocr_running_.store(true, std::memory_order_release);
-            ocr_future_ = std::async(std::launch::async, [this, seq, ocr_frame = std::move(ocr_frame), ocr_context = std::move(ocr_context)]() mutable {
-                AsyncOcrPacket local{};
-                local.ready = true;
-                local.seq = seq;
-
-                const auto t0 = std::chrono::steady_clock::now();
-                local.ok = ocr_service_.Recognize(ocr_frame, &ocr_context, local.result, &local.error);
-                const auto t1 = std::chrono::steady_clock::now();
-                local.elapsed_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
-
-                std::lock_guard<std::mutex> lk(ocr_mutex_);
-                if (!ocr_packet_.ready || local.seq >= ocr_packet_.seq) {
-                    ocr_packet_ = std::move(local);
-                }
-            });
+            {
+                std::lock_guard<std::mutex> lk(ocr_task_mutex_);
+                ocr_task_.pending = true;
+                ocr_task_.seq = seq;
+                ocr_task_.frame = std::move(ocr_frame);
+                ocr_task_.context = std::move(ocr_context);
+            }
+            ocr_task_cv_.notify_one();
         }
 
         if (has_new_ocr_packet) {
@@ -579,11 +676,6 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
     }
 
     if (state.camera_facemesh_enabled && state.camera_facemesh_ready) {
-        if (face_future_.valid() &&
-            face_future_.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-            face_future_.get();
-            face_running_.store(false, std::memory_order_release);
-        }
 
         AsyncFacePacket face_packet;
         bool has_face_packet = false;
@@ -623,20 +715,12 @@ void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
         if (!face_running_.load(std::memory_order_acquire)) {
             const std::uint64_t seq = face_submit_seq_.fetch_add(1, std::memory_order_acq_rel) + 1;
             face_running_.store(true, std::memory_order_release);
-            face_future_ = std::async(std::launch::async, [this, seq]() {
-                AsyncFacePacket local{};
-                local.ready = true;
-                local.seq = seq;
-                const auto t0 = std::chrono::steady_clock::now();
-                local.ok = camera_facemesh_service_.RecognizeFromCamera(local.result, &local.error);
-                const auto t1 = std::chrono::steady_clock::now();
-                local.elapsed_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
-
-                std::lock_guard<std::mutex> lk(face_mutex_);
-                if (!face_packet_.ready || local.seq >= face_packet_.seq) {
-                    face_packet_ = std::move(local);
-                }
-            });
+            {
+                std::lock_guard<std::mutex> lk(face_task_mutex_);
+                face_task_.pending = true;
+                face_task_.seq = seq;
+            }
+            face_task_cv_.notify_one();
         }
 
         state.blackboard.face_emotion.face_detected = state.face_emotion_result.face_detected;

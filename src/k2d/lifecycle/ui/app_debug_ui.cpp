@@ -203,6 +203,10 @@ void ResetPerceptionRuntimeState(PerceptionPipelineState &state) {
     state.ocr_total_runs = 0;
     state.ocr_total_latency_ms = 0;
     state.ocr_avg_latency_ms = 0.0f;
+    state.ocr_preprocess_det_avg_ms = 0.0f;
+    state.ocr_infer_det_avg_ms = 0.0f;
+    state.ocr_preprocess_rec_avg_ms = 0.0f;
+    state.ocr_infer_rec_avg_ms = 0.0f;
     state.ocr_total_raw_lines = 0;
     state.ocr_total_kept_lines = 0;
     state.ocr_total_dropped_low_conf_lines = 0;

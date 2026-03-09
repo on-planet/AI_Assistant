@@ -57,7 +57,13 @@ void RunAppLoop(const AppLoopContext &ctx) {
             *ctx.debug_fps_accum_frames = 0;
         }
 
-        SDL_Delay(16);
+        constexpr double kTargetFrameMs = 1000.0 / 60.0;
+        if (frame_ms < kTargetFrameMs) {
+            const Uint32 sleep_ms = static_cast<Uint32>(kTargetFrameMs - frame_ms);
+            if (sleep_ms > 0) {
+                SDL_Delay(sleep_ms);
+            }
+        }
     }
 }
 

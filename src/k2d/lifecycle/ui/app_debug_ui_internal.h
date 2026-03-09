@@ -26,6 +26,76 @@ namespace k2d {
 
 using ParamGroup = std::pair<std::string, std::vector<int>>;
 
+struct WorkspaceWindowVisibility {
+    bool show_workspace_window = true;
+    bool show_overview_window = true;
+    bool show_editor_window = true;
+    bool show_timeline_window = true;
+    bool show_perception_window = true;
+    bool show_mapping_window = true;
+    bool show_asr_chat_window = true;
+    bool show_error_window = true;
+    bool show_ops_window = true;
+    bool show_inspector_window = true;
+    bool show_reminder_window = true;
+};
+
+inline WorkspaceWindowVisibility BuildWorkspaceDefaultVisibility(const WorkspaceMode mode) {
+    WorkspaceWindowVisibility v{};
+    switch (mode) {
+        case WorkspaceMode::Debug:
+            v.show_editor_window = false;
+            v.show_timeline_window = false;
+            v.show_mapping_window = false;
+            break;
+        case WorkspaceMode::Perception:
+            v.show_editor_window = false;
+            v.show_timeline_window = false;
+            v.show_mapping_window = false;
+            v.show_asr_chat_window = false;
+            break;
+        case WorkspaceMode::Animation:
+            v.show_error_window = false;
+            v.show_ops_window = false;
+            v.show_asr_chat_window = false;
+            v.show_reminder_window = false;
+            break;
+        case WorkspaceMode::Authoring:
+            v.show_asr_chat_window = false;
+            break;
+        default:
+            break;
+    }
+    return v;
+}
+
+inline void ApplyWorkspaceWindowVisibility(AppRuntime &runtime, const WorkspaceWindowVisibility &v) {
+    runtime.show_workspace_window = v.show_workspace_window;
+    runtime.show_overview_window = v.show_overview_window;
+    runtime.show_editor_window = v.show_editor_window;
+    runtime.show_timeline_window = v.show_timeline_window;
+    runtime.show_perception_window = v.show_perception_window;
+    runtime.show_mapping_window = v.show_mapping_window;
+    runtime.show_asr_chat_window = v.show_asr_chat_window;
+    runtime.show_error_window = v.show_error_window;
+    runtime.show_ops_window = v.show_ops_window;
+    runtime.show_inspector_window = v.show_inspector_window;
+    runtime.show_reminder_window = v.show_reminder_window;
+}
+
+inline bool HasAnyWorkspaceChildWindowVisible(const AppRuntime &runtime) {
+    return runtime.show_overview_window ||
+           runtime.show_editor_window ||
+           runtime.show_timeline_window ||
+           runtime.show_perception_window ||
+           runtime.show_mapping_window ||
+           runtime.show_asr_chat_window ||
+           runtime.show_error_window ||
+           runtime.show_ops_window ||
+           runtime.show_inspector_window ||
+           runtime.show_reminder_window;
+}
+
 struct TimelineInteractionStorage {
     std::vector<TimelineKeyframe> drag_undo_snapshot;
     std::vector<std::uint64_t> drag_undo_selected_ids;

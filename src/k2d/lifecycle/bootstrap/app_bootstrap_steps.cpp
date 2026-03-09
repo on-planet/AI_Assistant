@@ -109,6 +109,14 @@ bool AppLifecycleInitImpl(AppLifecycleContext &ctx) {
     SDL_SetWindowOpacity(g_runtime.window, 1.0f);
 
     ApplyRuntimeConfig(g_runtime, runtime_cfg);
+    const bool has_saved_manual_layout = !g_runtime.workspace_manual_docking_ini.empty();
+    g_runtime.workspace_manual_layout_pending_load =
+        g_runtime.workspace_layout_mode == WorkspaceLayoutMode::Manual && has_saved_manual_layout;
+    g_runtime.workspace_preset_apply_requested = g_runtime.workspace_layout_mode == WorkspaceLayoutMode::Preset;
+    g_runtime.workspace_dock_rebuild_requested =
+        g_runtime.workspace_layout_mode == WorkspaceLayoutMode::Preset ||
+        (g_runtime.workspace_layout_mode == WorkspaceLayoutMode::Manual && !has_saved_manual_layout);
+    g_runtime.last_applied_workspace_mode = static_cast<WorkspaceMode>(-1);
 
     SDL_GetWindowSize(g_runtime.window, &g_runtime.window_w, &g_runtime.window_h);
     g_runtime.interactive_rect = ComputeInteractiveRect(g_runtime.window_w, g_runtime.window_h);
@@ -123,6 +131,7 @@ bool AppLifecycleInitImpl(AppLifecycleContext &ctx) {
 #if defined(IMGUI_HAS_DOCK)
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 #endif
+    io.IniFilename = nullptr;
     io.Fonts->Clear();
 
     ImFontConfig font_cfg{};

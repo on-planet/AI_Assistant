@@ -13,7 +13,7 @@
 namespace k2d {
 
 void RenderReminderPanel(AppRuntime &runtime) {
-    constexpr int kPageSize = 8;
+    constexpr int kPageSize = 6;
 
     ImGui::SeparatorText("Schedule Reminder (SQLite)");
     ImGui::InputText("Title", runtime.reminder_title_input, static_cast<int>(sizeof(runtime.reminder_title_input)));

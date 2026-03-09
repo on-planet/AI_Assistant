@@ -89,12 +89,30 @@ add_executable(AI_assistant WIN32
     src/k2d/lifecycle/state/app_runtime_state.cpp
     src/k2d/lifecycle/systems/app_systems.cpp
     src/k2d/lifecycle/ui/app_debug_ui.cpp
+    src/k2d/lifecycle/ui/app_debug_ui_widgets.cpp
+    src/k2d/lifecycle/ui/app_debug_ui_presenter.cpp
+    src/k2d/lifecycle/ui/app_debug_ui_editor_service.cpp
+    src/k2d/lifecycle/ui/app_debug_ui_runtime_actions.cpp
+    src/k2d/lifecycle/ui/app_debug_ui_tables.cpp
+    src/k2d/lifecycle/ui/app_debug_ui_param_groups.cpp
+    src/k2d/lifecycle/ui/app_debug_ui_panel_state.cpp
+    src/k2d/lifecycle/ui/app_debug_ui_actions.cpp
+    src/k2d/lifecycle/ui/app_debug_ui_workspace.cpp
+    src/k2d/lifecycle/ui/app_debug_ui_overview.cpp
+    src/k2d/lifecycle/ui/app_debug_ui_editor.cpp
+    src/k2d/lifecycle/ui/app_debug_ui_timeline.cpp
+    src/k2d/lifecycle/ui/app_debug_ui_perception.cpp
+    src/k2d/lifecycle/ui/app_debug_ui_mapping.cpp
+    src/k2d/lifecycle/ui/app_debug_ui_asr_chat.cpp
+    src/k2d/lifecycle/ui/app_debug_ui_error.cpp
+    src/k2d/lifecycle/ui/app_debug_ui_ops.cpp
     src/k2d/lifecycle/ui/reminder_panel.cpp
     src/k2d/lifecycle/orchestrator/app_orchestrator.cpp
     src/k2d/lifecycle/bootstrap/app_bootstrap_steps.cpp
     src/k2d/lifecycle/events/app_event_handler.cpp
     src/k2d/lifecycle/systems/runtime_tick_entry.cpp
     src/k2d/lifecycle/ui/runtime_render_entry.cpp
+    src/k2d/lifecycle/systems/runtime_command_executor.cpp
     src/k2d/lifecycle/editor/editor_interaction_facade.cpp
     src/k2d/lifecycle/editor/editor_session_service.cpp
     src/k2d/lifecycle/bridge_factory.cpp

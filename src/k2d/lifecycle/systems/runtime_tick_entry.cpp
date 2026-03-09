@@ -12,10 +12,13 @@
 #include "k2d/lifecycle/services/decision_service.h"
 #include "k2d/lifecycle/services/task_category_service.h"
 #include "k2d/lifecycle/systems/app_systems.h"
+#include "k2d/lifecycle/systems/runtime_command_executor.h"
 
 namespace k2d {
 
 void RunRuntimeTickEntry(AppRuntime &runtime, float dt, const RuntimeTickBridge &bridge) {
+    ConsumeUiCommandQueue(runtime);
+
     if (runtime.model_loaded) {
         if (bridge.build_model_reload_context) {
             auto reload_ctx = bridge.build_model_reload_context();

@@ -78,7 +78,9 @@ void ApplyWorkspacePresetVisibility(AppRuntime &runtime) {
 void ApplyWorkspaceDockLayout(AppRuntime &runtime, const ImGuiID dockspace_id) {
     ImGui::DockBuilderRemoveNode(dockspace_id);
     ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
-    ImGui::DockBuilderSetNodeSize(dockspace_id, ImGui::GetMainViewport()->WorkSize);
+    const ImVec2 work_size = ImGui::GetMainViewport()->WorkSize;
+    const ImVec2 safe_size(std::max(work_size.x, 1.0f), std::max(work_size.y, 1.0f));
+    ImGui::DockBuilderSetNodeSize(dockspace_id, safe_size);
 
     ImGuiID dock_main = dockspace_id;
     ImGuiID dock_left = 0;
@@ -136,8 +138,9 @@ void ApplyWorkspaceDockLayout(AppRuntime &runtime, const ImGuiID dockspace_id) {
     }
 
     ImGui::DockBuilderFinish(dockspace_id);
-    ApplyWorkspacePresetVisibility(runtime);
+    // Preset 仅负责 Dock 分配，不在每次重建时覆盖窗口可见性开关。
     runtime.last_applied_workspace_mode = runtime.workspace_mode;
+    runtime.workspace_preset_apply_requested = false;
     runtime.workspace_dock_rebuild_requested = false;
     runtime.workspace_manual_layout_reset_requested = false;
 }
@@ -176,13 +179,22 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
         .compute_part_aabb = bridge.compute_part_aabb,
     });
 
+    const ImGuiIO &io = ImGui::GetIO();
+    if (ImGui::IsKeyPressed(ImGuiKey_F1, false) && !io.WantCaptureKeyboard) {
+        runtime.gui_enabled = !runtime.gui_enabled;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !io.WantCaptureKeyboard) {
+        runtime.running = false;
+    }
+
     if (runtime.show_debug_stats) {
-        ImGui::SetNextWindowBgAlpha(0.35f);
+        ImGui::SetNextWindowBgAlpha(0.25f);
         ImGuiWindowFlags fps_flags = ImGuiWindowFlags_NoDecoration |
                                      ImGuiWindowFlags_AlwaysAutoResize |
                                      ImGuiWindowFlags_NoSavedSettings |
                                      ImGuiWindowFlags_NoFocusOnAppearing |
-                                     ImGuiWindowFlags_NoNav;
+                                     ImGuiWindowFlags_NoNav |
+                                     ImGuiWindowFlags_NoInputs;
         ImGui::SetNextWindowPos(ImVec2(12.0f, 12.0f), ImGuiCond_Always);
         if (ImGui::Begin("FPS Overlay", nullptr, fps_flags)) {
             ImGui::Text("FPS: %.1f", runtime.debug_fps);
@@ -194,10 +206,12 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
                         runtime.model.debug_stats.vertex_count,
                         runtime.model.debug_stats.triangle_count);
             ImGui::Separator();
-            ImGui::Checkbox("Runtime Debug GUI", &runtime.gui_enabled);
+            ImGui::TextUnformatted("F1: Toggle GUI");
+            ImGui::TextUnformatted("Esc: Close Program");
         }
         ImGui::End();
     }
+
 
     if (runtime.gui_enabled) {
         const ImGuiViewport *vp = ImGui::GetMainViewport();
@@ -223,9 +237,44 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
             ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode;
             const ImGuiID dockspace_id = ImGui::GetID("RuntimeWorkspaceDockspaceId");
 
-            if (runtime.workspace_layout_mode == WorkspaceLayoutMode::Manual &&
+            const bool docking_window_drag_active =
+                ImGui::IsDragDropActive() &&
+                GImGui != nullptr &&
+                GImGui->DragDropPayload.IsDataType(IMGUI_PAYLOAD_TYPE_WINDOW);
+            const bool docking_dragging_active =
+                ImGui::IsMouseDragging(ImGuiMouseButton_Left) ||
+                ImGui::IsMouseDragging(ImGuiMouseButton_Right) ||
+                ImGui::IsMouseDragging(ImGuiMouseButton_Middle) ||
+                docking_window_drag_active;
+
+            enum class DockingTransition {
+                None,
+                ManualRestore,
+                PresetRebuild,
+            };
+
+            const bool manual_restore_requested =
+                runtime.workspace_layout_mode == WorkspaceLayoutMode::Manual &&
                 runtime.workspace_manual_layout_pending_load &&
-                !runtime.workspace_manual_docking_ini.empty()) {
+                !runtime.workspace_manual_docking_ini.empty();
+
+            const bool preset_rebuild_requested =
+                runtime.workspace_dock_rebuild_requested ||
+                (runtime.workspace_layout_mode == WorkspaceLayoutMode::Preset &&
+                 (runtime.workspace_preset_apply_requested ||
+                  runtime.last_applied_workspace_mode != runtime.workspace_mode));
+
+            // 单向状态机：同帧最多发生一种转移，优先 ManualRestore，再 PresetRebuild。
+            DockingTransition transition = DockingTransition::None;
+            if (!docking_dragging_active) {
+                if (manual_restore_requested) {
+                    transition = DockingTransition::ManualRestore;
+                } else if (preset_rebuild_requested) {
+                    transition = DockingTransition::PresetRebuild;
+                }
+            }
+
+            if (transition == DockingTransition::ManualRestore) {
                 ImGui::LoadIniSettingsFromMemory(runtime.workspace_manual_docking_ini.c_str(), runtime.workspace_manual_docking_ini.size());
                 runtime.workspace_manual_layout_pending_load = false;
                 runtime.workspace_preset_apply_requested = false;
@@ -235,11 +284,22 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
 
             ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
 
-            if (runtime.workspace_layout_mode == WorkspaceLayoutMode::Preset &&
-                (runtime.workspace_dock_rebuild_requested ||
-                 runtime.workspace_preset_apply_requested ||
-                 runtime.last_applied_workspace_mode != runtime.workspace_mode)) {
+            if (transition == DockingTransition::PresetRebuild) {
+                ImGui::ClearIniSettings();
+                if (runtime.workspace_layout_mode == WorkspaceLayoutMode::Preset) {
+                    ApplyWorkspacePresetVisibility(runtime);
+                }
                 ApplyWorkspaceDockLayout(runtime, dockspace_id);
+            }
+
+            if (runtime.workspace_layout_mode == WorkspaceLayoutMode::Manual && docking_dragging_active) {
+                runtime.workspace_manual_layout_save_suppressed = false;
+            }
+
+            if (docking_dragging_active || transition != DockingTransition::None) {
+                runtime.workspace_manual_layout_stable_frames = 0;
+            } else {
+                ++runtime.workspace_manual_layout_stable_frames;
             }
         } else {
             ImGui::PopStyleVar(3);
@@ -309,9 +369,25 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
             ImGui::End();
         }
 
-        if (runtime.workspace_layout_mode == WorkspaceLayoutMode::Manual &&
-            !runtime.workspace_manual_layout_reset_requested) {
-            runtime.workspace_manual_docking_ini = ImGui::SaveIniSettingsToMemory();
+            const bool docking_window_drag_active =
+                ImGui::IsDragDropActive() &&
+                GImGui != nullptr &&
+                GImGui->DragDropPayload.IsDataType(IMGUI_PAYLOAD_TYPE_WINDOW);
+            const bool docking_dragging_active =
+                ImGui::IsMouseDragging(ImGuiMouseButton_Left) ||
+                ImGui::IsMouseDragging(ImGuiMouseButton_Right) ||
+                ImGui::IsMouseDragging(ImGuiMouseButton_Middle) ||
+                docking_window_drag_active;
+        constexpr int kManualLayoutSaveStableFrames = 12;
+        if (!docking_dragging_active &&
+            runtime.workspace_layout_mode == WorkspaceLayoutMode::Manual &&
+            !runtime.workspace_manual_layout_reset_requested &&
+            !runtime.workspace_manual_layout_save_suppressed &&
+            runtime.workspace_manual_layout_stable_frames >= kManualLayoutSaveStableFrames) {
+            const std::string latest_docking_ini = ImGui::SaveIniSettingsToMemory();
+            if (latest_docking_ini != runtime.workspace_manual_docking_ini) {
+                runtime.workspace_manual_docking_ini = latest_docking_ini;
+            }
         }
 
         if (runtime.show_inspector_window) {

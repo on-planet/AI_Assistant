@@ -3,6 +3,7 @@
 #include "k2d/core/json.h"
 #include "k2d/editor/editor_commands.h"
 #include "k2d/lifecycle/state/app_runtime_state.h"
+#include "k2d/lifecycle/ui/app_debug_ui_panel_state.h"
 
 #include <SDL3/SDL_iostream.h>
 
@@ -108,7 +109,7 @@ void UndoLastEdit(AppRuntime &runtime) {
         runtime.redo_stack,
         [](ModelPart *part, float dx, float dy) { ApplyPivotDelta(part, dx, dy); },
         [&](const std::vector<std::uint64_t> &selected_ids) {
-            runtime.timeline_selected_keyframe_ids = selected_ids;
+            RestoreTimelineSelectionFromHistory(runtime, selected_ids);
         });
     SetUndoRedoStatus(runtime, "undo", ok, cmd);
 }
@@ -123,7 +124,7 @@ void RedoLastEdit(AppRuntime &runtime) {
         runtime.redo_stack,
         [](ModelPart *part, float dx, float dy) { ApplyPivotDelta(part, dx, dy); },
         [&](const std::vector<std::uint64_t> &selected_ids) {
-            runtime.timeline_selected_keyframe_ids = selected_ids;
+            RestoreTimelineSelectionFromHistory(runtime, selected_ids);
         });
     SetUndoRedoStatus(runtime, "redo", ok, cmd);
 }
@@ -308,7 +309,6 @@ bool LoadEditorProjectJsonFromDisk(AppRuntime &runtime,
         runtime.workspace_manual_docking_ini = editor->getString("workspaceManualDockingIni").value_or(runtime.workspace_manual_docking_ini);
         runtime.workspace_manual_layout_pending_load = runtime.workspace_layout_mode == WorkspaceLayoutMode::Manual &&
                                                        !runtime.workspace_manual_docking_ini.empty();
-        runtime.last_applied_workspace_mode = runtime.workspace_mode;
         runtime.editor_view_pan_x = static_cast<float>(editor->getNumber("viewPanX").value_or(runtime.editor_view_pan_x));
         runtime.editor_view_pan_y = static_cast<float>(editor->getNumber("viewPanY").value_or(runtime.editor_view_pan_y));
         runtime.editor_view_zoom = static_cast<float>(editor->getNumber("viewZoom").value_or(runtime.editor_view_zoom));
@@ -316,6 +316,7 @@ bool LoadEditorProjectJsonFromDisk(AppRuntime &runtime,
         runtime.workspace_mode = workspace_mode == 0 ? WorkspaceMode::Animation :
                                  (workspace_mode == 1 ? WorkspaceMode::Debug :
                                  (workspace_mode == 2 ? WorkspaceMode::Perception : WorkspaceMode::Authoring));
+        runtime.last_applied_workspace_mode = static_cast<WorkspaceMode>(-1);
 
         auto load_window_layout = [](const JsonValue *value, AppRuntime::WindowLayoutState &layout) {
             if (!value || !value->isObject()) {

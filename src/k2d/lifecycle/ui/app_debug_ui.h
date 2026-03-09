@@ -1,5 +1,8 @@
 #pragma once
 
+#include <string>
+#include <vector>
+
 namespace k2d {
 
 struct AppRuntime;
@@ -10,6 +13,8 @@ void RenderWorkspaceToolbar(AppRuntime &runtime);
 
 void RenderRuntimeOverviewPanel(AppRuntime &runtime);
 void RenderRuntimeEditorPanel(AppRuntime &runtime);
+void RenderRuntimeEditorParamGroups(AppRuntime &runtime, const std::vector<int> &param_indices);
+void RenderRuntimeEditorBatchBind(AppRuntime &runtime, const std::string &group_label, const std::vector<int> &param_indices);
 void RenderRuntimeTimelinePanel(AppRuntime &runtime);
 void RenderRuntimePerceptionPanel(AppRuntime &runtime);
 void RenderRuntimeMappingPanel(AppRuntime &runtime);

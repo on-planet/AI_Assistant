@@ -61,6 +61,51 @@ enum class WorkspaceLayoutMode {
     Manual,
 };
 
+enum class UiCommandType {
+    SwitchWorkspaceMode,
+    ApplyPresetLayout,
+    ResetManualLayout,
+    ToggleManualLayout,
+    ToggleOverviewWindow,
+    ToggleEditorWindow,
+    ToggleTimelineWindow,
+    TogglePerceptionWindow,
+    ToggleMappingWindow,
+    ToggleAsrChatWindow,
+    ToggleErrorWindow,
+    ToggleOpsWindow,
+    ToggleInspectorWindow,
+    ToggleReminderWindow,
+    ForceDockRebuild,
+    ResetPerceptionState,
+    ResetErrorCounters,
+    ExportRuntimeSnapshot,
+    TriggerSingleStepSampling,
+    CloseProgram,
+};
+
+struct UiCommand {
+    UiCommandType type = UiCommandType::SwitchWorkspaceMode;
+    int int_value = 0;
+    bool bool_value = false;
+};
+
+enum class RuntimeEventType {
+    UiCommandQueued,
+    UiCommandDroppedQueueFull,
+    UiCommandConsumed,
+    OpsStatusUpdated,
+    ProgramCloseRequested,
+};
+
+struct RuntimeEvent {
+    RuntimeEventType type = RuntimeEventType::UiCommandQueued;
+    UiCommandType command_type = UiCommandType::SwitchWorkspaceMode;
+    int int_value = 0;
+    bool bool_value = false;
+    std::string message;
+};
+
 enum class EditorProp {
     PosX,
     PosY,
@@ -70,6 +115,13 @@ enum class EditorProp {
     ScaleX,
     ScaleY,
     Count,
+};
+
+struct RuntimeCommandBus {
+    std::vector<UiCommand> ui_command_queue;
+    std::size_t ui_command_queue_capacity = 512;
+    std::deque<RuntimeEvent> runtime_event_queue;
+    std::size_t runtime_event_queue_capacity = 1024;
 };
 
 struct AppRuntime {
@@ -93,6 +145,9 @@ struct AppRuntime {
     float model_time = 0.0f;
 
     bool running = true;
+    std::string runtime_ops_status;
+
+    RuntimeCommandBus command_bus{};
 
     bool dev_hot_reload_enabled = true;
     float hot_reload_poll_accum_sec = 0.0f;
@@ -171,6 +226,8 @@ struct AppRuntime {
     bool workspace_preset_apply_requested = false;
     bool workspace_manual_layout_reset_requested = false;
     bool workspace_manual_layout_pending_load = false;
+    bool workspace_manual_layout_save_suppressed = false;
+    int workspace_manual_layout_stable_frames = 0;
 
     // 参数面板增强：分组、搜索与批量绑定（UI 状态）
     int param_group_mode = 0; // 0=prefix, 1=semantic
@@ -192,17 +249,7 @@ struct AppRuntime {
     float timeline_snap_fps = 30.0f;
     std::vector<int> timeline_selected_keyframe_indices;
     std::vector<std::uint64_t> timeline_selected_keyframe_ids;
-    bool timeline_box_select_active = false;
-    float timeline_box_select_start_x = 0.0f;
-    float timeline_box_select_start_y = 0.0f;
-    float timeline_box_select_end_x = 0.0f;
-    float timeline_box_select_end_y = 0.0f;
-
     std::vector<TimelineKeyframe> timeline_keyframe_clipboard;
-    std::vector<TimelineKeyframe> timeline_keyframe_undo_snapshot;
-    std::vector<std::uint64_t> timeline_keyframe_undo_selected_ids;
-    std::vector<TimelineKeyframe> timeline_keyframe_redo_snapshot;
-    bool timeline_drag_snapshot_captured = false;
     std::vector<EditCommand> undo_stack;
     std::vector<EditCommand> redo_stack;
 

@@ -1,4 +1,4 @@
-#include "k2d/lifecycle/plugin_lifecycle.h"
+#include "desktoper2D/lifecycle/plugin_lifecycle.h"
 
 #include <chrono>
 #include <cmath>
@@ -11,14 +11,14 @@
 
 namespace {
 
-using k2d::BehaviorOutput;
-using k2d::IBehaviorPlugin;
-using k2d::PerceptionInput;
-using k2d::PluginDescriptor;
-using k2d::PluginHostCallbacks;
-using k2d::PluginManager;
-using k2d::PluginRuntimeConfig;
-using k2d::PluginStatus;
+using desktoper2D::BehaviorOutput;
+using desktoper2D::IBehaviorPlugin;
+using desktoper2D::PerceptionInput;
+using desktoper2D::PluginDescriptor;
+using desktoper2D::PluginHostCallbacks;
+using desktoper2D::PluginManager;
+using desktoper2D::PluginRuntimeConfig;
+using desktoper2D::PluginStatus;
 
 struct Assert {
     static bool True(bool cond, const char *msg) {
@@ -261,8 +261,8 @@ bool TestMainLoopIsolationOnPluginCrash() {
         return false;
     }
 
-    k2d::PluginWorker worker;
-    k2d::PluginWorkerConfig cfg{};
+    desktoper2D::PluginWorker worker;
+    desktoper2D::PluginWorkerConfig cfg{};
     cfg.update_hz = 120;
     cfg.frame_budget_ms = 1;
     cfg.timeout_degrade_threshold = 8;
@@ -298,7 +298,7 @@ bool TestMainLoopIsolationOnPluginCrash() {
         return false;
     }
 
-    const k2d::PluginWorkerStats stats = worker.GetStats();
+    const desktoper2D::PluginWorkerStats stats = worker.GetStats();
     if (!Assert::True(stats.exception_count > 0, "isolation: exception count should be recorded")) {
         return false;
     }

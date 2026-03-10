@@ -1,0 +1,92 @@
+#pragma once
+
+#include <SDL3/SDL.h>
+
+#include "desktoper2D/editor/editor_input.h"
+#include "desktoper2D/editor/editor_input_binding.h"
+#include "desktoper2D/lifecycle/events/app_event_handler.h"
+#include "desktoper2D/lifecycle/systems/runtime_tick_entry.h"
+#include "desktoper2D/lifecycle/ui/runtime_render_entry.h"
+
+#include <functional>
+
+namespace desktoper2D {
+
+struct BehaviorApplyContext;
+struct ModelPart;
+struct ModelReloadServiceContext;
+
+struct EditorInputBindingFactoryDeps {
+    std::function<void()> ensure_selected_part_index_valid;
+    std::function<void(bool)> cycle_selected_part;
+    std::function<void(float)> adjust_selected_param;
+    std::function<void()> reset_selected_param;
+    std::function<void()> reset_all_params;
+
+    std::function<void()> toggle_edit_mode;
+    std::function<void()> toggle_manual_param_mode;
+    std::function<void()> save_model;
+    std::function<void()> save_project;
+    std::function<void()> save_project_as;
+    std::function<void()> load_project;
+    std::function<void()> undo_edit;
+    std::function<void()> redo_edit;
+
+    std::function<int(float, float)> pick_top_part_at;
+    std::function<bool()> has_model_params;
+    std::function<void(float, float)> on_head_pat_mouse_motion;
+    std::function<void(float, float)> on_head_pat_mouse_down;
+
+    std::function<void(float, float)> begin_drag_part;
+    std::function<void(float, float)> begin_drag_pivot;
+    std::function<void()> end_dragging;
+    std::function<void(const ModelPart &, GizmoHandle, float, float)> begin_gizmo_drag;
+    std::function<void()> end_gizmo_drag;
+    std::function<void(float, float)> handle_gizmo_drag_motion;
+    std::function<void(float, float)> handle_editor_drag_motion;
+};
+
+EditorInputBindingBridge BuildEditorInputBindingBridge(const EditorInputBindingFactoryDeps &deps);
+
+struct AppEventBridgeFactoryDeps {
+    std::function<EditorInputCallbacks()> build_editor_input_callbacks;
+
+    std::function<void()> toggle_edit_mode;
+    std::function<void()> toggle_manual_param_mode;
+    std::function<void(bool)> cycle_selected_part;
+    std::function<void(float)> adjust_selected_param;
+    std::function<void()> reset_selected_param;
+    std::function<void()> reset_all_params;
+
+    std::function<void(float, float)> on_head_pat_mouse_motion;
+    std::function<void(float, float)> on_head_pat_mouse_down;
+};
+
+AppEventHandlerBridge BuildAppEventHandlerBridge(const AppEventBridgeFactoryDeps &deps);
+
+struct RuntimeTickBridgeFactoryDeps {
+    std::function<int(float, float)> pick_top_part_at;
+    std::function<bool()> has_model_params;
+    std::function<ModelReloadServiceContext()> build_model_reload_context;
+    std::function<BehaviorApplyContext()> build_behavior_apply_context;
+    std::function<const char *(TaskSecondaryCategory)> task_secondary_category_name;
+    std::function<void()> infer_task_category_inplace;
+};
+
+RuntimeTickBridge BuildRuntimeTickBridge(const RuntimeTickBridgeFactoryDeps &deps);
+
+struct RuntimeRenderBridgeFactoryDeps {
+    std::function<bool()> has_model_parts;
+    std::function<bool()> has_model_params;
+    std::function<void()> ensure_selected_part_index_valid;
+    std::function<void()> ensure_selected_param_index_valid;
+    std::function<bool(const ModelPart &, SDL_FRect *)> compute_part_aabb;
+    std::function<void()> render_model_hierarchy_tree;
+    std::function<void()> render_resource_tree_inspector;
+    std::function<const char *()> task_primary_category_name;
+    std::function<const char *()> task_secondary_category_name;
+};
+
+RuntimeRenderBridge BuildRuntimeRenderBridge(const RuntimeRenderBridgeFactoryDeps &deps);
+
+}  // namespace desktoper2D

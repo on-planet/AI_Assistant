@@ -32,25 +32,33 @@ set(OPENCV_BIN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/opencv/build/x64/vc16/b
 
 add_executable(AI_assistant WIN32
     main.cpp
-    src/k2d/core/json.cpp
-    src/k2d/core/png_texture.cpp
-    src/k2d/core/async_logger.cpp
-    src/k2d/lifecycle/app.cpp
-    src/k2d/lifecycle/app_lifecycle.cpp
-    src/k2d/lifecycle/plugin_lifecycle.cpp
-    src/k2d/lifecycle/inference_adapter.cpp
-    src/k2d/lifecycle/behavior_applier.cpp
-    src/k2d/lifecycle/model_reload_service.cpp
-    src/k2d/lifecycle/reminder_service.cpp
-    src/k2d/lifecycle/scene_classifier.cpp
-    src/k2d/lifecycle/ocr_service.cpp
-    src/k2d/lifecycle/system_context_service.cpp
-    src/k2d/lifecycle/perception_pipeline.cpp
-    src/k2d/lifecycle/runtime_config_applier.cpp
-    src/k2d/lifecycle/legacy_editor_ui_tools.cpp
-    src/k2d/lifecycle/chat/offline_chat_provider.cpp
-    src/k2d/lifecycle/chat/cloud_chat_provider.cpp
-    src/k2d/lifecycle/chat/hybrid_chat_provider.cpp
+    src/desktoper2D/core/json.cpp
+    src/desktoper2D/core/png_texture.cpp
+    src/desktoper2D/core/async_logger.cpp
+    external/nativefiledialog-extended-master/src/nfd_win.cpp
+    src/desktoper2D/lifecycle/app.cpp
+    src/desktoper2D/lifecycle/app_lifecycle.cpp
+    src/desktoper2D/lifecycle/bridge_assembler.cpp
+    src/desktoper2D/lifecycle/plugin_lifecycle.cpp
+    src/desktoper2D/lifecycle/plugin_default_behavior.cpp
+    src/desktoper2D/lifecycle/plugin_config_validator.cpp
+    src/desktoper2D/lifecycle/plugin_postprocess.cpp
+    src/desktoper2D/lifecycle/plugin_route_decision.cpp
+    src/desktoper2D/lifecycle/plugins/onnx_behavior_plugin.cpp
+    src/desktoper2D/lifecycle/inference_adapter.cpp
+    src/desktoper2D/lifecycle/resource_locator.cpp
+    src/desktoper2D/lifecycle/behavior_applier.cpp
+    src/desktoper2D/lifecycle/model_reload_service.cpp
+    src/desktoper2D/lifecycle/reminder_service.cpp
+    src/desktoper2D/lifecycle/scene_classifier.cpp
+    src/desktoper2D/lifecycle/ocr_service.cpp
+    src/desktoper2D/lifecycle/system_context_service.cpp
+    src/desktoper2D/lifecycle/perception_pipeline.cpp
+    src/desktoper2D/lifecycle/runtime_config_applier.cpp
+    src/desktoper2D/lifecycle/legacy_editor_ui_tools.cpp
+    src/desktoper2D/lifecycle/chat/offline_chat_provider.cpp
+    src/desktoper2D/lifecycle/chat/cloud_chat_provider.cpp
+    src/desktoper2D/lifecycle/chat/hybrid_chat_provider.cpp
     external/sqlite/sqlite3.c
     external/imgui/imgui.cpp
     external/imgui/imgui_draw.cpp
@@ -58,75 +66,82 @@ add_executable(AI_assistant WIN32
     external/imgui/imgui_widgets.cpp
     external/imgui/backends/imgui_impl_sdl3.cpp
     external/imgui/backends/imgui_impl_sdlrenderer3.cpp
-    src/k2d/core/mesh_generator.cpp
-    src/k2d/core/params.cpp
-    src/k2d/core/deform.cpp
-    src/k2d/core/model.cpp
-    src/k2d/core/model_update_pipeline.cpp
-    src/k2d/editor/editor_commands.cpp
-    src/k2d/editor/editor_gizmo.cpp
-    src/k2d/editor/editor_input.cpp
-    src/k2d/editor/editor_controller.cpp
-    src/k2d/editor/editor_input_binding.cpp
-    src/k2d/rendering/app_renderer.cpp
-    src/k2d/controllers/app_bootstrap.cpp
-    src/k2d/controllers/window_controller.cpp
-    src/k2d/controllers/param_controller.cpp
-    src/k2d/controllers/app_loop.cpp
-    src/k2d/controllers/app_input_controller.cpp
-    src/k2d/controllers/interaction_controller.cpp
-    src/k2d/capture/screen_capture_dxgi.cpp
-    src/k2d/lifecycle/camera_facemesh_service.cpp
-    src/k2d/lifecycle/utils/app_text_utils.cpp
-    src/k2d/lifecycle/ui/ui_empty_state.cpp
-    src/k2d/lifecycle/services/task_category_service.cpp
-    src/k2d/lifecycle/asr/offline_asr_provider.cpp
-    src/k2d/lifecycle/asr/cloud_asr_provider.cpp
-    src/k2d/lifecycle/asr/hybrid_asr_provider.cpp
-    src/k2d/lifecycle/asr/vad_segmenter.cpp
-    src/k2d/lifecycle/asr/asr_session_service.cpp
-    src/k2d/lifecycle/services/decision_service.cpp
-    src/k2d/lifecycle/state/app_runtime_state.cpp
-    src/k2d/lifecycle/systems/app_systems.cpp
-    src/k2d/lifecycle/ui/app_debug_ui.cpp
-    src/k2d/lifecycle/ui/app_debug_ui_widgets.cpp
-    src/k2d/lifecycle/ui/app_debug_ui_presenter.cpp
-    src/k2d/lifecycle/ui/app_debug_ui_editor_service.cpp
-    src/k2d/lifecycle/ui/app_debug_ui_runtime_actions.cpp
-    src/k2d/lifecycle/ui/app_debug_ui_tables.cpp
-    src/k2d/lifecycle/ui/app_debug_ui_param_groups.cpp
-    src/k2d/lifecycle/ui/app_debug_ui_panel_state.cpp
-    src/k2d/lifecycle/ui/app_debug_ui_actions.cpp
-    src/k2d/lifecycle/ui/app_debug_ui_workspace.cpp
-    src/k2d/lifecycle/ui/app_debug_ui_overview.cpp
-    src/k2d/lifecycle/ui/app_debug_ui_editor.cpp
-    src/k2d/lifecycle/ui/app_debug_ui_timeline.cpp
-    src/k2d/lifecycle/ui/app_debug_ui_perception.cpp
-    src/k2d/lifecycle/ui/app_debug_ui_mapping.cpp
-    src/k2d/lifecycle/ui/app_debug_ui_asr_chat.cpp
-    src/k2d/lifecycle/ui/app_debug_ui_error.cpp
-    src/k2d/lifecycle/ui/app_debug_ui_ops.cpp
-    src/k2d/lifecycle/ui/reminder_panel.cpp
-    src/k2d/lifecycle/orchestrator/app_orchestrator.cpp
-    src/k2d/lifecycle/bootstrap/app_bootstrap_steps.cpp
-    src/k2d/lifecycle/events/app_event_handler.cpp
-    src/k2d/lifecycle/systems/runtime_tick_entry.cpp
-    src/k2d/lifecycle/ui/runtime_render_entry.cpp
-    src/k2d/lifecycle/systems/runtime_command_executor.cpp
-    src/k2d/lifecycle/editor/editor_interaction_facade.cpp
-    src/k2d/lifecycle/editor/editor_session_service.cpp
-    src/k2d/lifecycle/bridge_factory.cpp
-    src/k2d/lifecycle/state/runtime_state_ops.cpp
+    src/desktoper2D/core/mesh_generator.cpp
+    src/desktoper2D/core/params.cpp
+    src/desktoper2D/core/deform.cpp
+    src/desktoper2D/core/model.cpp
+    src/desktoper2D/core/model_update_pipeline.cpp
+    src/desktoper2D/editor/editor_commands.cpp
+    src/desktoper2D/editor/editor_gizmo.cpp
+    src/desktoper2D/editor/editor_input.cpp
+    src/desktoper2D/editor/editor_controller.cpp
+    src/desktoper2D/editor/editor_input_binding.cpp
+    src/desktoper2D/rendering/app_renderer.cpp
+    src/desktoper2D/controllers/app_bootstrap.cpp
+    src/desktoper2D/controllers/window_controller.cpp
+    src/desktoper2D/controllers/param_controller.cpp
+    src/desktoper2D/controllers/app_loop.cpp
+    src/desktoper2D/controllers/app_input_controller.cpp
+    src/desktoper2D/controllers/interaction_controller.cpp
+    src/desktoper2D/capture/screen_capture_dxgi.cpp
+    src/desktoper2D/lifecycle/camera_facemesh_service.cpp
+    src/desktoper2D/lifecycle/utils/app_text_utils.cpp
+    src/desktoper2D/lifecycle/ui/ui_empty_state.cpp
+    src/desktoper2D/lifecycle/services/task_category_service.cpp
+    src/desktoper2D/lifecycle/services/ocr_postprocess_service.cpp
+    src/desktoper2D/lifecycle/services/plugin_runtime_service.cpp
+    src/desktoper2D/lifecycle/asr/offline_asr_provider.cpp
+    src/desktoper2D/lifecycle/asr/cloud_asr_provider.cpp
+    src/desktoper2D/lifecycle/asr/hybrid_asr_provider.cpp
+    src/desktoper2D/lifecycle/asr/vad_segmenter.cpp
+    src/desktoper2D/lifecycle/asr/asr_session_service.cpp
+    src/desktoper2D/lifecycle/services/decision_service.cpp
+    src/desktoper2D/lifecycle/state/app_runtime_state.cpp
+    src/desktoper2D/lifecycle/systems/app_systems.cpp
+    src/desktoper2D/lifecycle/ui/app_debug_ui.cpp
+    src/desktoper2D/lifecycle/ui/app_debug_ui_widgets.cpp
+    src/desktoper2D/lifecycle/ui/app_debug_ui_presenter.cpp
+    src/desktoper2D/lifecycle/ui/app_debug_ui_editor_service.cpp
+    src/desktoper2D/lifecycle/ui/app_debug_ui_runtime_actions.cpp
+    src/desktoper2D/lifecycle/ui/app_debug_ui_tables.cpp
+    src/desktoper2D/lifecycle/ui/app_debug_ui_param_groups.cpp
+    src/desktoper2D/lifecycle/ui/app_debug_ui_panel_state.cpp
+    src/desktoper2D/lifecycle/ui/commands/ui_command_bridge.cpp
+    src/desktoper2D/lifecycle/ui/commands/workspace_commands.cpp
+    src/desktoper2D/lifecycle/ui/commands/ops_commands.cpp
+    src/desktoper2D/lifecycle/ui/app_debug_ui_actions.cpp
+    src/desktoper2D/lifecycle/ui/app_debug_ui_workspace.cpp
+    src/desktoper2D/lifecycle/ui/app_debug_ui_overview.cpp
+    src/desktoper2D/lifecycle/ui/app_debug_ui_editor.cpp
+    src/desktoper2D/lifecycle/ui/app_debug_ui_timeline.cpp
+    src/desktoper2D/lifecycle/ui/app_debug_ui_perception.cpp
+    src/desktoper2D/lifecycle/ui/app_debug_ui_mapping.cpp
+    src/desktoper2D/lifecycle/ui/app_debug_ui_asr_chat.cpp
+    src/desktoper2D/lifecycle/ui/app_debug_ui_error.cpp
+    src/desktoper2D/lifecycle/ui/app_debug_ui_ops.cpp
+    src/desktoper2D/lifecycle/ui/reminder_panel.cpp
+    src/desktoper2D/lifecycle/orchestrator/app_orchestrator.cpp
+    src/desktoper2D/lifecycle/bootstrap/app_bootstrap_steps.cpp
+    src/desktoper2D/lifecycle/events/app_event_handler.cpp
+    src/desktoper2D/lifecycle/systems/runtime_tick_entry.cpp
+    src/desktoper2D/lifecycle/ui/runtime_render_entry.cpp
+    src/desktoper2D/lifecycle/systems/runtime_command_executor.cpp
+    src/desktoper2D/lifecycle/systems/workspace_reducer.cpp
+    src/desktoper2D/lifecycle/editor/editor_interaction_facade.cpp
+    src/desktoper2D/lifecycle/editor/editor_session_service.cpp
+    src/desktoper2D/lifecycle/bridge_factory.cpp
+    src/desktoper2D/lifecycle/state/runtime_state_ops.cpp
 )
 
 target_link_libraries(AI_assistant PRIVATE SDL3::SDL3 "${ONNXRUNTIME_LIB}" ${OpenCV_LIBS} d3d11 dxgi windowsapp runtimeobject)
 
-# Allow includes like "k2d/core/png_texture.h" and "stb_image.h".
+# Allow includes like "desktoper2D/core/png_texture.h" and "stb_image.h".
 target_include_directories(AI_assistant PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/external
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/nativefiledialog-extended-master/src/include
     ${ONNXRUNTIME_INCLUDE_DIR}
     ${OpenCV_INCLUDE_DIRS}
 )
@@ -149,9 +164,11 @@ endif()
 
 add_executable(plugin_lifecycle_tests
     tests/plugin_lifecycle_tests.cpp
-    src/k2d/core/async_logger.cpp
-    src/k2d/lifecycle/plugin_lifecycle.cpp
-    src/k2d/lifecycle/inference_adapter.cpp
+    src/desktoper2D/core/async_logger.cpp
+    src/desktoper2D/lifecycle/plugin_lifecycle.cpp
+    src/desktoper2D/lifecycle/plugins/onnx_behavior_plugin.cpp
+    src/desktoper2D/lifecycle/inference_adapter.cpp
+    src/desktoper2D/lifecycle/resource_locator.cpp
 )
 
 target_link_libraries(plugin_lifecycle_tests PRIVATE SDL3::SDL3 "${ONNXRUNTIME_LIB}" ${OpenCV_LIBS} d3d11 dxgi windowsapp runtimeobject)
@@ -183,9 +200,9 @@ add_test(NAME plugin_lifecycle_tests COMMAND plugin_lifecycle_tests)
 
 add_executable(lifecycle_decoupling_tests
     tests/lifecycle_decoupling_tests.cpp
-    src/k2d/lifecycle/asr/asr_session_service.cpp
-    src/k2d/lifecycle/services/decision_service.cpp
-    src/k2d/lifecycle/services/task_category_service.cpp
+    src/desktoper2D/lifecycle/asr/asr_session_service.cpp
+    src/desktoper2D/lifecycle/services/decision_service.cpp
+    src/desktoper2D/lifecycle/services/task_category_service.cpp
 )
 
 target_include_directories(lifecycle_decoupling_tests PRIVATE

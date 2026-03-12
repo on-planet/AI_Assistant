@@ -11,7 +11,7 @@ void ApplyWorkspaceAction(const UiCommandBridge &bridge, const WorkspaceAction &
         bool use_workspace_mode_int;
     };
 
-    static const std::array<WorkspaceCommandMapping, 15> kWorkspaceCommandMappings = {{
+    static const std::array<WorkspaceCommandMapping, 18> kWorkspaceCommandMappings = {{
         {WorkspaceActionType::SwitchWorkspaceMode, UiCommandType::SwitchWorkspaceMode, true},
         {WorkspaceActionType::ApplyPresetLayout, UiCommandType::ApplyPresetLayout, false},
         {WorkspaceActionType::ResetManualLayout, UiCommandType::ResetManualLayout, false},
@@ -21,7 +21,10 @@ void ApplyWorkspaceAction(const UiCommandBridge &bridge, const WorkspaceAction &
         {WorkspaceActionType::ToggleTimelineWindow, UiCommandType::ToggleTimelineWindow, false},
         {WorkspaceActionType::TogglePerceptionWindow, UiCommandType::TogglePerceptionWindow, false},
         {WorkspaceActionType::ToggleMappingWindow, UiCommandType::ToggleMappingWindow, false},
+        {WorkspaceActionType::ToggleOcrWindow, UiCommandType::ToggleOcrWindow, false},
         {WorkspaceActionType::ToggleAsrChatWindow, UiCommandType::ToggleAsrChatWindow, false},
+        {WorkspaceActionType::TogglePluginWorkerWindow, UiCommandType::TogglePluginWorkerWindow, false},
+        {WorkspaceActionType::ToggleChatWindow, UiCommandType::ToggleChatWindow, false},
         {WorkspaceActionType::ToggleErrorWindow, UiCommandType::ToggleErrorWindow, false},
         {WorkspaceActionType::ToggleInspectorWindow, UiCommandType::ToggleInspectorWindow, false},
         {WorkspaceActionType::ToggleReminderWindow, UiCommandType::ToggleReminderWindow, false},

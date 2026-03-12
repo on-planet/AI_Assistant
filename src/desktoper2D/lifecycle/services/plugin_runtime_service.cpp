@@ -7,7 +7,9 @@
 #include <fstream>
 #include <sstream>
 #include <tuple>
+#include <unordered_set>
 
+#include "desktoper2D/core/json.h"
 #include "desktoper2D/lifecycle/asr/cloud_asr_provider.h"
 #include "desktoper2D/lifecycle/asr/hybrid_asr_provider.h"
 #include "desktoper2D/lifecycle/asr/offline_asr_provider.h"
@@ -19,6 +21,9 @@
 namespace desktoper2D {
 
 namespace {
+
+std::string TrimCopy(const std::string &s);
+std::vector<std::string> SplitCsv(const std::string &csv);
 
 std::string ToString(UnifiedPluginKind kind) {
     switch (kind) {
@@ -105,6 +110,58 @@ std::string ReadTextFile(const std::string &path) {
     std::ostringstream oss;
     oss << ifs.rdbuf();
     return oss.str();
+}
+
+bool WriteTextFile(const std::string &path, const std::string &text, std::string *out_error) {
+    std::ofstream ofs(path, std::ios::binary);
+    if (!ofs) {
+        if (out_error) *out_error = "write file failed: " + path;
+        return false;
+    }
+    ofs << text;
+    ofs.close();
+    if (out_error) out_error->clear();
+    return true;
+}
+
+std::vector<std::string> SplitLinesKeepNonEmpty(const std::string &text) {
+    std::vector<std::string> out;
+    std::string line;
+    std::istringstream iss(text);
+    while (std::getline(iss, line)) {
+        const std::string trimmed = TrimCopy(line);
+        if (!trimmed.empty()) {
+            out.push_back(trimmed);
+        }
+    }
+    return out;
+}
+
+std::vector<std::string> BuildExtraOnnxFromCsvOrLines(const std::string &input) {
+    if (input.find('\n') != std::string::npos) {
+        return SplitLinesKeepNonEmpty(input);
+    }
+    return SplitCsv(input);
+}
+
+JsonValue BuildBehaviorPluginTemplateJson(const std::string &model_id,
+                                          const std::string &onnx,
+                                          const std::vector<std::string> &extra_onnx) {
+    JsonObject root;
+    root["model_id"] = JsonValue::makeString(model_id);
+    root["model_version"] = JsonValue::makeString("0.1.0");
+    root["onnx"] = JsonValue::makeString(onnx);
+    JsonArray extra;
+    for (const auto &p : extra_onnx) {
+        extra.push_back(JsonValue::makeString(p));
+    }
+    if (!extra.empty()) {
+        root["extra_onnx"] = JsonValue::makeArray(std::move(extra));
+    }
+    JsonArray backend;
+    backend.push_back(JsonValue::makeString("cpu"));
+    root["backend_priority"] = JsonValue::makeArray(std::move(backend));
+    return JsonValue::makeObject(std::move(root));
 }
 
 void ReplaceAll(std::string &s, const std::string &from, const std::string &to) {
@@ -204,6 +261,10 @@ std::string SanitizeName(const std::string &name) {
     return out;
 }
 
+std::string BuildUserPluginFolderName(const std::string &safe_name) {
+    return safe_name.empty() ? "user_plugin" : safe_name;
+}
+
 int ToErrorCode(const std::string &detail, RuntimeErrorCode fallback) {
     return static_cast<int>(ClassifyRuntimeErrorCodeFromDetail(detail, fallback));
 }
@@ -237,62 +298,161 @@ void ApplyPluginHealthy(AppRuntime &runtime) {
 
 }  // namespace
 
+bool LoadPluginConfigFields(const std::string &config_path,
+                            std::string *out_model_id,
+                            std::string *out_model_version,
+                            std::string *out_onnx,
+                            std::vector<std::string> *out_extra_onnx,
+                            std::string *out_error) {
+    const std::string text = ReadTextFile(config_path);
+    if (text.empty()) {
+        if (out_error) *out_error = "failed to read plugin config: " + config_path;
+        return false;
+    }
+    JsonParseError parse_err{};
+    auto root_opt = ParseJson(text, &parse_err);
+    if (!root_opt) {
+        if (out_error) *out_error = "plugin config parse failed";
+        return false;
+    }
+    const JsonValue &root = *root_opt;
+    if (!root.isObject() || !root.asObject()) {
+        if (out_error) *out_error = "plugin config root is not object";
+        return false;
+    }
+    const auto &obj = *root.asObject();
+    if (out_model_id) {
+        auto it = obj.find("model_id");
+        if (it != obj.end()) {
+            if (const std::string *v = it->second.asString()) {
+                *out_model_id = *v;
+            }
+        }
+    }
+    if (out_model_version) {
+        auto it = obj.find("model_version");
+        if (it != obj.end()) {
+            if (const std::string *v = it->second.asString()) {
+                *out_model_version = *v;
+            }
+        }
+    }
+    if (out_onnx) {
+        auto it = obj.find("onnx");
+        if (it != obj.end()) {
+            if (const std::string *v = it->second.asString()) {
+                *out_onnx = *v;
+            }
+        }
+    }
+    if (out_extra_onnx) {
+        out_extra_onnx->clear();
+        auto it = obj.find("extra_onnx");
+        if (it != obj.end() && it->second.isArray() && it->second.asArray()) {
+            for (const auto &v : *it->second.asArray()) {
+                if (const std::string *s = v.asString()) {
+                    out_extra_onnx->push_back(*s);
+                }
+            }
+        }
+    }
+    if (out_error) out_error->clear();
+    return true;
+}
+
+bool SavePluginConfigFields(const std::string &config_path,
+                            const std::string &model_id,
+                            const std::string &onnx,
+                            const std::vector<std::string> &extra_onnx,
+                            std::string *out_error) {
+    const JsonValue root = BuildBehaviorPluginTemplateJson(model_id, onnx, extra_onnx);
+    const std::string text = StringifyJson(root, 2);
+    return WriteTextFile(config_path, text, out_error);
+}
+
 void RefreshPluginConfigs(AppRuntime &runtime) {
-    runtime.plugin_config_entries.clear();
     runtime.plugin_config_scan_error.clear();
 
-    std::vector<std::filesystem::path> roots;
-    roots.emplace_back(std::filesystem::path("assets"));
-    for (const auto &root : ResourceLocator::BuildSearchRoots(6)) {
-        if (root.empty()) {
-            continue;
+    std::vector<PluginConfigEntry> refreshed;
+    std::unordered_set<std::string> seen_paths;
+
+    auto append_scan_error = [&](const std::string &msg) {
+        if (msg.empty()) return;
+        if (!runtime.plugin_config_scan_error.empty()) {
+            runtime.plugin_config_scan_error += "\n";
         }
-        roots.emplace_back(root / "assets");
+        runtime.plugin_config_scan_error += msg;
+    };
+
+    auto add_config_path = [&](const std::string &config_path) {
+        if (config_path.empty()) return;
+        if (!seen_paths.insert(config_path).second) return;
+
+        std::string model_id;
+        std::string model_version;
+        std::string onnx;
+        std::vector<std::string> extra;
+        std::string err;
+        if (!LoadPluginConfigFields(config_path, &model_id, &model_version, &onnx, &extra, &err)) {
+            append_scan_error("plugin config invalid: " + config_path + (err.empty() ? "" : " (" + err + ")"));
+            return;
+        }
+
+        PluginConfigEntry entry{};
+        entry.config_path = config_path;
+        entry.model_id = model_id;
+        entry.model_version = model_version;
+        if (!model_id.empty()) {
+            entry.name = model_id;
+        } else {
+            entry.name = std::filesystem::path(config_path).stem().string();
+        }
+        const auto it = runtime.plugin_enabled_states.find(config_path);
+        entry.enabled = (it == runtime.plugin_enabled_states.end()) ? true : it->second;
+        refreshed.push_back(std::move(entry));
+    };
+
+    const std::string default_config = ResourceLocator::ResolveFirstExisting("assets/plugin_behavior_config.json");
+    add_config_path(default_config);
+
+    std::filesystem::path base_dir;
+    if (!default_config.empty()) {
+        base_dir = std::filesystem::path(default_config).parent_path() / "user_plugins";
+    } else {
+        const std::string resolved_user_plugins = ResourceLocator::ResolveFirstExisting("assets/user_plugins");
+        if (!resolved_user_plugins.empty()) {
+            base_dir = resolved_user_plugins;
+        } else {
+            base_dir = std::filesystem::path("assets") / "user_plugins";
+        }
     }
 
     std::error_code ec;
-    for (const auto &root : roots) {
-        if (root.empty() || !std::filesystem::exists(root, ec)) {
-            continue;
-        }
-        for (const auto &entry : std::filesystem::recursive_directory_iterator(root, ec)) {
-            if (ec) {
-                runtime.plugin_config_scan_error = "scan error: " + ec.message();
-                break;
+    if (!base_dir.empty() && std::filesystem::exists(base_dir, ec)) {
+        for (auto it = std::filesystem::recursive_directory_iterator(base_dir, ec);
+             !ec && it != std::filesystem::recursive_directory_iterator();
+             it.increment(ec)) {
+            if (!it->is_regular_file()) continue;
+            if (it->path().filename() == "plugin.json") {
+                add_config_path(it->path().generic_string());
             }
-            if (!entry.is_regular_file(ec)) {
-                continue;
-            }
-            const auto &path = entry.path();
-            if (path.extension() != ".json") {
-                continue;
-            }
-            std::string err;
-            PluginArtifactSpec spec{};
-            auto plugin = CreateOnnxBehaviorPluginFromConfig(path.generic_string(), &err, &spec);
-            if (!plugin) {
-                continue;
-            }
-            const std::string name = spec.model_id.empty() ? path.stem().string() : spec.model_id;
-            runtime.plugin_config_entries.push_back(PluginConfigEntry{
-                .name = name,
-                .config_path = path.generic_string(),
-                .model_id = spec.model_id,
-                .model_version = spec.model_version,
-            });
         }
     }
 
-    std::sort(runtime.plugin_config_entries.begin(), runtime.plugin_config_entries.end(),
-              [](const PluginConfigEntry &a, const PluginConfigEntry &b) {
-                  return a.name < b.name;
-              });
-    runtime.plugin_config_entries.erase(
-        std::unique(runtime.plugin_config_entries.begin(), runtime.plugin_config_entries.end(),
-                    [](const PluginConfigEntry &a, const PluginConfigEntry &b) {
-                        return a.name == b.name && a.config_path == b.config_path;
-                    }),
-        runtime.plugin_config_entries.end());
+    runtime.plugin_config_entries = std::move(refreshed);
+
+    std::unordered_set<std::string> known_paths;
+    known_paths.reserve(runtime.plugin_config_entries.size());
+    for (const auto &entry : runtime.plugin_config_entries) {
+        known_paths.insert(entry.config_path);
+    }
+    for (auto it = runtime.plugin_enabled_states.begin(); it != runtime.plugin_enabled_states.end();) {
+        if (!known_paths.count(it->first)) {
+            it = runtime.plugin_enabled_states.erase(it);
+        } else {
+            ++it;
+        }
+    }
 
     runtime.plugin_config_refresh_requested = false;
 }
@@ -322,13 +482,32 @@ bool SwitchPluginByName(AppRuntime &runtime, const std::string &name, std::strin
     return true;
 }
 
+bool ReloadPluginByConfigPath(AppRuntime &runtime, const std::string &config_path, std::string *out_error) {
+    if (!runtime.inference_adapter) {
+        if (out_error) *out_error = "plugin adapter not initialized";
+        return false;
+    }
+    std::string err;
+    const bool ok = runtime.inference_adapter->SwitchPluginByConfigPath(config_path, &err);
+    if (!ok) {
+        const std::string msg = err.empty() ? "plugin reload failed" : err;
+        if (out_error) *out_error = msg;
+        AppendPluginLog(runtime, "behavior:" + config_path, PluginLogLevel::Error, msg,
+                        ToErrorCode(msg, RuntimeErrorCode::InitFailed));
+        return false;
+    }
+    AppendPluginLog(runtime, "behavior:" + config_path, PluginLogLevel::Info, "reload ok");
+    if (out_error) out_error->clear();
+    return true;
+}
+
 void RefreshAsrProviders(AppRuntime &runtime) {
     runtime.asr_provider_entries.clear();
     runtime.asr_provider_entries.push_back(AsrProviderEntry{
         .name = "offline",
         .endpoint = "",
         .api_key = "",
-        .model_path = "assets/sense-voice-encoder-int8.onnx",
+        .model_path = "assets/default_plugins/asr/resources/sense-voice-encoder-int8.onnx",
     });
     runtime.asr_provider_entries.push_back(AsrProviderEntry{
         .name = "cloud",
@@ -340,7 +519,7 @@ void RefreshAsrProviders(AppRuntime &runtime) {
         .name = "hybrid",
         .endpoint = "https://api.openai.com/v1/audio/transcriptions",
         .api_key = "YOUR_API_KEY",
-        .model_path = "assets/sense-voice-encoder-int8.onnx",
+        .model_path = "assets/default_plugins/asr/resources/sense-voice-encoder-int8.onnx",
     });
 }
 
@@ -445,8 +624,8 @@ void RefreshUnifiedPlugins(AppRuntime &runtime) {
 
     {
         std::vector<std::string> assets = {
-            "assets/facemesh.onnx",
-            "assets/facemesh.labels.json",
+            "assets/default_plugins/facemesh/resources/facemesh.onnx",
+            "assets/default_plugins/facemesh/resources/facemesh.labels.json",
         };
         auto plugin = MakeEntry(UnifiedPluginKind::Facemesh,
                                 "facemesh",
@@ -660,13 +839,22 @@ bool DeletePluginConfig(AppRuntime &runtime, const std::string &config_path, std
         return false;
     }
     if (std::filesystem::is_directory(path, ec)) {
-        if (out_error) *out_error = "plugin config is a directory: " + config_path;
-        return false;
-    }
-    std::filesystem::remove(path, ec);
-    if (ec) {
-        if (out_error) *out_error = "delete plugin config failed: " + ec.message();
-        return false;
+        std::error_code rm_ec;
+        std::filesystem::remove_all(path, rm_ec);
+        if (rm_ec) {
+            if (out_error) *out_error = "delete plugin folder failed: " + rm_ec.message();
+            return false;
+        }
+    } else {
+        std::filesystem::remove(path, ec);
+        if (ec) {
+            if (out_error) *out_error = "delete plugin config failed: " + ec.message();
+            return false;
+        }
+        const std::filesystem::path parent_dir = path.parent_path();
+        if (parent_dir.parent_path().filename() == "user_plugins") {
+            std::filesystem::remove_all(parent_dir, ec);
+        }
     }
 
     runtime.plugin_config_entries.erase(
@@ -679,8 +867,23 @@ bool DeletePluginConfig(AppRuntime &runtime, const std::string &config_path, std
     if (runtime.plugin_selected_entry_index < 0) {
         runtime.plugin_selected_entry_index = -1;
     }
+    RemovePluginEnabledState(runtime, config_path);
     runtime.unified_plugin_refresh_requested = true;
     return true;
+}
+
+void SetPluginEnabledState(AppRuntime &runtime, const std::string &config_path, bool enabled) {
+    runtime.plugin_enabled_states[config_path] = enabled;
+    for (auto &entry : runtime.plugin_config_entries) {
+        if (entry.config_path == config_path) {
+            entry.enabled = enabled;
+            break;
+        }
+    }
+}
+
+void RemovePluginEnabledState(AppRuntime &runtime, const std::string &config_path) {
+    runtime.plugin_enabled_states.erase(config_path);
 }
 
 bool CreateUserPlugin(AppRuntime &runtime, const UserPluginCreateRequest &request, std::string *out_error) {
@@ -690,50 +893,89 @@ bool CreateUserPlugin(AppRuntime &runtime, const UserPluginCreateRequest &reques
         return false;
     }
 
-    const std::filesystem::path dir = std::filesystem::path("assets") / "user_plugins";
+    const std::string tpl_path = request.template_path;
+    std::string tpl;
+    std::filesystem::path assets_dir;
+    if (!tpl_path.empty()) {
+        const std::string resolved_tpl_path = ResourceLocator::ResolveFirstExisting(tpl_path);
+        if (resolved_tpl_path.empty()) {
+            if (out_error) *out_error = "template not found: " + tpl_path;
+            return false;
+        }
+        assets_dir = std::filesystem::path(resolved_tpl_path).parent_path();
+        tpl = ReadTextFile(resolved_tpl_path);
+        if (tpl.empty()) {
+            if (out_error) *out_error = "template not found: " + resolved_tpl_path;
+            return false;
+        }
+    } else {
+        const std::string resolved_assets_dir = ResourceLocator::ResolveFirstExisting("assets");
+        if (!resolved_assets_dir.empty()) {
+            assets_dir = std::filesystem::path(resolved_assets_dir);
+        } else {
+            assets_dir = std::filesystem::path("assets");
+        }
+    }
+
+    const std::filesystem::path base_dir = assets_dir / "user_plugins";
     std::error_code ec;
-    std::filesystem::create_directories(dir, ec);
+    std::filesystem::create_directories(base_dir, ec);
     if (ec) {
         if (out_error) *out_error = "create directory failed: " + ec.message();
         return false;
     }
 
-    std::filesystem::path config_path = dir / (safe_name + ".json");
+    const std::string folder_name = BuildUserPluginFolderName(safe_name);
+    std::filesystem::path plugin_dir = base_dir / folder_name;
     int suffix = 1;
-    while (std::filesystem::exists(config_path, ec)) {
-        config_path = dir / (safe_name + "_" + std::to_string(suffix++) + ".json");
+    while (std::filesystem::exists(plugin_dir, ec)) {
+        plugin_dir = base_dir / (folder_name + "_" + std::to_string(suffix++));
     }
 
-    const std::string tpl_path = request.template_path.empty()
-                                    ? std::string("assets/plugin_behavior_config.json")
-                                    : request.template_path;
-    std::string tpl = ReadTextFile(tpl_path);
-    if (tpl.empty()) {
-        if (out_error) *out_error = "template not found: " + tpl_path;
+    std::filesystem::create_directories(plugin_dir / "resources", ec);
+    if (ec) {
+        if (out_error) *out_error = "create plugin folder failed: " + ec.message();
         return false;
     }
 
-    ReplaceAll(tpl, "\"model_id\": \"default_behavior\"",
-               "\"model_id\": \"" + safe_name + "\"");
-    ReplaceAll(tpl, "\"model_version\": \"0.1.0\"",
-               "\"model_version\": \"0.1.0\"");
-    ReplaceAll(tpl, "assets/behavior/default_behavior.onnx",
-               "assets/behavior/" + safe_name + ".onnx");
+    const std::filesystem::path config_path = plugin_dir / "plugin.json";
 
-    std::ofstream ofs(config_path, std::ios::binary);
-    if (!ofs) {
-        if (out_error) *out_error = "write plugin config failed: " + config_path.string();
-        return false;
+    if (!tpl.empty()) {
+        ReplaceAll(tpl, "\"model_id\": \"default_behavior\"",
+                   "\"model_id\": \"" + safe_name + "\"");
+        ReplaceAll(tpl, "\"model_version\": \"0.1.0\"",
+                   "\"model_version\": \"0.1.0\"");
+        ReplaceAll(tpl, "assets/behavior/default_behavior.onnx",
+                   (plugin_dir / "resources" / (safe_name + ".onnx")).generic_string());
+
+        std::ofstream ofs(config_path, std::ios::binary);
+        if (!ofs) {
+            if (out_error) *out_error = "write plugin config failed: " + config_path.string();
+            return false;
+        }
+        ofs << tpl;
+        ofs.close();
+    } else {
+        const std::string onnx_path = (plugin_dir / "resources" / (safe_name + ".onnx")).generic_string();
+        std::vector<std::string> extra_onnx;
+        if (!SavePluginConfigFields(config_path.generic_string(), safe_name, onnx_path, extra_onnx, out_error)) {
+            return false;
+        }
     }
-    ofs << tpl;
-    ofs.close();
 
     const std::string id = "behavior:" + config_path.generic_string();
     AppendPluginLog(runtime, id, PluginLogLevel::Info,
                     "created user plugin config: " + config_path.generic_string());
 
-    RefreshPluginConfigs(runtime);
-    RefreshUnifiedPlugins(runtime);
+    runtime.plugin_config_entries.push_back(PluginConfigEntry{
+        .name = safe_name,
+        .config_path = config_path.generic_string(),
+        .model_id = safe_name,
+        .model_version = "0.1.0",
+        .enabled = true,
+    });
+    runtime.plugin_enabled_states[config_path.generic_string()] = true;
+    runtime.unified_plugin_refresh_requested = true;
 
     if (out_error) out_error->clear();
     return true;
@@ -841,7 +1083,7 @@ bool SwitchOcrModelByName(AppRuntime &runtime, const std::string &name, std::str
 }
 
 void UpdatePluginLifecycle(AppRuntime &runtime) {
-    if (runtime.plugin_config_refresh_requested || runtime.plugin_config_entries.empty()) {
+    if (runtime.plugin_config_refresh_requested) {
         RefreshPluginConfigs(runtime);
     }
     if (runtime.asr_provider_entries.empty()) {

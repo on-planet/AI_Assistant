@@ -61,7 +61,7 @@ void RenderPartEditorOverlay(const AppRenderContext &ctx) {
     SDL_RenderDebugText(ctx.renderer, 12.0f, 108.0f, part_line);
 
     if (ctx.edit_mode) {
-        RenderGizmoOverlay(ctx.renderer, part, ctx.gizmo_hover_handle, ctx.gizmo_active_handle);
+        RenderGizmoOverlay(ctx.renderer, part, ctx.gizmo_hover_handle, ctx.gizmo_active_handle, ctx.axis_constraint);
         SDL_RenderDebugText(ctx.renderer,
                             12.0f,
                             124.0f,

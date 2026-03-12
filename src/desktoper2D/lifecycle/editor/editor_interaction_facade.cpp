@@ -4,11 +4,16 @@
 #include "desktoper2D/lifecycle/state/app_runtime_state.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <limits>
 #include <utility>
+#include <vector>
 
 namespace desktoper2D {
+
+int PickCycleNextPartAt(const AppRuntime &runtime, float x, float y);
+
 namespace {
 
 bool HasModelParts(const AppRuntime &runtime) {
@@ -86,6 +91,102 @@ bool PartContainsPointPrecise(const ModelPart &part, float x, float y) {
     return false;
 }
 
+std::string NormalizePickFilter(std::string text) {
+    text.erase(std::remove_if(text.begin(), text.end(), [](unsigned char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+    }),
+               text.end());
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return text;
+}
+
+bool HasPickFilter(const AppRuntime &runtime) {
+    return runtime.pick_name_filter_enabled && runtime.pick_name_filter[0] != '\0';
+}
+
+bool PassPickNameFilter(const AppRuntime &runtime, const ModelPart &part) {
+    if (!HasPickFilter(runtime)) {
+        return true;
+    }
+    const std::string needle = NormalizePickFilter(runtime.pick_name_filter);
+    if (needle.empty()) {
+        return true;
+    }
+    const std::string id = NormalizePickFilter(part.id);
+    if (id.find(needle) != std::string::npos) {
+        return true;
+    }
+    if (!part.texture_cache_key.empty()) {
+        const std::string texture_key = NormalizePickFilter(part.texture_cache_key);
+        if (texture_key.find(needle) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool IsDescendantOrSelf(const ModelRuntime &model, int candidate_idx, int root_idx) {
+    if (candidate_idx < 0 || candidate_idx >= static_cast<int>(model.parts.size())) {
+        return false;
+    }
+    if (root_idx < 0 || root_idx >= static_cast<int>(model.parts.size())) {
+        return false;
+    }
+    int walk = candidate_idx;
+    while (walk >= 0 && walk < static_cast<int>(model.parts.size())) {
+        if (walk == root_idx) {
+            return true;
+        }
+        walk = model.parts[static_cast<std::size_t>(walk)].parent_index;
+    }
+    return false;
+}
+
+bool PassPickScopeFilter(const AppRuntime &runtime, int idx) {
+    if (!runtime.pick_scope_filter_enabled) {
+        return true;
+    }
+    if (idx < 0 || idx >= static_cast<int>(runtime.model.parts.size())) {
+        return false;
+    }
+    const int selected = runtime.selected_part_index;
+    if (selected < 0 || selected >= static_cast<int>(runtime.model.parts.size())) {
+        return false;
+    }
+    if (runtime.pick_scope_mode == 1) {
+        return idx == selected;
+    }
+    if (runtime.pick_scope_mode == 2) {
+        return IsDescendantOrSelf(runtime.model, idx, selected);
+    }
+    return true;
+}
+
+bool PassPickLockFilter(const AppRuntime &runtime, const ModelPart &part) {
+    if (!runtime.pick_lock_filter_enabled) {
+        return true;
+    }
+    return !part.pick_locked;
+}
+
+bool PassPickFilters(const AppRuntime &runtime, int idx, const ModelPart &part) {
+    if (part.runtime_opacity <= 0.01f) {
+        return false;
+    }
+    if (!PassPickLockFilter(runtime, part)) {
+        return false;
+    }
+    if (!PassPickScopeFilter(runtime, idx)) {
+        return false;
+    }
+    if (!PassPickNameFilter(runtime, part)) {
+        return false;
+    }
+    return true;
+}
+
 std::pair<float, float> WorldDeltaToParentLocal(const ModelRuntime &model, int parent_index, float dx, float dy) {
     if (parent_index < 0 || parent_index >= static_cast<int>(model.parts.size())) {
         return {dx, dy};
@@ -144,6 +245,14 @@ void SyncEditorControllerStateFromApp(const AppRuntime &runtime, EditorControlle
     editor_state.dragging_pivot = runtime.dragging_pivot;
     editor_state.drag_last_x = runtime.drag_last_x;
     editor_state.drag_last_y = runtime.drag_last_y;
+    editor_state.drag_start_mouse_x = runtime.drag_start_mouse_x;
+    editor_state.drag_start_mouse_y = runtime.drag_start_mouse_y;
+    editor_state.drag_start_world_x = runtime.drag_start_world_x;
+    editor_state.drag_start_world_y = runtime.drag_start_world_y;
+    editor_state.drag_start_pos_x = runtime.drag_start_pos_x;
+    editor_state.drag_start_pos_y = runtime.drag_start_pos_y;
+    editor_state.drag_start_pivot_x = runtime.drag_start_pivot_x;
+    editor_state.drag_start_pivot_y = runtime.drag_start_pivot_y;
 
     editor_state.gizmo_dragging = runtime.gizmo_dragging;
     editor_state.gizmo_hover_handle = runtime.gizmo_hover_handle;
@@ -152,6 +261,8 @@ void SyncEditorControllerStateFromApp(const AppRuntime &runtime, EditorControlle
     editor_state.gizmo_drag_start_mouse_y = runtime.gizmo_drag_start_mouse_y;
     editor_state.gizmo_drag_start_pos_x = runtime.gizmo_drag_start_pos_x;
     editor_state.gizmo_drag_start_pos_y = runtime.gizmo_drag_start_pos_y;
+    editor_state.gizmo_drag_start_world_x = runtime.gizmo_drag_start_world_x;
+    editor_state.gizmo_drag_start_world_y = runtime.gizmo_drag_start_world_y;
     editor_state.gizmo_drag_start_rot_deg = runtime.gizmo_drag_start_rot_deg;
     editor_state.gizmo_drag_start_scale_x = runtime.gizmo_drag_start_scale_x;
     editor_state.gizmo_drag_start_scale_y = runtime.gizmo_drag_start_scale_y;
@@ -167,6 +278,14 @@ void SyncAppStateFromEditorController(AppRuntime &runtime, const EditorControlle
     runtime.dragging_pivot = editor_state.dragging_pivot;
     runtime.drag_last_x = editor_state.drag_last_x;
     runtime.drag_last_y = editor_state.drag_last_y;
+    runtime.drag_start_mouse_x = editor_state.drag_start_mouse_x;
+    runtime.drag_start_mouse_y = editor_state.drag_start_mouse_y;
+    runtime.drag_start_world_x = editor_state.drag_start_world_x;
+    runtime.drag_start_world_y = editor_state.drag_start_world_y;
+    runtime.drag_start_pos_x = editor_state.drag_start_pos_x;
+    runtime.drag_start_pos_y = editor_state.drag_start_pos_y;
+    runtime.drag_start_pivot_x = editor_state.drag_start_pivot_x;
+    runtime.drag_start_pivot_y = editor_state.drag_start_pivot_y;
 
     runtime.gizmo_dragging = editor_state.gizmo_dragging;
     runtime.gizmo_hover_handle = editor_state.gizmo_hover_handle;
@@ -175,6 +294,8 @@ void SyncAppStateFromEditorController(AppRuntime &runtime, const EditorControlle
     runtime.gizmo_drag_start_mouse_y = editor_state.gizmo_drag_start_mouse_y;
     runtime.gizmo_drag_start_pos_x = editor_state.gizmo_drag_start_pos_x;
     runtime.gizmo_drag_start_pos_y = editor_state.gizmo_drag_start_pos_y;
+    runtime.gizmo_drag_start_world_x = editor_state.gizmo_drag_start_world_x;
+    runtime.gizmo_drag_start_world_y = editor_state.gizmo_drag_start_world_y;
     runtime.gizmo_drag_start_rot_deg = editor_state.gizmo_drag_start_rot_deg;
     runtime.gizmo_drag_start_scale_x = editor_state.gizmo_drag_start_scale_x;
     runtime.gizmo_drag_start_scale_y = editor_state.gizmo_drag_start_scale_y;
@@ -186,20 +307,32 @@ void SyncAppStateFromEditorController(AppRuntime &runtime, const EditorControlle
 }
 
 EditorControllerContext BuildEditorControllerContext(AppRuntime &runtime) {
-    return EditorControllerContext{
-        .model = &runtime.model,
-        .selected_part_index = &runtime.selected_part_index,
-        .apply_pivot_delta = [](ModelPart *part, float dx, float dy) { ApplyPivotDelta(part, dx, dy); },
-        .has_model_parts = [&runtime]() { return HasModelParts(runtime); },
-        .ensure_selected_part_index_valid = [&runtime]() { EnsureSelectedPartIndexValid(runtime); },
-        .pick_top_part_at = [&runtime](float x, float y) { return PickTopPartAt(runtime, x, y); },
-        .world_delta_to_parent_local = [](const ModelRuntime &model, int parent_index, float dx, float dy) {
-            return WorldDeltaToParentLocal(model, parent_index, dx, dy);
-        },
-        .world_delta_to_part_local = [](const ModelPart &part, float dx, float dy) {
-            return WorldDeltaToPartLocal(part, dx, dy);
-        },
+    EditorControllerContext ctx{};
+    ctx.model = &runtime.model;
+    ctx.selected_part_index = &runtime.selected_part_index;
+    ctx.axis_constraint = runtime.axis_constraint;
+    ctx.snap_enabled = runtime.snap_enabled;
+    ctx.snap_grid = runtime.snap_grid;
+    ctx.drag_sensitivity = runtime.editor_drag_sensitivity;
+    ctx.gizmo_sensitivity = runtime.editor_gizmo_sensitivity;
+    ctx.set_snap_indicator = [&runtime](bool snap_x, bool snap_y, float world_x, float world_y) {
+        runtime.editor_snap_active_x = snap_x;
+        runtime.editor_snap_active_y = snap_y;
+        runtime.editor_snap_world_x = world_x;
+        runtime.editor_snap_world_y = world_y;
     };
+    ctx.apply_pivot_delta = [](ModelPart *part, float dx, float dy) { ApplyPivotDelta(part, dx, dy); };
+    ctx.has_model_parts = [&runtime]() { return HasModelParts(runtime); };
+    ctx.ensure_selected_part_index_valid = [&runtime]() { EnsureSelectedPartIndexValid(runtime); };
+    ctx.pick_top_part_at = [&runtime](float x, float y) { return PickTopPartAt(runtime, x, y); };
+    ctx.pick_cycle_next_part_at = [&runtime](float x, float y) { return desktoper2D::PickCycleNextPartAt(runtime, x, y); };
+    ctx.world_delta_to_parent_local = [](const ModelRuntime &model, int parent_index, float dx, float dy) {
+        return WorldDeltaToParentLocal(model, parent_index, dx, dy);
+    };
+    ctx.world_delta_to_part_local = [](const ModelPart &part, float dx, float dy) {
+        return WorldDeltaToPartLocal(part, dx, dy);
+    };
+    return ctx;
 }
 
 }  // namespace
@@ -250,7 +383,7 @@ int PickTopPartAt(const AppRuntime &runtime, float x, float y) {
         }
 
         const ModelPart &part = runtime.model.parts[static_cast<std::size_t>(idx)];
-        if (part.runtime_opacity <= 0.01f) {
+        if (!PassPickFilters(runtime, idx, part)) {
             continue;
         }
 
@@ -260,6 +393,47 @@ int PickTopPartAt(const AppRuntime &runtime, float x, float y) {
     }
 
     return -1;
+}
+
+std::vector<int> CollectPickCandidates(const AppRuntime &runtime, float x, float y) {
+    std::vector<int> candidates;
+    if (!HasModelParts(runtime)) {
+        return candidates;
+    }
+
+    for (auto it = runtime.model.draw_order_indices.rbegin();
+         it != runtime.model.draw_order_indices.rend(); ++it) {
+        const int idx = *it;
+        if (idx < 0 || idx >= static_cast<int>(runtime.model.parts.size())) {
+            continue;
+        }
+
+        const ModelPart &part = runtime.model.parts[static_cast<std::size_t>(idx)];
+        if (!PassPickFilters(runtime, idx, part)) {
+            continue;
+        }
+
+        if (PartContainsPointPrecise(part, x, y)) {
+            candidates.push_back(idx);
+        }
+    }
+
+    return candidates;
+}
+
+int PickCycleNextPartAt(const AppRuntime &runtime, float x, float y) {
+    if (!runtime.pick_cycle_enabled) {
+        return PickTopPartAt(runtime, x, y);
+    }
+
+    std::vector<int> candidates = CollectPickCandidates(runtime, x, y);
+    if (candidates.empty()) {
+        return -1;
+    }
+
+    const int offset = runtime.pick_cycle_offset % static_cast<int>(candidates.size());
+    const int index = (offset + static_cast<int>(candidates.size())) % static_cast<int>(candidates.size());
+    return candidates[static_cast<std::size_t>(index)];
 }
 
 void BeginDragPart(AppRuntime &runtime,

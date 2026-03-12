@@ -31,7 +31,10 @@ void ReduceToggleEditorWindow(AppRuntime &runtime, const UiCommand &cmd) { runti
 void ReduceToggleTimelineWindow(AppRuntime &runtime, const UiCommand &cmd) { runtime.show_timeline_window = cmd.bool_value; }
 void ReduceTogglePerceptionWindow(AppRuntime &runtime, const UiCommand &cmd) { runtime.show_perception_window = cmd.bool_value; }
 void ReduceToggleMappingWindow(AppRuntime &runtime, const UiCommand &cmd) { runtime.show_mapping_window = cmd.bool_value; }
+void ReduceToggleOcrWindow(AppRuntime &runtime, const UiCommand &cmd) { runtime.show_ocr_window = cmd.bool_value; }
 void ReduceToggleAsrChatWindow(AppRuntime &runtime, const UiCommand &cmd) { runtime.show_asr_chat_window = cmd.bool_value; }
+void ReduceTogglePluginWorkerWindow(AppRuntime &runtime, const UiCommand &cmd) { runtime.show_plugin_worker_window = cmd.bool_value; }
+void ReduceToggleChatWindow(AppRuntime &runtime, const UiCommand &cmd) { runtime.show_chat_window = cmd.bool_value; }
 void ReduceToggleErrorWindow(AppRuntime &runtime, const UiCommand &cmd) { runtime.show_error_window = cmd.bool_value; }
 void ReduceToggleInspectorWindow(AppRuntime &runtime, const UiCommand &cmd) { runtime.show_inspector_window = cmd.bool_value; }
 void ReduceToggleReminderWindow(AppRuntime &runtime, const UiCommand &cmd) { runtime.show_reminder_window = cmd.bool_value; }
@@ -73,7 +76,7 @@ void ReduceCloseProgram(AppRuntime &runtime, const UiCommand &cmd) {
                                   .message = "Program close requested"});
 }
 
-const std::array<UiCommandReducerEntry, 21> kUiCommandReducerTable = {{
+const std::array<UiCommandReducerEntry, 24> kUiCommandReducerTable = {{
     {UiCommandType::SwitchWorkspaceMode, &ReduceSwitchWorkspaceMode},
     {UiCommandType::ApplyPresetLayout, &ReduceApplyPresetLayout},
     {UiCommandType::ResetManualLayout, &ReduceResetManualLayout},
@@ -83,7 +86,10 @@ const std::array<UiCommandReducerEntry, 21> kUiCommandReducerTable = {{
     {UiCommandType::ToggleTimelineWindow, &ReduceToggleTimelineWindow},
     {UiCommandType::TogglePerceptionWindow, &ReduceTogglePerceptionWindow},
     {UiCommandType::ToggleMappingWindow, &ReduceToggleMappingWindow},
+    {UiCommandType::ToggleOcrWindow, &ReduceToggleOcrWindow},
     {UiCommandType::ToggleAsrChatWindow, &ReduceToggleAsrChatWindow},
+    {UiCommandType::TogglePluginWorkerWindow, &ReduceTogglePluginWorkerWindow},
+    {UiCommandType::ToggleChatWindow, &ReduceToggleChatWindow},
     {UiCommandType::ToggleErrorWindow, &ReduceToggleErrorWindow},
     {UiCommandType::ToggleInspectorWindow, &ReduceToggleInspectorWindow},
     {UiCommandType::ToggleReminderWindow, &ReduceToggleReminderWindow},

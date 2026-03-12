@@ -9,7 +9,23 @@ void UpdatePluginLifecycle(AppRuntime &runtime);
 
 void RefreshPluginConfigs(AppRuntime &runtime);
 bool SwitchPluginByName(AppRuntime &runtime, const std::string &name, std::string *out_error = nullptr);
+bool ReloadPluginByConfigPath(AppRuntime &runtime, const std::string &config_path, std::string *out_error = nullptr);
 bool DeletePluginConfig(AppRuntime &runtime, const std::string &config_path, std::string *out_error = nullptr);
+void SetPluginEnabledState(AppRuntime &runtime, const std::string &config_path, bool enabled);
+void RemovePluginEnabledState(AppRuntime &runtime, const std::string &config_path);
+
+bool LoadPluginConfigFields(const std::string &config_path,
+                            std::string *out_model_id,
+                            std::string *out_model_version,
+                            std::string *out_onnx,
+                            std::vector<std::string> *out_extra_onnx,
+                            std::string *out_error = nullptr);
+
+bool SavePluginConfigFields(const std::string &config_path,
+                            const std::string &model_id,
+                            const std::string &onnx,
+                            const std::vector<std::string> &extra_onnx,
+                            std::string *out_error = nullptr);
 
 void RefreshAsrProviders(AppRuntime &runtime);
 bool SwitchAsrProviderByName(AppRuntime &runtime, const std::string &name, std::string *out_error = nullptr);

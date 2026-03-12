@@ -57,11 +57,12 @@ void CancelCaptureEdit(EditorControllerState &state) {
 }
 
 void BeginDragPart(EditorControllerState &state, const EditorControllerContext &ctx, float mouse_x, float mouse_y) {
-    if (!ctx.model || !ctx.selected_part_index || !ctx.pick_top_part_at) {
+    if (!ctx.model || !ctx.selected_part_index || (!ctx.pick_top_part_at && !ctx.pick_cycle_next_part_at)) {
         return;
     }
 
-    const int picked = ctx.pick_top_part_at(mouse_x, mouse_y);
+    const int picked = ctx.pick_cycle_next_part_at ? ctx.pick_cycle_next_part_at(mouse_x, mouse_y)
+                                                  : ctx.pick_top_part_at(mouse_x, mouse_y);
     if (picked < 0 || picked >= static_cast<int>(ctx.model->parts.size())) {
         return;
     }
@@ -75,7 +76,7 @@ void BeginDragPart(EditorControllerState &state, const EditorControllerContext &
 }
 
 void BeginDragPivot(EditorControllerState &state, const EditorControllerContext &ctx, float mouse_x, float mouse_y) {
-    if (!ctx.model || !ctx.selected_part_index || !ctx.has_model_parts || !ctx.pick_top_part_at) {
+    if (!ctx.model || !ctx.selected_part_index || !ctx.has_model_parts || (!ctx.pick_top_part_at && !ctx.pick_cycle_next_part_at)) {
         return;
     }
     if (!ctx.has_model_parts()) {
@@ -83,7 +84,8 @@ void BeginDragPivot(EditorControllerState &state, const EditorControllerContext 
     }
 
     if (*ctx.selected_part_index < 0 || *ctx.selected_part_index >= static_cast<int>(ctx.model->parts.size())) {
-        const int picked = ctx.pick_top_part_at(mouse_x, mouse_y);
+        const int picked = ctx.pick_cycle_next_part_at ? ctx.pick_cycle_next_part_at(mouse_x, mouse_y)
+                                                      : ctx.pick_top_part_at(mouse_x, mouse_y);
         if (picked < 0 || picked >= static_cast<int>(ctx.model->parts.size())) {
             return;
         }

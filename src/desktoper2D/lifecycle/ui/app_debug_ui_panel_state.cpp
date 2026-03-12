@@ -1,6 +1,8 @@
 #include "desktoper2D/lifecycle/ui/app_debug_ui_panel_state.h"
 
 #include <algorithm>
+#include <iomanip>
+#include <sstream>
 
 #include "app_debug_ui_internal.h"
 #include "desktoper2D/lifecycle/editor/editor_session_service.h"
@@ -92,12 +94,243 @@ TimelinePanelState BuildTimelinePanelState(const AppRuntime &runtime) {
     return state;
 }
 
+namespace {
+
+std::vector<EditorBatchBindTemplateItem> BuildBatchBindTemplates() {
+    std::vector<EditorBatchBindTemplateItem> items;
+    items.push_back(EditorBatchBindTemplateItem{.label = "Move X (-1..1 -> -80..80)",
+                                                .bind_prop_type = BindingType::PosX,
+                                                .bind_in_min = -1.0f,
+                                                .bind_in_max = 1.0f,
+                                                .bind_out_min = -80.0f,
+                                                .bind_out_max = 80.0f});
+    items.push_back(EditorBatchBindTemplateItem{.label = "Move Y (-1..1 -> -80..80)",
+                                                .bind_prop_type = BindingType::PosY,
+                                                .bind_in_min = -1.0f,
+                                                .bind_in_max = 1.0f,
+                                                .bind_out_min = -80.0f,
+                                                .bind_out_max = 80.0f});
+    items.push_back(EditorBatchBindTemplateItem{.label = "Rotate Small (-1..1 -> -15..15)",
+                                                .bind_prop_type = BindingType::RotDeg,
+                                                .bind_in_min = -1.0f,
+                                                .bind_in_max = 1.0f,
+                                                .bind_out_min = -15.0f,
+                                                .bind_out_max = 15.0f});
+    items.push_back(EditorBatchBindTemplateItem{.label = "Rotate Wide (-1..1 -> -45..45)",
+                                                .bind_prop_type = BindingType::RotDeg,
+                                                .bind_in_min = -1.0f,
+                                                .bind_in_max = 1.0f,
+                                                .bind_out_min = -45.0f,
+                                                .bind_out_max = 45.0f});
+    items.push_back(EditorBatchBindTemplateItem{.label = "Opacity (0..1 -> 0..1)",
+                                                .bind_prop_type = BindingType::Opacity,
+                                                .bind_in_min = 0.0f,
+                                                .bind_in_max = 1.0f,
+                                                .bind_out_min = 0.0f,
+                                                .bind_out_max = 1.0f});
+    items.push_back(EditorBatchBindTemplateItem{.label = "Scale (0..1 -> 0.9..1.1)",
+                                                .bind_prop_type = BindingType::ScaleX,
+                                                .bind_in_min = 0.0f,
+                                                .bind_in_max = 1.0f,
+                                                .bind_out_min = 0.9f,
+                                                .bind_out_max = 1.1f});
+    return items;
+}
+
+std::pair<float, float> BatchBindOutRangeFor(BindingType type) {
+    switch (type) {
+        case BindingType::PosX:
+        case BindingType::PosY:
+            return {-500.0f, 500.0f};
+        case BindingType::RotDeg:
+            return {-180.0f, 180.0f};
+        case BindingType::ScaleX:
+        case BindingType::ScaleY:
+            return {0.0f, 3.0f};
+        case BindingType::Opacity:
+            return {0.0f, 1.0f};
+        default:
+            return {-180.0f, 180.0f};
+    }
+}
+
+EditorBatchBindValidation ValidateBatchBind(const std::vector<EditorParamRowState> &param_rows,
+                                            BindingType type,
+                                            float in_min,
+                                            float in_max,
+                                            float out_min,
+                                            float out_max) {
+    EditorBatchBindValidation v{};
+    v.in_min_max_ok = in_min <= in_max;
+    v.out_min_max_ok = out_min <= out_max;
+
+    v.in_range_ok = true;
+    for (const auto &row : param_rows) {
+        if (in_min < std::min(row.min_value, row.max_value) || in_max > std::max(row.min_value, row.max_value)) {
+            v.in_range_ok = false;
+            break;
+        }
+    }
+
+    const auto range = BatchBindOutRangeFor(type);
+    v.out_range_ok = out_min >= range.first && out_max <= range.second;
+
+    v.valid = v.in_min_max_ok && v.out_min_max_ok && v.in_range_ok && v.out_range_ok;
+    if (!v.valid) {
+        std::string msg;
+        if (!v.in_min_max_ok) msg += "输入范围最小值大于最大值。";
+        if (!v.out_min_max_ok) msg += (msg.empty() ? "" : " ") + std::string("输出范围最小值大于最大值。");
+        if (!v.in_range_ok) msg += (msg.empty() ? "" : " ") + std::string("输入范围超出参数规格范围。");
+        if (!v.out_range_ok) msg += (msg.empty() ? "" : " ") + std::string("输出范围超出属性安全范围。");
+        v.message = msg.empty() ? "绑定范围非法。" : msg;
+    }
+    return v;
+}
+
+const char *EditCommandTypeLabel(EditCommand::Type type) {
+    switch (type) {
+        case EditCommand::Type::Transform: return "Transform";
+        case EditCommand::Type::Timeline: return "Timeline";
+        case EditCommand::Type::Param: return "Param";
+        case EditCommand::Type::Inspector: return "Inspector";
+        case EditCommand::Type::Reminder: return "Reminder";
+        default: return "Unknown";
+    }
+}
+
+std::string FormatFloatDelta(float before_value, float after_value, const char *suffix = nullptr) {
+    std::ostringstream oss;
+    oss.setf(std::ios::fixed);
+    oss << std::setprecision(3);
+    const float delta = after_value - before_value;
+    oss << before_value << " -> " << after_value << " (";
+    if (delta >= 0.0f) {
+        oss << "+";
+    }
+    oss << delta;
+    oss << ")";
+    if (suffix && suffix[0] != '\0') {
+        oss << suffix;
+    }
+    return oss.str();
+}
+
+std::string FormatBoolDelta(bool before_value, bool after_value) {
+    return std::string(before_value ? "true" : "false") + " -> " + (after_value ? "true" : "false");
+}
+
+std::string FormatReminderSummary(const ReminderItem &item) {
+    std::ostringstream oss;
+    if (!item.title.empty()) {
+        oss << item.title;
+    } else {
+        oss << "(untitled)";
+    }
+    if (item.due_unix_sec > 0) {
+        oss << " @" << item.due_unix_sec;
+    }
+    return oss.str();
+}
+
+std::string BuildEditCommandSummary(const EditCommand &cmd) {
+    std::string label = EditCommandTypeLabel(cmd.type);
+    switch (cmd.type) {
+        case EditCommand::Type::Transform: {
+            const std::string part = cmd.part_id.empty() ? "(part)" : cmd.part_id;
+            return label + ": " + part;
+        }
+        case EditCommand::Type::Timeline: {
+            const std::string ch = cmd.channel_id.empty() ? "(channel)" : cmd.channel_id;
+            return label + ": " + ch;
+        }
+        case EditCommand::Type::Param: {
+            const std::string pid = cmd.param_id.empty() ? "(param)" : cmd.param_id;
+            return label + ": " + pid;
+        }
+        case EditCommand::Type::Inspector: {
+            const std::string part = cmd.part_id.empty() ? "(part)" : cmd.part_id;
+            return label + ": " + part;
+        }
+        case EditCommand::Type::Reminder: {
+            std::ostringstream oss;
+            oss << label;
+            if (cmd.reminder_id != 0) {
+                oss << " #" << cmd.reminder_id;
+            }
+            return oss.str();
+        }
+        default:
+            return label;
+    }
+}
+
+std::string BuildEditCommandDetail(const EditCommand &cmd) {
+    std::ostringstream oss;
+    oss << EditCommandTypeLabel(cmd.type);
+    switch (cmd.type) {
+        case EditCommand::Type::Transform: {
+            oss << "\npart: " << (cmd.part_id.empty() ? "(unknown)" : cmd.part_id);
+            oss << "\npos: " << FormatFloatDelta(cmd.before_pos_x, cmd.after_pos_x, ", ")
+                << FormatFloatDelta(cmd.before_pos_y, cmd.after_pos_y);
+            oss << "\npivot: " << FormatFloatDelta(cmd.before_pivot_x, cmd.after_pivot_x, ", ")
+                << FormatFloatDelta(cmd.before_pivot_y, cmd.after_pivot_y);
+            oss << "\nrot: " << FormatFloatDelta(cmd.before_rot_deg, cmd.after_rot_deg, " deg");
+            oss << "\nscale: " << FormatFloatDelta(cmd.before_scale_x, cmd.after_scale_x, ", ")
+                << FormatFloatDelta(cmd.before_scale_y, cmd.after_scale_y);
+            break;
+        }
+        case EditCommand::Type::Timeline: {
+            oss << "\nchannel: " << (cmd.channel_id.empty() ? "(unknown)" : cmd.channel_id);
+            oss << "\nkeyframes: " << cmd.before_keyframes.size() << " -> " << cmd.after_keyframes.size();
+            oss << "\nselected: " << cmd.before_selected_keyframe_ids.size()
+                << " -> " << cmd.after_selected_keyframe_ids.size();
+            break;
+        }
+        case EditCommand::Type::Param: {
+            oss << "\nparam: " << (cmd.param_id.empty() ? "(unknown)" : cmd.param_id);
+            oss << "\nvalue: " << FormatFloatDelta(cmd.before_param_value, cmd.after_param_value);
+            break;
+        }
+        case EditCommand::Type::Inspector: {
+            oss << "\npart: " << (cmd.part_id.empty() ? "(unknown)" : cmd.part_id);
+            oss << "\nopacity: " << FormatFloatDelta(cmd.before_opacity, cmd.after_opacity);
+            oss << "\ndeformer: " << cmd.before_deformer_type << " -> " << cmd.after_deformer_type;
+            oss << "\nrot weight: " << FormatFloatDelta(cmd.before_rotation_weight, cmd.after_rotation_weight);
+            oss << "\nrot speed: " << FormatFloatDelta(cmd.before_rotation_speed, cmd.after_rotation_speed);
+            oss << "\nwarp weight: " << FormatFloatDelta(cmd.before_warp_weight, cmd.after_warp_weight);
+            break;
+        }
+        case EditCommand::Type::Reminder: {
+            const std::string before_summary = cmd.reminder_had_before ? FormatReminderSummary(cmd.before_reminder) : "(none)";
+            const std::string after_summary = cmd.reminder_had_after ? FormatReminderSummary(cmd.after_reminder) : "(none)";
+            oss << "\nreminder: " << before_summary << " -> " << after_summary;
+            oss << "\ncompleted: " << FormatBoolDelta(cmd.before_reminder.completed, cmd.after_reminder.completed);
+            break;
+        }
+        default:
+            break;
+    }
+    return oss.str();
+}
+
+}  // namespace
+
 EditorPanelState BuildEditorPanelState(const AppRuntime &runtime) {
     EditorPanelState state{};
     state.view.model_loaded = runtime.model_loaded;
     state.view.has_model_params = runtime.model_loaded && !runtime.model.parameters.empty();
     state.view.show_debug_stats = runtime.show_debug_stats;
     state.view.manual_param_mode = runtime.manual_param_mode;
+    state.view.edit_mode = runtime.edit_mode;
+    if (runtime.edit_mode && runtime.manual_param_mode) {
+        state.view.edit_runtime_hint = "编辑态 + 手动参数：将覆盖运行态/动画通道参数";
+    } else if (runtime.manual_param_mode && !runtime.edit_mode) {
+        state.view.edit_runtime_hint = "手动参数开启：运行态参数将被手动输入覆盖";
+    } else if (runtime.edit_mode && !runtime.manual_param_mode) {
+        state.view.edit_runtime_hint = "编辑态：建议开启手动参数后再微调参数";
+    } else {
+        state.view.edit_runtime_hint = "运行态：参数由动画/行为驱动";
+    }
     state.view.hair_spring_enabled = runtime.model.enable_hair_spring;
     state.view.simple_mask_enabled = runtime.model.enable_simple_mask;
     state.view.head_pat_hovering = runtime.interaction_state.head_pat_hovering;
@@ -108,11 +341,42 @@ EditorPanelState BuildEditorPanelState(const AppRuntime &runtime) {
     state.view.feature_face_emotion_enabled = runtime.feature_face_emotion_enabled;
     state.view.feature_asr_enabled = runtime.feature_asr_enabled;
     state.view.feature_plugin_enabled = runtime.feature_plugin_enabled;
+    state.view.pick_lock_filter_enabled = runtime.pick_lock_filter_enabled;
+    state.view.pick_scope_filter_enabled = runtime.pick_scope_filter_enabled;
+    state.view.pick_scope_mode = runtime.pick_scope_mode;
+    state.view.pick_name_filter_enabled = runtime.pick_name_filter_enabled;
+    state.view.pick_name_filter = runtime.pick_name_filter;
+    state.view.pick_cycle_enabled = runtime.pick_cycle_enabled;
+    state.view.pick_cycle_offset = runtime.pick_cycle_offset;
+    state.view.axis_constraint = runtime.axis_constraint;
+    state.view.snap_enabled = runtime.snap_enabled;
+    state.view.snap_grid = runtime.snap_grid;
+    state.view.drag_sensitivity = runtime.editor_drag_sensitivity;
+    state.view.gizmo_sensitivity = runtime.editor_gizmo_sensitivity;
+    state.view.autosave_enabled = runtime.editor_autosave_enabled;
+    state.view.autosave_interval_sec = runtime.editor_autosave_interval_sec;
+    state.view.autosave_remaining_sec = std::max(0.0f, runtime.editor_autosave_interval_sec - runtime.editor_autosave_accum_sec);
+    state.view.autosave_recovery_available = runtime.editor_autosave_recovery_available;
+    state.view.autosave_recovery_prompted = runtime.editor_autosave_recovery_prompted;
+    state.view.autosave_recovery_checked = runtime.editor_autosave_recovery_checked;
+    state.view.autosave_path = runtime.editor_autosave_path;
+    state.view.autosave_last_error = runtime.editor_autosave_last_error;
     state.view.param_group_mode = runtime.param_group_mode;
     state.view.param_search = runtime.param_search;
+    state.view.param_panel_expanded = runtime.editor_param_panel_expanded;
+    state.view.param_quick_expanded = runtime.editor_param_quick_expanded;
+    state.view.param_group_table_expanded = runtime.editor_param_group_table_expanded;
+    state.view.param_batch_bind_expanded = runtime.editor_param_batch_bind_expanded;
 
     if (!state.view.has_model_params) {
         return state;
+    }
+
+    state.view.param_search_hit_count = 0;
+    for (const auto &param : runtime.model.parameters) {
+        if (ParamMatchesSearch(param.id, runtime.param_search)) {
+            state.view.param_search_hit_count += 1;
+        }
     }
 
     const std::vector<ParamGroup> groups = BuildParamGroups(runtime, runtime.param_group_mode, runtime.param_search);
@@ -137,6 +401,18 @@ EditorPanelState BuildEditorPanelState(const AppRuntime &runtime) {
                 option.preview += ", ";
             }
             option.preview += runtime.model.parameters[static_cast<std::size_t>(idx)].id;
+        }
+        option.search_hit = false;
+        if (runtime.param_search[0] != '\0') {
+            for (int idx : group.second) {
+                if (idx < 0 || idx >= static_cast<int>(runtime.model.parameters.size())) {
+                    continue;
+                }
+                if (ParamMatchesSearch(runtime.model.parameters[static_cast<std::size_t>(idx)].id, runtime.param_search)) {
+                    option.search_hit = true;
+                    break;
+                }
+            }
         }
         state.view.group_options.push_back(std::move(option));
     }
@@ -167,20 +443,99 @@ EditorPanelState BuildEditorPanelState(const AppRuntime &runtime) {
             .current_value = param.value(),
             .target_value = param.target(),
             .selected = runtime.selected_param_index == param_idx,
+            .search_hit = ParamMatchesSearch(model_param.id, runtime.param_search),
+        });
+    }
+
+    state.view.quick_param_items.clear();
+    state.view.quick_param_items.reserve(6);
+    if (runtime.selected_param_index >= 0 &&
+        runtime.selected_param_index < static_cast<int>(runtime.model.parameters.size())) {
+        const auto &model_param = runtime.model.parameters[static_cast<std::size_t>(runtime.selected_param_index)];
+        const auto &param = model_param.param;
+        const auto &spec = param.spec();
+        state.view.quick_param_items.push_back(EditorQuickParamItem{
+            .param_index = runtime.selected_param_index,
+            .label = model_param.id,
+            .min_value = spec.min_value,
+            .max_value = spec.max_value,
+            .target_value = param.target(),
+            .selected = true,
+            .search_hit = ParamMatchesSearch(model_param.id, runtime.param_search),
+        });
+    }
+    for (const auto &row : state.view.selected_group_param_rows) {
+        if (static_cast<int>(state.view.quick_param_items.size()) >= 6) {
+            break;
+        }
+        if (row.param_index == runtime.selected_param_index) {
+            continue;
+        }
+        state.view.quick_param_items.push_back(EditorQuickParamItem{
+            .param_index = row.param_index,
+            .label = row.param_id,
+            .min_value = row.min_value,
+            .max_value = row.max_value,
+            .target_value = row.target_value,
+            .selected = row.selected,
+            .search_hit = row.search_hit,
         });
     }
 
     state.view.batch_bind.bind_prop_type = std::clamp(runtime.batch_bind_prop_type, 0, 5);
+    state.view.batch_bind.bind_template_index = std::max(0, runtime.batch_bind_template_index);
     state.view.batch_bind.bind_in_min = runtime.batch_bind_in_min;
     state.view.batch_bind.bind_in_max = runtime.batch_bind_in_max;
     state.view.batch_bind.bind_out_min = runtime.batch_bind_out_min;
     state.view.batch_bind.bind_out_max = runtime.batch_bind_out_max;
+    state.view.batch_bind.templates = BuildBatchBindTemplates();
+    state.view.batch_bind.validation = ValidateBatchBind(state.view.selected_group_param_rows,
+                                                        static_cast<BindingType>(state.view.batch_bind.bind_prop_type),
+                                                        state.view.batch_bind.bind_in_min,
+                                                        state.view.batch_bind.bind_in_max,
+                                                        state.view.batch_bind.bind_out_min,
+                                                        state.view.batch_bind.bind_out_max);
     state.view.batch_bind.can_apply_to_selected_part = runtime.selected_part_index >= 0 &&
                                                        runtime.selected_part_index < static_cast<int>(runtime.model.parts.size()) &&
                                                        !selected_group.param_indices.empty();
     state.view.batch_bind.can_apply_to_all_parts = !runtime.model.parts.empty() && !selected_group.param_indices.empty();
     if (state.view.batch_bind.can_apply_to_selected_part) {
         state.view.batch_bind.selected_part_label = runtime.model.parts[static_cast<std::size_t>(runtime.selected_part_index)].id;
+    }
+
+    const int undo_count = static_cast<int>(runtime.undo_stack.size());
+    const int redo_count = static_cast<int>(runtime.redo_stack.size());
+    int list_index = 0;
+    state.view.history_entries.reserve(runtime.undo_stack.size() + runtime.redo_stack.size());
+    for (int i = undo_count - 1; i >= 0; --i) {
+        const auto &cmd = runtime.undo_stack[static_cast<std::size_t>(i)];
+        EditorHistoryEntry entry{};
+        entry.index = list_index++;
+        entry.target_undo_size = i;
+        entry.label = BuildEditCommandSummary(cmd);
+        entry.detail = BuildEditCommandDetail(cmd);
+        entry.applied = true;
+        state.view.history_entries.push_back(std::move(entry));
+    }
+
+    for (int i = redo_count - 1; i >= 0; --i) {
+        const auto &cmd = runtime.redo_stack[static_cast<std::size_t>(i)];
+        EditorHistoryEntry entry{};
+        entry.index = list_index++;
+        entry.target_undo_size = undo_count + (redo_count - i);
+        entry.label = BuildEditCommandSummary(cmd);
+        entry.detail = BuildEditCommandDetail(cmd);
+        entry.applied = false;
+        state.view.history_entries.push_back(std::move(entry));
+    }
+
+    if (!state.view.history_entries.empty()) {
+        const int max_index = static_cast<int>(state.view.history_entries.size()) - 1;
+        state.view.history_selected_index = std::clamp(runtime.editor_history_selected_index, 0, max_index);
+        state.view.history_detail = state.view.history_entries[static_cast<std::size_t>(state.view.history_selected_index)].detail;
+    } else {
+        state.view.history_selected_index = -1;
+        state.view.history_detail.clear();
     }
     return state;
 }

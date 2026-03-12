@@ -145,7 +145,7 @@ bool AppLifecycleInitImpl(AppLifecycleContext &ctx) {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    ImGui::StyleColorsDark();
+    ImGui::StyleColorsLight();
 
     ImGuiIO &io = ImGui::GetIO();
 #if defined(IMGUI_HAS_DOCK)
@@ -182,12 +182,93 @@ bool AppLifecycleInitImpl(AppLifecycleContext &ctx) {
 
     ImGuiStyle &style = ImGui::GetStyle();
     style.Alpha = 1.0f;
-    style.DisabledAlpha = 0.72f;
-    style.Colors[ImGuiCol_Text] = ImVec4(0.96f, 0.96f, 0.96f, 1.0f);
-    style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.62f, 0.62f, 0.62f, 1.0f);
-    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.08f, 0.08f, 0.08f, 0.94f);
-    style.Colors[ImGuiCol_ChildBg] = ImVec4(0.10f, 0.10f, 0.10f, 0.70f);
-    style.Colors[ImGuiCol_PopupBg] = ImVec4(0.10f, 0.10f, 0.10f, 0.96f);
+    style.DisabledAlpha = 0.45f;
+    style.WindowRounding = 10.0f;
+    style.ChildRounding = 10.0f;
+    style.FrameRounding = 8.0f;
+    style.GrabRounding = 8.0f;
+    style.PopupRounding = 10.0f;
+    style.ScrollbarRounding = 12.0f;
+    style.TabRounding = 8.0f;
+    style.WindowBorderSize = 1.0f;
+    style.FrameBorderSize = 1.0f;
+    style.PopupBorderSize = 1.0f;
+
+    auto to_color = [](float r, float g, float b, float a = 1.0f) {
+        return ImVec4(r / 255.0f, g / 255.0f, b / 255.0f, a);
+    };
+
+    const ImVec4 text_primary = to_color(28.0f, 34.0f, 40.0f);
+    const ImVec4 text_muted = to_color(124.0f, 132.0f, 140.0f);
+    const ImVec4 panel_bg = to_color(245.0f, 247.0f, 250.0f);
+    const ImVec4 window_bg = to_color(250.0f, 251.0f, 253.0f);
+    const ImVec4 border_soft = to_color(205.0f, 212.0f, 220.0f);
+    const ImVec4 border_emphasis = to_color(172.0f, 182.0f, 196.0f);
+    const ImVec4 accent_soft = to_color(154.0f, 178.0f, 204.0f);
+    const ImVec4 accent_strong = to_color(122.0f, 150.0f, 184.0f);
+    const ImVec4 accent_hover = to_color(182.0f, 202.0f, 224.0f);
+    const ImVec4 accent_active = to_color(108.0f, 136.0f, 172.0f);
+    const ImVec4 hover_bg = to_color(233.0f, 239.0f, 247.0f);
+    const ImVec4 active_bg = to_color(220.0f, 231.0f, 244.0f);
+
+    style.Colors[ImGuiCol_Text] = text_primary;
+    style.Colors[ImGuiCol_TextDisabled] = text_muted;
+    style.Colors[ImGuiCol_WindowBg] = window_bg;
+    style.Colors[ImGuiCol_ChildBg] = window_bg;
+    style.Colors[ImGuiCol_PopupBg] = panel_bg;
+    style.Colors[ImGuiCol_Border] = border_soft;
+    style.Colors[ImGuiCol_BorderShadow] = to_color(0.0f, 0.0f, 0.0f, 0.0f);
+
+    style.Colors[ImGuiCol_FrameBg] = panel_bg;
+    style.Colors[ImGuiCol_FrameBgHovered] = hover_bg;
+    style.Colors[ImGuiCol_FrameBgActive] = active_bg;
+
+    style.Colors[ImGuiCol_TitleBg] = panel_bg;
+    style.Colors[ImGuiCol_TitleBgActive] = hover_bg;
+    style.Colors[ImGuiCol_TitleBgCollapsed] = panel_bg;
+
+    style.Colors[ImGuiCol_MenuBarBg] = window_bg;
+
+    style.Colors[ImGuiCol_ScrollbarBg] = window_bg;
+    style.Colors[ImGuiCol_ScrollbarGrab] = accent_soft;
+    style.Colors[ImGuiCol_ScrollbarGrabHovered] = accent_hover;
+    style.Colors[ImGuiCol_ScrollbarGrabActive] = accent_active;
+
+    style.Colors[ImGuiCol_CheckMark] = accent_strong;
+    style.Colors[ImGuiCol_SliderGrab] = accent_soft;
+    style.Colors[ImGuiCol_SliderGrabActive] = accent_strong;
+
+    style.Colors[ImGuiCol_Button] = panel_bg;
+    style.Colors[ImGuiCol_ButtonHovered] = hover_bg;
+    style.Colors[ImGuiCol_ButtonActive] = active_bg;
+
+    style.Colors[ImGuiCol_Header] = hover_bg;
+    style.Colors[ImGuiCol_HeaderHovered] = hover_bg;
+    style.Colors[ImGuiCol_HeaderActive] = active_bg;
+
+    style.Colors[ImGuiCol_Separator] = border_soft;
+    style.Colors[ImGuiCol_SeparatorHovered] = accent_soft;
+    style.Colors[ImGuiCol_SeparatorActive] = accent_strong;
+
+    style.Colors[ImGuiCol_ResizeGrip] = accent_soft;
+    style.Colors[ImGuiCol_ResizeGripHovered] = accent_hover;
+    style.Colors[ImGuiCol_ResizeGripActive] = accent_active;
+
+    style.Colors[ImGuiCol_Tab] = panel_bg;
+    style.Colors[ImGuiCol_TabHovered] = hover_bg;
+    style.Colors[ImGuiCol_TabActive] = active_bg;
+    style.Colors[ImGuiCol_TabUnfocused] = panel_bg;
+    style.Colors[ImGuiCol_TabUnfocusedActive] = hover_bg;
+
+    style.Colors[ImGuiCol_TableHeaderBg] = panel_bg;
+    style.Colors[ImGuiCol_TableBorderStrong] = border_emphasis;
+    style.Colors[ImGuiCol_TableBorderLight] = border_soft;
+    style.Colors[ImGuiCol_TableRowBg] = to_color(0.0f, 0.0f, 0.0f, 0.0f);
+    style.Colors[ImGuiCol_TableRowBgAlt] = panel_bg;
+
+    style.Colors[ImGuiCol_TextSelectedBg] = accent_hover;
+    style.Colors[ImGuiCol_DragDropTarget] = accent_strong;
+    style.Colors[ImGuiCol_NavHighlight] = accent_soft;
 
     ImGui_ImplSDL3_InitForSDLRenderer(g_runtime.window, g_runtime.renderer);
     ImGui_ImplSDLRenderer3_Init(g_runtime.renderer);
@@ -264,20 +345,20 @@ bool AppLifecycleBootstrapImpl(AppLifecycleContext &ctx) {
     {
         std::string perception_err;
         const auto scene_model_candidates = ResourceLocator::BuildCandidatePairs(
-            "assets/mobileclip_image.onnx",
-            "assets/mobileclip_labels.json");
+            "assets/default_plugins/mobileclip/resources/mobileclip_image.onnx",
+            "assets/default_plugins/mobileclip/resources/mobileclip_labels.json");
         const std::vector<std::tuple<std::string, std::string, std::string>> ocr_relative_paths = {
-            {"assets/PP-OCRv5_server_det_infer.onnx",
-             "assets/PP-OCRv5_server_rec_infer.onnx",
-             "assets/ocr/ppocr_keys.txt"},
-            {"assets/PP-OCRv5_server_det_infer.onnx",
-             "assets/PP-OCRv5_server_rec_infer.onnx",
-             "assets/ppocr_keys.txt"},
+            {"assets/default_plugins/ocr/resources/PP-OCRv5_server_det_infer.onnx",
+             "assets/default_plugins/ocr/resources/PP-OCRv5_server_rec_infer.onnx",
+             "assets/default_plugins/ocr/resources/ocr/ppocr_keys.txt"},
+            {"assets/default_plugins/ocr/resources/PP-OCRv5_server_det_infer.onnx",
+             "assets/default_plugins/ocr/resources/PP-OCRv5_server_rec_infer.onnx",
+             "assets/default_plugins/ocr/resources/ppocr_keys.txt"},
         };
         const auto ocr_candidates = BuildOcrCandidateTriples(ocr_relative_paths);
         const auto facemesh_candidates = ResourceLocator::BuildCandidatePairs(
-            "assets/facemesh.onnx",
-            "assets/facemesh.labels.json");
+            "assets/default_plugins/facemesh/resources/facemesh.onnx",
+            "assets/default_plugins/facemesh/resources/facemesh.labels.json");
         const bool ok = g_runtime.perception_pipeline.Init(g_runtime.perception_state,
                                             scene_model_candidates,
                                             ocr_candidates,
@@ -293,7 +374,7 @@ bool AppLifecycleBootstrapImpl(AppLifecycleContext &ctx) {
     }
 
     {
-        std::unique_ptr<IAsrProvider> offline = std::make_unique<OfflineAsrProvider>("assets/sense-voice-encoder-int8.onnx");
+        std::unique_ptr<IAsrProvider> offline = std::make_unique<OfflineAsrProvider>("assets/default_plugins/asr/resources/sense-voice-encoder-int8.onnx");
         std::unique_ptr<IAsrProvider> cloud = std::make_unique<CloudAsrProvider>("https://api.openai.com/v1/audio/transcriptions", "YOUR_API_KEY");
         HybridAsrConfig asr_cfg{};
         asr_cfg.cloud_fallback_enabled = false;

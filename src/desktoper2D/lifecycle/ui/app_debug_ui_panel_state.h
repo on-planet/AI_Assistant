@@ -90,6 +90,7 @@ struct EditorParamGroupOption {
     std::string label;
     std::string preview;
     std::vector<int> param_indices;
+    bool search_hit = false;
 };
 
 struct EditorParamRowState {
@@ -101,10 +102,40 @@ struct EditorParamRowState {
     float current_value = 0.0f;
     float target_value = 0.0f;
     bool selected = false;
+    bool search_hit = false;
+};
+
+struct EditorQuickParamItem {
+    int param_index = -1;
+    std::string label;
+    float min_value = 0.0f;
+    float max_value = 0.0f;
+    float target_value = 0.0f;
+    bool selected = false;
+    bool search_hit = false;
+};
+
+struct EditorBatchBindTemplateItem {
+    std::string label;
+    BindingType bind_prop_type = BindingType::PosX;
+    float bind_in_min = -1.0f;
+    float bind_in_max = 1.0f;
+    float bind_out_min = -1.0f;
+    float bind_out_max = 1.0f;
+};
+
+struct EditorBatchBindValidation {
+    bool valid = true;
+    bool in_min_max_ok = true;
+    bool out_min_max_ok = true;
+    bool in_range_ok = true;
+    bool out_range_ok = true;
+    std::string message;
 };
 
 struct EditorBatchBindState {
     int bind_prop_type = 0;
+    int bind_template_index = 0;
     float bind_in_min = -1.0f;
     float bind_in_max = 1.0f;
     float bind_out_min = -1.0f;
@@ -112,6 +143,16 @@ struct EditorBatchBindState {
     bool can_apply_to_selected_part = false;
     bool can_apply_to_all_parts = false;
     std::string selected_part_label;
+    std::vector<EditorBatchBindTemplateItem> templates;
+    EditorBatchBindValidation validation;
+};
+
+struct EditorHistoryEntry {
+    int index = -1;
+    int target_undo_size = -1;
+    std::string label;
+    std::string detail;
+    bool applied = false;
 };
 
 struct EditorPanelReadonlyState {
@@ -120,6 +161,8 @@ struct EditorPanelReadonlyState {
     bool has_param_groups = false;
     bool show_debug_stats = false;
     bool manual_param_mode = false;
+    bool edit_mode = false;
+    std::string edit_runtime_hint;
     bool hair_spring_enabled = false;
     bool simple_mask_enabled = false;
     bool head_pat_hovering = false;
@@ -130,8 +173,34 @@ struct EditorPanelReadonlyState {
     bool feature_face_emotion_enabled = false;
     bool feature_asr_enabled = false;
     bool feature_plugin_enabled = true;
+    bool pick_lock_filter_enabled = true;
+    bool pick_scope_filter_enabled = false;
+    int pick_scope_mode = 0;
+    bool pick_name_filter_enabled = false;
+    std::string pick_name_filter;
+    bool pick_cycle_enabled = false;
+    int pick_cycle_offset = 0;
+    AxisConstraint axis_constraint = AxisConstraint::None;
+    bool snap_enabled = false;
+    float snap_grid = 10.0f;
+    float drag_sensitivity = 1.0f;
+    float gizmo_sensitivity = 1.0f;
+    bool autosave_enabled = true;
+    float autosave_interval_sec = 120.0f;
+    float autosave_remaining_sec = 0.0f;
+    bool autosave_recovery_available = false;
+    bool autosave_recovery_prompted = false;
+    bool autosave_recovery_checked = false;
+    std::string autosave_path;
+    std::string autosave_last_error;
     int param_group_mode = 0;
     std::string param_search;
+    int param_search_hit_count = 0;
+    bool param_panel_expanded = true;
+    bool param_quick_expanded = true;
+    bool param_group_table_expanded = true;
+    bool param_batch_bind_expanded = true;
+    std::vector<EditorQuickParamItem> quick_param_items;
     int selected_param_group_index = 0;
     int selected_group_param_count = 0;
     std::string selected_group_label;
@@ -140,6 +209,9 @@ struct EditorPanelReadonlyState {
     std::vector<int> selected_group_param_indices;
     std::vector<EditorParamRowState> selected_group_param_rows;
     EditorBatchBindState batch_bind;
+    std::vector<EditorHistoryEntry> history_entries;
+    int history_selected_index = -1;
+    std::string history_detail;
 };
 
 struct EditorPanelState {
@@ -156,23 +228,50 @@ enum class EditorPanelActionType {
     SetFeatureFaceEmotionEnabled,
     SetFeatureAsrEnabled,
     SetFeaturePluginEnabled,
+    SetPickLockFilterEnabled,
+    SetPickScopeFilterEnabled,
+    SetPickScopeMode,
+    SetPickNameFilterEnabled,
+    SetPickNameFilterText,
+    SetPickCycleEnabled,
+    ResetPickCycleOffset,
+    SetAxisConstraint,
+    SetSnapEnabled,
+    SetSnapGrid,
+    SetDragSensitivity,
+    SetGizmoSensitivity,
+    SetAutosaveEnabled,
+    SetAutosaveIntervalSec,
+    RecoverFromAutosave,
+    DiscardAutosave,
     SetParamGroupMode,
+    SelectHistoryIndex,
+    JumpToHistoryIndex,
     SetParamSearch,
+    ToggleParamPanelExpanded,
+    ToggleParamQuickExpanded,
+    ToggleParamGroupTableExpanded,
+    ToggleParamBatchBindExpanded,
     SelectParamGroup,
     SelectParam,
     SetParamTargetValue,
     SetBatchBindPropType,
+    SetBatchBindTemplateIndex,
     SetBatchBindInMin,
     SetBatchBindInMax,
     SetBatchBindOutMin,
     SetBatchBindOutMax,
     ApplyBatchBindToSelectedPart,
     ApplyBatchBindToAllParts,
+    SetGroupTargetsToDefault,
+    SetGroupTargetsToMin,
+    SetGroupTargetsToMax,
 };
 
 struct EditorPanelAction {
     EditorPanelActionType type = EditorPanelActionType::SetShowDebugStats;
     int int_value = 0;
+    int int_value2 = 0;
     bool bool_value = false;
     float float_value = 0.0f;
     std::string text_value;

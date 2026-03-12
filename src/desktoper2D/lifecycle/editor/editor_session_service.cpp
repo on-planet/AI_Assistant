@@ -23,11 +23,14 @@ std::string LexicallyNormalUtf8(const std::filesystem::path &path) {
     return path.lexically_normal().generic_string();
 }
 
+std::filesystem::path BuildProjectPath(const AppRuntime &runtime) {
+    return runtime.current_project_path.empty() ? std::filesystem::path("assets/project.json")
+                                                : std::filesystem::path(runtime.current_project_path);
+}
+
 std::string BuildProjectSaveAsPath(const AppRuntime &runtime) {
     namespace fs = std::filesystem;
-    fs::path current = runtime.current_project_path.empty()
-                           ? fs::path("assets/project.json")
-                           : fs::path(runtime.current_project_path);
+    fs::path current = BuildProjectPath(runtime);
 
     const fs::path dir = ParentPathOrDot(current);
     const std::string stem = current.stem().empty() ? std::string("project") : current.stem().string();
@@ -46,6 +49,16 @@ std::string BuildProjectSaveAsPath(const AppRuntime &runtime) {
     }
 
     return LexicallyNormalUtf8((dir / (stem + "_copy_overflow" + ext)).lexically_normal());
+}
+
+std::string BuildAutosavePath(const AppRuntime &runtime) {
+    namespace fs = std::filesystem;
+    fs::path current = BuildProjectPath(runtime);
+    const fs::path dir = ParentPathOrDot(current);
+    const std::string stem = current.stem().empty() ? std::string("project") : current.stem().string();
+    const std::string ext = current.has_extension() ? current.extension().string() : std::string(".json");
+    fs::path autosave = (dir / (stem + ".autosave" + ext)).lexically_normal();
+    return LexicallyNormalUtf8(autosave);
 }
 
 }  // namespace
@@ -181,7 +194,9 @@ bool SaveEditorProjectJsonToDisk(AppRuntime &runtime, const std::string &project
     workspace_windows.emplace("timeline", JsonValue::makeBool(runtime.show_timeline_window));
     workspace_windows.emplace("perception", JsonValue::makeBool(runtime.show_perception_window));
     workspace_windows.emplace("mapping", JsonValue::makeBool(runtime.show_mapping_window));
-    workspace_windows.emplace("asrChat", JsonValue::makeBool(runtime.show_asr_chat_window));
+    workspace_windows.emplace("asr", JsonValue::makeBool(runtime.show_asr_chat_window));
+    workspace_windows.emplace("pluginWorker", JsonValue::makeBool(runtime.show_plugin_worker_window));
+    workspace_windows.emplace("chat", JsonValue::makeBool(runtime.show_chat_window));
     workspace_windows.emplace("errors", JsonValue::makeBool(runtime.show_error_window));
     workspace_windows.emplace("inspector", JsonValue::makeBool(runtime.show_inspector_window));
     workspace_windows.emplace("reminder", JsonValue::makeBool(runtime.show_reminder_window));
@@ -344,7 +359,9 @@ bool LoadEditorProjectJsonFromDisk(AppRuntime &runtime,
         runtime.show_timeline_window = load_window_visible(workspace_windows, "timeline", runtime.show_timeline_window);
         runtime.show_perception_window = load_window_visible(workspace_windows, "perception", runtime.show_perception_window);
         runtime.show_mapping_window = load_window_visible(workspace_windows, "mapping", runtime.show_mapping_window);
-        runtime.show_asr_chat_window = load_window_visible(workspace_windows, "asrChat", runtime.show_asr_chat_window);
+        runtime.show_asr_chat_window = load_window_visible(workspace_windows, "asr", runtime.show_asr_chat_window);
+        runtime.show_plugin_worker_window = load_window_visible(workspace_windows, "pluginWorker", runtime.show_plugin_worker_window);
+        runtime.show_chat_window = load_window_visible(workspace_windows, "chat", runtime.show_chat_window);
         runtime.show_error_window = load_window_visible(workspace_windows, "errors", runtime.show_error_window);
         runtime.show_inspector_window = load_window_visible(workspace_windows, "inspector", runtime.show_inspector_window);
         runtime.show_reminder_window = load_window_visible(workspace_windows, "reminder", runtime.show_reminder_window);
@@ -363,6 +380,96 @@ bool LoadEditorProjectJsonFromDisk(AppRuntime &runtime,
     runtime.model.animation_channels_enabled = !runtime.manual_param_mode;
     runtime.current_project_path = project_path;
     return true;
+}
+
+bool SaveEditorAutosaveProject(AppRuntime &runtime, std::string *out_error) {
+    if (out_error) out_error->clear();
+    if (!runtime.model_loaded) {
+        if (out_error) *out_error = "model not loaded";
+        runtime.editor_autosave_last_error = "model not loaded";
+        return false;
+    }
+
+    const std::string autosave_path = BuildAutosavePath(runtime);
+    runtime.editor_autosave_path = autosave_path;
+
+    std::string err;
+    if (!SaveEditorProjectJsonToDisk(runtime, autosave_path, &err)) {
+        if (out_error) *out_error = err;
+        runtime.editor_autosave_last_error = err;
+        return false;
+    }
+
+    runtime.editor_autosave_last_error.clear();
+    runtime.editor_autosave_recovery_available = true;
+    return true;
+}
+
+bool LoadEditorAutosaveProject(AppRuntime &runtime, std::string *out_error) {
+    if (out_error) out_error->clear();
+    const std::string autosave_path = BuildAutosavePath(runtime);
+    const std::string original_path = runtime.current_project_path;
+    std::string err;
+
+    if (!LoadEditorProjectJsonFromDisk(runtime, runtime.renderer, autosave_path, &err)) {
+        if (out_error) *out_error = err;
+        runtime.editor_autosave_last_error = err;
+        return false;
+    }
+
+    runtime.current_project_path = original_path.empty() ? "assets/project.json" : original_path;
+    runtime.editor_project_dirty = true;
+    runtime.editor_autosave_path = autosave_path;
+    runtime.editor_autosave_last_error.clear();
+    runtime.editor_autosave_recovery_available = true;
+    return true;
+}
+
+bool ClearEditorAutosaveProject(AppRuntime &runtime, std::string *out_error) {
+    if (out_error) out_error->clear();
+    const std::string autosave_path = BuildAutosavePath(runtime);
+    runtime.editor_autosave_path = autosave_path;
+
+    std::error_code ec;
+    const bool removed = std::filesystem::remove(autosave_path, ec);
+    if (ec) {
+        if (out_error) *out_error = ec.message();
+        runtime.editor_autosave_last_error = ec.message();
+        return false;
+    }
+
+    if (!removed) {
+        std::error_code exist_ec;
+        if (std::filesystem::exists(autosave_path, exist_ec)) {
+            if (exist_ec && out_error) {
+                *out_error = exist_ec.message();
+                runtime.editor_autosave_last_error = exist_ec.message();
+                return false;
+            }
+        }
+    }
+
+    runtime.editor_autosave_last_error.clear();
+    runtime.editor_autosave_recovery_available = false;
+    return true;
+}
+
+void RefreshEditorAutosaveState(AppRuntime &runtime) {
+    const std::string autosave_path = BuildAutosavePath(runtime);
+    runtime.editor_autosave_path = autosave_path;
+
+    std::error_code ec;
+    const bool exists = std::filesystem::exists(autosave_path, ec);
+    if (ec) {
+        runtime.editor_autosave_last_error = ec.message();
+        runtime.editor_autosave_recovery_available = false;
+        return;
+    }
+
+    runtime.editor_autosave_last_error.clear();
+    runtime.editor_autosave_recovery_available = exists;
+    runtime.editor_autosave_recovery_prompted = false;
+    runtime.editor_autosave_recovery_checked = true;
 }
 
 void SaveEditedModelJsonToDisk(AppRuntime &runtime) {
@@ -391,6 +498,9 @@ void SaveEditorProjectToDisk(AppRuntime &runtime) {
     std::string err;
     if (SaveEditorProjectJsonToDisk(runtime, path, &err)) {
         runtime.current_project_path = path;
+        runtime.editor_project_dirty = false;
+        ClearEditorAutosaveProject(runtime, nullptr);
+        RefreshEditorAutosaveState(runtime);
         runtime.editor_status = "saved project: " + path;
         runtime.editor_status_ttl = 2.5f;
     } else {
@@ -404,6 +514,9 @@ void SaveEditorProjectAsToDisk(AppRuntime &runtime) {
     std::string err;
     if (SaveEditorProjectJsonToDisk(runtime, path, &err)) {
         runtime.current_project_path = path;
+        runtime.editor_project_dirty = false;
+        ClearEditorAutosaveProject(runtime, nullptr);
+        RefreshEditorAutosaveState(runtime);
         runtime.editor_status = "saved project as: " + path;
         runtime.editor_status_ttl = 2.5f;
     } else {
@@ -416,6 +529,8 @@ void LoadEditorProjectFromDisk(AppRuntime &runtime) {
     const std::string path = runtime.current_project_path.empty() ? "assets/project.json" : runtime.current_project_path;
     std::string err;
     if (LoadEditorProjectJsonFromDisk(runtime, runtime.renderer, path, &err)) {
+        runtime.editor_project_dirty = false;
+        RefreshEditorAutosaveState(runtime);
         runtime.editor_status = "loaded project: " + path;
         runtime.editor_status_ttl = 2.5f;
     } else {

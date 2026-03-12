@@ -3,6 +3,8 @@
 
 #include <SDL3/SDL_stdinc.h>
 
+#include <algorithm>
+#include <cfloat>
 #include <functional>
 #include <vector>
 
@@ -38,77 +40,75 @@ void RenderRuntimeOpsActions(AppRuntime &runtime) {
     runtime_ops_status = runtime.runtime_ops_status;
     const UiCommandBridge bridge = BuildUiCommandBridge(runtime);
     OpsReadModel model = BuildOpsReadModel(runtime, runtime_ops_status);
-    ImGui::BeginChild("ops_actions_child", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiWindowFlags_NoScrollbar);
 
-        std::vector<RuntimeErrorRow> rows = BuildRuntimeErrorRows(runtime);
-        std::string all_errors;
-        all_errors.reserve(1024);
-        for (const auto &row : rows) {
-            all_errors += row.label;
-            all_errors += " | count=";
-            all_errors += std::to_string(static_cast<long long>(row.info->count));
-            all_errors += " | degraded=";
-            all_errors += std::to_string(static_cast<long long>(row.info->degraded_count));
-            all_errors += " | recent_seq=";
-            all_errors += std::to_string(row.recent_seq);
-            all_errors += " | ";
-            all_errors += RuntimeErrorDomainName(row.info->domain);
-            all_errors += ".";
-            all_errors += RuntimeErrorCodeName(row.info->code);
-            if (!row.info->detail.empty()) {
-                all_errors += " | detail=";
-                all_errors += row.info->detail;
-            }
-            all_errors += "\n";
+    std::vector<RuntimeErrorRow> rows = BuildRuntimeErrorRows(runtime);
+    std::string all_errors;
+    all_errors.reserve(1024);
+    for (const auto &row : rows) {
+        all_errors += row.label;
+        all_errors += " | count=";
+        all_errors += std::to_string(static_cast<long long>(row.info->count));
+        all_errors += " | degraded=";
+        all_errors += std::to_string(static_cast<long long>(row.info->degraded_count));
+        all_errors += " | recent_seq=";
+        all_errors += std::to_string(row.recent_seq);
+        all_errors += " | ";
+        all_errors += RuntimeErrorDomainName(row.info->domain);
+        all_errors += ".";
+        all_errors += RuntimeErrorCodeName(row.info->code);
+        if (!row.info->detail.empty()) {
+            all_errors += " | detail=";
+            all_errors += row.info->detail;
         }
+        all_errors += "\n";
+    }
 
-        struct OpsButtonSpec {
-            const char *label;
-            std::function<void()> on_click;
-        };
+    struct OpsButtonSpec {
+        const char *label;
+        std::function<void()> on_click;
+    };
 
-        const OpsButtonSpec buttons[] = {
-            {"Reset Perception State", [&]() {
-                 ApplyOpsAction(bridge, OpsAction{.type = OpsActionType::ResetPerceptionState}, runtime_ops_status);
-             }},
-            {"Copy All Errors", [&]() {
-                 ImGui::SetClipboardText(all_errors.c_str());
-             }},
-            {"Reset Error Counters", [&]() {
-                 ApplyOpsAction(bridge, OpsAction{.type = OpsActionType::ResetErrorCounters}, runtime_ops_status);
-             }},
-            {"Export Runtime Snapshot (json)", [&]() {
-                 ApplyOpsAction(bridge, OpsAction{.type = OpsActionType::ExportRuntimeSnapshot}, runtime_ops_status);
-             }},
-            {"Single-step Sampling", [&]() {
-                 ApplyOpsAction(bridge, OpsAction{.type = OpsActionType::TriggerSingleStepSampling}, runtime_ops_status);
-             }},
-        };
+    const OpsButtonSpec buttons[] = {
+        {"Reset Perception State", [&]() {
+             ApplyOpsAction(bridge, OpsAction{.type = OpsActionType::ResetPerceptionState}, runtime_ops_status);
+         }},
+        {"Copy All Errors", [&]() {
+             ImGui::SetClipboardText(all_errors.c_str());
+         }},
+        {"Reset Error Counters", [&]() {
+             ApplyOpsAction(bridge, OpsAction{.type = OpsActionType::ResetErrorCounters}, runtime_ops_status);
+         }},
+        {"Export Runtime Snapshot (json)", [&]() {
+             ApplyOpsAction(bridge, OpsAction{.type = OpsActionType::ExportRuntimeSnapshot}, runtime_ops_status);
+         }},
+        {"Single-step Sampling", [&]() {
+             ApplyOpsAction(bridge, OpsAction{.type = OpsActionType::TriggerSingleStepSampling}, runtime_ops_status);
+         }},
+    };
 
-        const float avail_width = ImGui::GetContentRegionAvail().x;
-        const ImVec2 padding = ImGui::GetStyle().FramePadding;
-        const float spacing = ImGui::GetStyle().ItemSpacing.x;
-        float line_width = 0.0f;
+    const float avail_width = ImGui::GetContentRegionAvail().x;
+    const ImVec2 padding = ImGui::GetStyle().FramePadding;
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    float line_width = 0.0f;
 
-        for (const auto &btn : buttons) {
-            const ImVec2 text_size = ImGui::CalcTextSize(btn.label);
-            const float button_width = text_size.x + padding.x * 2.0f;
-            const float next_width = (line_width == 0.0f) ? button_width : (line_width + spacing + button_width);
-            if (next_width > avail_width && line_width > 0.0f) {
-                line_width = 0.0f;
-            }
-            if (line_width > 0.0f) {
-                ImGui::SameLine();
-            }
-            if (ImGui::Button(btn.label)) {
-                btn.on_click();
-            }
-            line_width = (line_width == 0.0f) ? button_width : (line_width + spacing + button_width);
+    for (const auto &btn : buttons) {
+        const ImVec2 text_size = ImGui::CalcTextSize(btn.label);
+        const float button_width = text_size.x + padding.x * 2.0f;
+        const float next_width = (line_width == 0.0f) ? button_width : (line_width + spacing + button_width);
+        if (next_width > avail_width && line_width > 0.0f) {
+            line_width = 0.0f;
         }
+        if (line_width > 0.0f) {
+            ImGui::SameLine();
+        }
+        if (ImGui::Button(btn.label)) {
+            btn.on_click();
+        }
+        line_width = (line_width == 0.0f) ? button_width : (line_width + spacing + button_width);
+    }
 
-        model.runtime_ops_status = runtime_ops_status;
-        ImGui::TextWrapped("%s", model.runtime_ops_status.empty() ? "" : model.runtime_ops_status.c_str());
-    ImGui::EndChild();
+    model.runtime_ops_status = runtime_ops_status;
+    ImGui::TextWrapped("%s", model.runtime_ops_status.empty() ? "" : model.runtime_ops_status.c_str());
 }
 
 void RenderRuntimePluginManagement(AppRuntime &runtime) {
@@ -184,6 +184,27 @@ void RenderRuntimePluginManagement(AppRuntime &runtime) {
             runtime.plugin_selected_entry_index < static_cast<int>(runtime.plugin_config_entries.size())) {
             const auto &entry = runtime.plugin_config_entries[static_cast<std::size_t>(runtime.plugin_selected_entry_index)];
             SDL_strlcpy(runtime.plugin_name_input, entry.name.c_str(), sizeof(runtime.plugin_name_input));
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Delete Selected")) {
+        if (runtime.plugin_selected_entry_index >= 0 &&
+            runtime.plugin_selected_entry_index < static_cast<int>(runtime.plugin_config_entries.size())) {
+            const auto &entry = runtime.plugin_config_entries[static_cast<std::size_t>(runtime.plugin_selected_entry_index)];
+            std::string err;
+            const bool ok = DeletePluginConfig(runtime, entry.config_path, &err);
+            if (ok) {
+                runtime.plugin_delete_status = "plugin deleted";
+                runtime.plugin_delete_error.clear();
+                runtime.plugin_switch_status.clear();
+                runtime.plugin_switch_error.clear();
+            } else {
+                runtime.plugin_delete_status.clear();
+                runtime.plugin_delete_error = err.empty() ? "plugin delete failed" : err;
+            }
+        } else {
+            runtime.plugin_delete_status.clear();
+            runtime.plugin_delete_error = "no plugin selected";
         }
     }
 

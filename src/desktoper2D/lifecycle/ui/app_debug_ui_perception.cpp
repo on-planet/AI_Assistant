@@ -19,7 +19,6 @@ void RenderRuntimePerceptionPanel(AppRuntime &runtime) {
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Scene Error: %s", runtime.perception_state.scene_classifier_last_error.c_str());
     }
 
-    ImGui::Text("OCR: %s (%s)", runtime.perception_state.ocr_ready ? "ready" : "not ready", runtime.feature_ocr_enabled ? "enabled" : "disabled");
     ImGui::Text("Camera FaceMesh: %s (%s)", runtime.perception_state.camera_facemesh_ready ? "ready" : "not ready", runtime.feature_face_emotion_enabled ? "enabled" : "disabled");
     if (runtime.perception_state.camera_facemesh_ready) {
         ImGui::Text("Face: %s", runtime.perception_state.face_emotion_result.face_detected ? "present" : "none");
@@ -56,13 +55,6 @@ void RenderRuntimePerceptionPanel(AppRuntime &runtime) {
     ImGui::EndChild();
 
     ImGui::BeginChild("perception_metrics_child", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
-    ImGui::SeparatorText("Param Card (Editable)");
-    ImGui::SliderInt("OCR Timeout (ms)", &runtime.perception_state.ocr_timeout_ms, 500, 10000);
-    runtime.perception_state.ocr_timeout_ms = std::clamp(runtime.perception_state.ocr_timeout_ms, 500, 10000);
-    ImGui::SliderInt("OCR Det Input", &runtime.perception_state.ocr_det_input_size, 160, 1280);
-    runtime.perception_state.ocr_det_input_size = std::clamp(runtime.perception_state.ocr_det_input_size, 160, 1280);
-    ImGui::Text("OCR Det Effective Input: %d", runtime.perception_state.ocr_det_input_size);
-
     ImGui::SeparatorText("Perception Performance");
     ImGui::SliderFloat("Capture Poll Interval (s)", &runtime.perception_state.screen_capture_poll_interval_sec, 0.1f, 5.0f, "%.2f");
     runtime.perception_state.screen_capture_poll_interval_sec =
@@ -82,6 +74,30 @@ void RenderRuntimePerceptionPanel(AppRuntime &runtime) {
     ImGui::Text("Face Avg Latency: %.1f ms (runs=%lld)",
                 runtime.perception_state.face_avg_latency_ms,
                 static_cast<long long>(runtime.perception_state.face_total_runs));
+
+    const std::string &perception_recent_error =
+        !runtime.perception_state.camera_facemesh_last_error.empty() ? runtime.perception_state.camera_facemesh_last_error :
+        !runtime.perception_state.scene_classifier_last_error.empty() ? runtime.perception_state.scene_classifier_last_error :
+        !runtime.perception_state.system_context_last_error.empty() ? runtime.perception_state.system_context_last_error :
+        runtime.perception_state.screen_capture_last_error;
+    RenderModuleLatestErrorCard(perception_recent_error);
+    ImGui::EndChild();
+}
+
+void RenderRuntimeOcrPanel(AppRuntime &runtime) {
+    ImGui::BeginChild("perception_ocr_child", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
+    ImGui::SeparatorText("OCR Status");
+    ImGui::Text("OCR: %s (%s)", runtime.perception_state.ocr_ready ? "ready" : "not ready", runtime.feature_ocr_enabled ? "enabled" : "disabled");
+    if (!runtime.perception_state.ocr_last_error.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "OCR Error: %s", runtime.perception_state.ocr_last_error.c_str());
+    }
+
+    ImGui::SeparatorText("Param Card (Editable)");
+    ImGui::SliderInt("OCR Timeout (ms)", &runtime.perception_state.ocr_timeout_ms, 500, 10000);
+    runtime.perception_state.ocr_timeout_ms = std::clamp(runtime.perception_state.ocr_timeout_ms, 500, 10000);
+    ImGui::SliderInt("OCR Det Input", &runtime.perception_state.ocr_det_input_size, 160, 1280);
+    runtime.perception_state.ocr_det_input_size = std::clamp(runtime.perception_state.ocr_det_input_size, 160, 1280);
+    ImGui::Text("OCR Det Effective Input: %d", runtime.perception_state.ocr_det_input_size);
 
     if (runtime.perception_state.ocr_ready) {
         RenderLongTextBlock("OCR Summary", "ocr_summary_child", &runtime.perception_state.ocr_result.summary, 8, 100.0f);
@@ -129,17 +145,6 @@ void RenderRuntimePerceptionPanel(AppRuntime &runtime) {
                                 ImVec4(0.72f, 0.82f, 1.0f, 1.0f));
     }
 
-    if (!runtime.perception_state.ocr_last_error.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "OCR Error: %s", runtime.perception_state.ocr_last_error.c_str());
-    }
-
-    const std::string &perception_recent_error =
-        !runtime.perception_state.camera_facemesh_last_error.empty() ? runtime.perception_state.camera_facemesh_last_error :
-        !runtime.perception_state.ocr_last_error.empty() ? runtime.perception_state.ocr_last_error :
-        !runtime.perception_state.scene_classifier_last_error.empty() ? runtime.perception_state.scene_classifier_last_error :
-        !runtime.perception_state.system_context_last_error.empty() ? runtime.perception_state.system_context_last_error :
-        runtime.perception_state.screen_capture_last_error;
-    RenderModuleLatestErrorCard(perception_recent_error);
     ImGui::EndChild();
 }
 

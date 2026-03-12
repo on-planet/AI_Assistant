@@ -5,7 +5,9 @@
 #include <cctype>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -28,6 +30,33 @@ namespace desktoper2D {
 
 namespace {
 
+std::string TrimCopy(const std::string &s) {
+    std::size_t start = 0;
+    while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start]))) {
+        ++start;
+    }
+    std::size_t end = s.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(s[end - 1]))) {
+        --end;
+    }
+    return s.substr(start, end - start);
+}
+
+std::vector<std::string> SplitExtraOnnxLines(const char *text) {
+    std::vector<std::string> out;
+    if (!text || text[0] == '\0') {
+        return out;
+    }
+    std::string line;
+    std::istringstream iss(text);
+    while (std::getline(iss, line)) {
+        const std::string trimmed = TrimCopy(line);
+        if (!trimmed.empty()) {
+            out.push_back(trimmed);
+        }
+    }
+    return out;
+}
 
 void ResetPerceptionRuntimeState(PerceptionPipelineState &state) {
     state.screen_capture_poll_accum_sec = 0.0f;
@@ -654,6 +683,241 @@ TimelineInteractionStorage &GetTimelineInteractionStorage() {
 }
 
 
+
+void RenderRuntimePluginDetailPanel(AppRuntime &runtime) {
+    ImGui::SeparatorText("Plugin Detail");
+    if (ImGui::Button("Back to Cards")) {
+        runtime.plugin_detail_kind = PluginDetailKind::None;
+        runtime.show_plugin_detail_window = false;
+        runtime.show_plugin_quick_control_window = true;
+        return;
+    }
+    ImGui::Separator();
+
+    ImGui::Text("Title: %s", runtime.plugin_detail_title.empty() ? "(none)" : runtime.plugin_detail_title.c_str());
+    if (!runtime.plugin_detail_source.empty()) {
+        ImGui::TextWrapped("Source: %s", runtime.plugin_detail_source.c_str());
+    }
+    if (!runtime.plugin_detail_backend.empty()) {
+        ImGui::Text("Backend: %s", runtime.plugin_detail_backend.c_str());
+    }
+    if (!runtime.plugin_detail_status.empty()) {
+        ImGui::Text("Status: %s", runtime.plugin_detail_status.c_str());
+    }
+    if (!runtime.plugin_detail_last_error.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Last Error: %s", runtime.plugin_detail_last_error.c_str());
+    }
+    if (!runtime.plugin_detail_assets.empty()) {
+        std::string assets_text = JoinAssetsUi(runtime.plugin_detail_assets);
+        RenderLongTextBlock("Assets", "plugin_detail_assets", &assets_text, 8, 160.0f);
+    } else {
+        ImGui::TextDisabled("(no assets)");
+    }
+
+    ImGui::SeparatorText("编辑配置");
+    if (runtime.plugin_detail_source.empty()) {
+        ImGui::TextDisabled("(no editable config)");
+        return;
+    }
+
+    auto load_behavior_edit = [&]() -> bool {
+        std::string model_id;
+        std::string model_version;
+        std::string onnx;
+        std::vector<std::string> extra;
+        std::string err;
+        if (!LoadPluginConfigFields(runtime.plugin_detail_source, &model_id, &model_version, &onnx, &extra, &err)) {
+            runtime.plugin_switch_status.clear();
+            runtime.plugin_switch_error = err.empty() ? "load behavior config failed" : err;
+            return false;
+        }
+        SDL_strlcpy(runtime.plugin_detail_edit_model_id_input, model_id.c_str(), sizeof(runtime.plugin_detail_edit_model_id_input));
+        SDL_strlcpy(runtime.plugin_detail_edit_onnx_input, onnx.c_str(), sizeof(runtime.plugin_detail_edit_onnx_input));
+        std::string extra_text;
+        for (const auto &item : extra) {
+            if (!extra_text.empty()) extra_text += "\n";
+            extra_text += item;
+        }
+        SDL_strlcpy(runtime.plugin_detail_edit_extra_onnx_input, extra_text.c_str(), sizeof(runtime.plugin_detail_edit_extra_onnx_input));
+        return true;
+    };
+
+    auto load_default_edit = [&]() -> bool {
+        std::ifstream ifs(runtime.plugin_detail_source, std::ios::binary);
+        if (!ifs) {
+            runtime.plugin_switch_status.clear();
+            runtime.plugin_switch_error = "load default config failed";
+            return false;
+        }
+        std::ostringstream oss;
+        oss << ifs.rdbuf();
+        const std::string text = oss.str();
+        JsonParseError err{};
+        auto root_opt = ParseJson(text, &err);
+        if (!root_opt || !root_opt->isObject()) {
+            runtime.plugin_switch_status.clear();
+            runtime.plugin_switch_error = "parse default config failed";
+            return false;
+        }
+        const JsonValue &root = *root_opt;
+        auto read_string = [&](const char *key, char *buf, std::size_t len) {
+            const auto value = root.getString(key).value_or(std::string());
+            SDL_strlcpy(buf, value.c_str(), len);
+        };
+        read_string("onnx", runtime.plugin_detail_edit_onnx_input, sizeof(runtime.plugin_detail_edit_onnx_input));
+        read_string("labels", runtime.plugin_detail_edit_labels_input, sizeof(runtime.plugin_detail_edit_labels_input));
+        read_string("det", runtime.plugin_detail_edit_det_input, sizeof(runtime.plugin_detail_edit_det_input));
+        read_string("rec", runtime.plugin_detail_edit_rec_input, sizeof(runtime.plugin_detail_edit_rec_input));
+        read_string("keys", runtime.plugin_detail_edit_keys_input, sizeof(runtime.plugin_detail_edit_keys_input));
+        read_string("model", runtime.plugin_detail_edit_model_input, sizeof(runtime.plugin_detail_edit_model_input));
+        return true;
+    };
+
+    const bool is_behavior = runtime.plugin_detail_kind == PluginDetailKind::Behavior;
+    if (!runtime.plugin_detail_edit_loaded || runtime.plugin_detail_edit_source != runtime.plugin_detail_source) {
+        runtime.plugin_detail_edit_loaded = false;
+        runtime.plugin_detail_edit_source = runtime.plugin_detail_source;
+        const bool loaded = is_behavior ? load_behavior_edit() : load_default_edit();
+        runtime.plugin_detail_edit_loaded = loaded;
+    }
+
+    if (!runtime.plugin_detail_edit_loaded) {
+        ImGui::TextDisabled("(config not loaded)");
+        return;
+    }
+
+    if (is_behavior) {
+        ImGui::InputTextWithHint("Model Id", "model_id", runtime.plugin_detail_edit_model_id_input,
+                                 sizeof(runtime.plugin_detail_edit_model_id_input));
+        ImGui::InputTextWithHint("ONNX", "onnx path", runtime.plugin_detail_edit_onnx_input,
+                                 sizeof(runtime.plugin_detail_edit_onnx_input));
+        ImGui::InputTextMultiline("Extra ONNX (one per line)", runtime.plugin_detail_edit_extra_onnx_input,
+                                  sizeof(runtime.plugin_detail_edit_extra_onnx_input), ImVec2(-1.0f, 80.0f));
+        if (ImGui::Button("保存并重载")) {
+            std::string err;
+            std::vector<std::string> extra = SplitExtraOnnxLines(runtime.plugin_detail_edit_extra_onnx_input);
+            const bool ok = SavePluginConfigFields(runtime.plugin_detail_source,
+                                                   runtime.plugin_detail_edit_model_id_input,
+                                                   runtime.plugin_detail_edit_onnx_input,
+                                                   extra,
+                                                   &err);
+            if (ok) {
+                std::string reload_err;
+                ReloadPluginByConfigPath(runtime, runtime.plugin_detail_source, &reload_err);
+                runtime.plugin_switch_status = reload_err.empty() ? "plugin reloaded" : reload_err;
+                runtime.plugin_switch_error.clear();
+                runtime.plugin_config_refresh_requested = true;
+            } else {
+                runtime.plugin_switch_status.clear();
+                runtime.plugin_switch_error = err.empty() ? "save failed" : err;
+            }
+        }
+    } else {
+        if (runtime.plugin_detail_kind == PluginDetailKind::Asr) {
+            ImGui::InputTextWithHint("Model", "onnx", runtime.plugin_detail_edit_onnx_input,
+                                     sizeof(runtime.plugin_detail_edit_onnx_input));
+        } else if (runtime.plugin_detail_kind == PluginDetailKind::Ocr) {
+            ImGui::InputTextWithHint("Det", "det", runtime.plugin_detail_edit_det_input,
+                                     sizeof(runtime.plugin_detail_edit_det_input));
+            ImGui::InputTextWithHint("Rec", "rec", runtime.plugin_detail_edit_rec_input,
+                                     sizeof(runtime.plugin_detail_edit_rec_input));
+            ImGui::InputTextWithHint("Keys", "keys", runtime.plugin_detail_edit_keys_input,
+                                     sizeof(runtime.plugin_detail_edit_keys_input));
+        } else if (runtime.plugin_detail_kind == PluginDetailKind::Scene || runtime.plugin_detail_kind == PluginDetailKind::Facemesh) {
+            ImGui::InputTextWithHint("Model", "onnx", runtime.plugin_detail_edit_onnx_input,
+                                     sizeof(runtime.plugin_detail_edit_onnx_input));
+            ImGui::InputTextWithHint("Labels", "labels", runtime.plugin_detail_edit_labels_input,
+                                     sizeof(runtime.plugin_detail_edit_labels_input));
+        } else if (runtime.plugin_detail_kind == PluginDetailKind::Chat) {
+            ImGui::InputTextWithHint("Model", "model", runtime.plugin_detail_edit_model_input,
+                                     sizeof(runtime.plugin_detail_edit_model_input));
+        }
+
+        if (ImGui::Button("保存并应用")) {
+            std::ifstream ifs(runtime.plugin_detail_source, std::ios::binary);
+            std::ostringstream oss;
+            if (ifs) {
+                oss << ifs.rdbuf();
+            }
+            JsonParseError err{};
+            auto root_opt = ParseJson(oss.str(), &err);
+            if (!root_opt || !root_opt->isObject()) {
+                runtime.plugin_switch_status.clear();
+                runtime.plugin_switch_error = "parse default config failed";
+            } else {
+                JsonValue root = *root_opt;
+                JsonObject *obj = root.asObject();
+                auto assign_string = [&](const char *key, const char *value) {
+                    if (!obj) return;
+                    if (value && value[0] != '\0') {
+                        (*obj)[key] = JsonValue::makeString(value);
+                    } else {
+                        auto it = obj->find(key);
+                        if (it != obj->end()) obj->erase(it);
+                    }
+                };
+                assign_string("onnx", runtime.plugin_detail_edit_onnx_input);
+                assign_string("labels", runtime.plugin_detail_edit_labels_input);
+                assign_string("det", runtime.plugin_detail_edit_det_input);
+                assign_string("rec", runtime.plugin_detail_edit_rec_input);
+                assign_string("keys", runtime.plugin_detail_edit_keys_input);
+                assign_string("model", runtime.plugin_detail_edit_model_input);
+
+                std::ofstream ofs(runtime.plugin_detail_source, std::ios::binary);
+                if (!ofs) {
+                    runtime.plugin_switch_status.clear();
+                    runtime.plugin_switch_error = "save default config failed";
+                } else {
+                    ofs << StringifyJson(root, 2);
+                    ofs.close();
+                    runtime.plugin_switch_status = "default plugin config saved";
+                    runtime.plugin_switch_error.clear();
+
+                    if (runtime.plugin_detail_kind == PluginDetailKind::Asr) {
+                        runtime.override_asr_model_path = runtime.plugin_detail_edit_onnx_input;
+                        std::string apply_err;
+                        if (!ApplyOverrideModels(runtime, &apply_err)) {
+                            runtime.plugin_switch_status.clear();
+                            runtime.plugin_switch_error = apply_err.empty() ? "apply override failed" : apply_err;
+                        }
+                    } else if (runtime.plugin_detail_kind == PluginDetailKind::Ocr) {
+                        runtime.override_ocr_det_path = runtime.plugin_detail_edit_det_input;
+                        runtime.override_ocr_rec_path = runtime.plugin_detail_edit_rec_input;
+                        runtime.override_ocr_keys_path = runtime.plugin_detail_edit_keys_input;
+                        std::string apply_err;
+                        if (!ApplyOverrideModels(runtime, &apply_err)) {
+                            runtime.plugin_switch_status.clear();
+                            runtime.plugin_switch_error = apply_err.empty() ? "apply override failed" : apply_err;
+                        }
+                    } else if (runtime.plugin_detail_kind == PluginDetailKind::Scene) {
+                        runtime.override_scene_model_path = runtime.plugin_detail_edit_onnx_input;
+                        runtime.override_scene_labels_path = runtime.plugin_detail_edit_labels_input;
+                        std::string apply_err;
+                        if (!ApplyOverrideModels(runtime, &apply_err)) {
+                            runtime.plugin_switch_status.clear();
+                            runtime.plugin_switch_error = apply_err.empty() ? "apply override failed" : apply_err;
+                        }
+                    } else if (runtime.plugin_detail_kind == PluginDetailKind::Facemesh) {
+                        runtime.override_facemesh_model_path = runtime.plugin_detail_edit_onnx_input;
+                        runtime.override_facemesh_labels_path = runtime.plugin_detail_edit_labels_input;
+                        std::string apply_err;
+                        if (!ApplyOverrideModels(runtime, &apply_err)) {
+                            runtime.plugin_switch_status.clear();
+                            runtime.plugin_switch_error = apply_err.empty() ? "apply override failed" : apply_err;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (!runtime.plugin_switch_status.empty()) {
+        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f), "%s", runtime.plugin_switch_status.c_str());
+    }
+    if (!runtime.plugin_switch_error.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "%s", runtime.plugin_switch_error.c_str());
+    }
+}
 
 void RenderUnifiedPluginStatusCard(const AppRuntime &runtime, const char *empty_hint) {
     const UnifiedPluginEntry *active_unified_plugin = nullptr;

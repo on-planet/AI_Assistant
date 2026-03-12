@@ -257,6 +257,11 @@ void RenderResourceTreeInspector(AppRuntime &runtime,
     ImGui::TextColored(part_dirty ? ImVec4(1.0f, 0.82f, 0.25f, 1.0f) : ImVec4(0.45f, 0.85f, 0.45f, 1.0f),
                        "%s",
                        part_dirty ? "未保存修改" : "已保存");
+    ImGui::SameLine();
+    bool pick_locked = part.pick_locked;
+    if (ImGui::SmallButton(pick_locked ? "Unlock##pick" : "Lock##pick")) {
+        part.pick_locked = !pick_locked;
+    }
 
     auto push_inspector_command_if_changed = [&](const EditCommand &cmd) {
         if (cmd.before_pos_x != cmd.after_pos_x ||

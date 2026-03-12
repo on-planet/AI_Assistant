@@ -1,11 +1,106 @@
 #include "desktoper2D/lifecycle/ui/app_debug_ui_actions.h"
 
+#include "desktoper2D/lifecycle/editor/editor_session_service.h"
 #include "desktoper2D/lifecycle/ui/app_debug_ui_internal.h"
 #include "desktoper2D/lifecycle/observability/runtime_error_codes.h"
 
 #include <array>
+#include <string>
 
 namespace desktoper2D {
+
+namespace {
+
+std::vector<EditorBatchBindTemplateItem> BuildBatchBindTemplatesForActions() {
+    std::vector<EditorBatchBindTemplateItem> items;
+    items.push_back(EditorBatchBindTemplateItem{.label = "Move X (-1..1 -> -80..80)",
+                                                .bind_prop_type = BindingType::PosX,
+                                                .bind_in_min = -1.0f,
+                                                .bind_in_max = 1.0f,
+                                                .bind_out_min = -80.0f,
+                                                .bind_out_max = 80.0f});
+    items.push_back(EditorBatchBindTemplateItem{.label = "Move Y (-1..1 -> -80..80)",
+                                                .bind_prop_type = BindingType::PosY,
+                                                .bind_in_min = -1.0f,
+                                                .bind_in_max = 1.0f,
+                                                .bind_out_min = -80.0f,
+                                                .bind_out_max = 80.0f});
+    items.push_back(EditorBatchBindTemplateItem{.label = "Rotate Small (-1..1 -> -15..15)",
+                                                .bind_prop_type = BindingType::RotDeg,
+                                                .bind_in_min = -1.0f,
+                                                .bind_in_max = 1.0f,
+                                                .bind_out_min = -15.0f,
+                                                .bind_out_max = 15.0f});
+    items.push_back(EditorBatchBindTemplateItem{.label = "Rotate Wide (-1..1 -> -45..45)",
+                                                .bind_prop_type = BindingType::RotDeg,
+                                                .bind_in_min = -1.0f,
+                                                .bind_in_max = 1.0f,
+                                                .bind_out_min = -45.0f,
+                                                .bind_out_max = 45.0f});
+    items.push_back(EditorBatchBindTemplateItem{.label = "Opacity (0..1 -> 0..1)",
+                                                .bind_prop_type = BindingType::Opacity,
+                                                .bind_in_min = 0.0f,
+                                                .bind_in_max = 1.0f,
+                                                .bind_out_min = 0.0f,
+                                                .bind_out_max = 1.0f});
+    items.push_back(EditorBatchBindTemplateItem{.label = "Scale (0..1 -> 0.9..1.1)",
+                                                .bind_prop_type = BindingType::ScaleX,
+                                                .bind_in_min = 0.0f,
+                                                .bind_in_max = 1.0f,
+                                                .bind_out_min = 0.9f,
+                                                .bind_out_max = 1.1f});
+    return items;
+}
+
+std::pair<float, float> BatchBindOutRangeForActions(BindingType type) {
+    switch (type) {
+        case BindingType::PosX:
+        case BindingType::PosY:
+            return {-500.0f, 500.0f};
+        case BindingType::RotDeg:
+            return {-180.0f, 180.0f};
+        case BindingType::ScaleX:
+        case BindingType::ScaleY:
+            return {0.0f, 3.0f};
+        case BindingType::Opacity:
+            return {0.0f, 1.0f};
+        default:
+            return {-180.0f, 180.0f};
+    }
+}
+
+std::string ValidateBatchBindForActions(const AppRuntime &runtime,
+                                       const std::vector<int> &param_indices,
+                                       BindingType type,
+                                       float in_min,
+                                       float in_max,
+                                       float out_min,
+                                       float out_max) {
+    if (in_min > in_max) {
+        return "batch bind failed: input min > max";
+    }
+    if (out_min > out_max) {
+        return "batch bind failed: output min > max";
+    }
+    for (int param_idx : param_indices) {
+        if (param_idx < 0 || param_idx >= static_cast<int>(runtime.model.parameters.size())) {
+            continue;
+        }
+        const auto &spec = runtime.model.parameters[static_cast<std::size_t>(param_idx)].param.spec();
+        const float spec_min = std::min(spec.min_value, spec.max_value);
+        const float spec_max = std::max(spec.min_value, spec.max_value);
+        if (in_min < spec_min || in_max > spec_max) {
+            return "batch bind failed: input range exceeds param spec";
+        }
+    }
+    const auto out_range = BatchBindOutRangeForActions(type);
+    if (out_min < out_range.first || out_max > out_range.second) {
+        return "batch bind failed: output range exceeds safe range";
+    }
+    return std::string();
+}
+
+}  // namespace
 
 void ApplyTimelinePanelActionImpl(AppRuntime &runtime, const TimelinePanelAction &action) {
     auto has_params = [&]() {
@@ -502,10 +597,107 @@ void ApplyEditorPanelActionImpl(AppRuntime &runtime, const EditorPanelAction &ac
         case EditorPanelActionType::SetFeaturePluginEnabled:
             runtime.feature_plugin_enabled = action.bool_value;
             break;
+        case EditorPanelActionType::SetPickLockFilterEnabled:
+            runtime.pick_lock_filter_enabled = action.bool_value;
+            break;
+        case EditorPanelActionType::SetPickScopeFilterEnabled:
+            runtime.pick_scope_filter_enabled = action.bool_value;
+            if (!runtime.pick_scope_filter_enabled) {
+                runtime.pick_scope_mode = 0;
+            }
+            break;
+        case EditorPanelActionType::SetPickScopeMode:
+            runtime.pick_scope_mode = std::clamp(action.int_value, 0, 2);
+            break;
+        case EditorPanelActionType::SetPickNameFilterEnabled:
+            runtime.pick_name_filter_enabled = action.bool_value;
+            break;
+        case EditorPanelActionType::SetPickNameFilterText:
+            SDL_strlcpy(runtime.pick_name_filter, action.text_value.c_str(), sizeof(runtime.pick_name_filter));
+            break;
+        case EditorPanelActionType::SetPickCycleEnabled:
+            runtime.pick_cycle_enabled = action.bool_value;
+            if (!runtime.pick_cycle_enabled) {
+                runtime.pick_cycle_offset = 0;
+            }
+            break;
+        case EditorPanelActionType::ResetPickCycleOffset:
+            runtime.pick_cycle_offset = 0;
+            break;
+        case EditorPanelActionType::SetAutosaveEnabled:
+            runtime.editor_autosave_enabled = action.bool_value;
+            if (!runtime.editor_autosave_enabled) {
+                runtime.editor_autosave_accum_sec = 0.0f;
+            }
+            break;
+        case EditorPanelActionType::SetAutosaveIntervalSec:
+            runtime.editor_autosave_interval_sec = std::clamp(action.float_value, 10.0f, 3600.0f);
+            runtime.editor_autosave_accum_sec = std::min(runtime.editor_autosave_accum_sec,
+                                                        std::max(0.0f, runtime.editor_autosave_interval_sec));
+            break;
+        case EditorPanelActionType::RecoverFromAutosave: {
+            std::string err;
+            if (LoadEditorAutosaveProject(runtime, &err)) {
+                runtime.editor_autosave_recovery_prompted = false;
+                runtime.editor_status = "recovered from autosave";
+                runtime.editor_status_ttl = 3.5f;
+            } else {
+                runtime.editor_status = "autosave recovery failed: " + err;
+                runtime.editor_status_ttl = 4.0f;
+            }
+            break;
+        }
+        case EditorPanelActionType::DiscardAutosave: {
+            std::string err;
+            if (ClearEditorAutosaveProject(runtime, &err)) {
+                runtime.editor_autosave_recovery_prompted = false;
+                runtime.editor_status = "autosave discarded";
+                runtime.editor_status_ttl = 2.5f;
+            } else {
+                runtime.editor_status = "autosave discard failed: " + err;
+                runtime.editor_status_ttl = 4.0f;
+            }
+            break;
+        }
         case EditorPanelActionType::SetParamGroupMode:
             runtime.param_group_mode = std::clamp(action.int_value, 0, 1);
             runtime.selected_param_group_index = 0;
             break;
+        case EditorPanelActionType::SelectHistoryIndex:
+            runtime.editor_history_selected_index = std::clamp(action.int_value, -1, action.int_value2);
+            break;
+        case EditorPanelActionType::ToggleParamPanelExpanded:
+            runtime.editor_param_panel_expanded = action.bool_value;
+            break;
+        case EditorPanelActionType::ToggleParamQuickExpanded:
+            runtime.editor_param_quick_expanded = action.bool_value;
+            break;
+        case EditorPanelActionType::ToggleParamGroupTableExpanded:
+            runtime.editor_param_group_table_expanded = action.bool_value;
+            break;
+        case EditorPanelActionType::ToggleParamBatchBindExpanded:
+            runtime.editor_param_batch_bind_expanded = action.bool_value;
+            break;
+        case EditorPanelActionType::JumpToHistoryIndex: {
+            const int target_undo_size = action.int_value;
+            const int current_undo_size = static_cast<int>(runtime.undo_stack.size());
+            if (target_undo_size < 0 || target_undo_size == current_undo_size) {
+                break;
+            }
+            if (target_undo_size < current_undo_size) {
+                const int steps = current_undo_size - target_undo_size;
+                for (int i = 0; i < steps; ++i) {
+                    UndoLastEdit(runtime);
+                }
+            } else {
+                const int steps = target_undo_size - current_undo_size;
+                for (int i = 0; i < steps; ++i) {
+                    RedoLastEdit(runtime);
+                }
+            }
+            runtime.editor_history_selected_index = -1;
+            break;
+        }
         case EditorPanelActionType::SetParamSearch:
             SDL_strlcpy(runtime.param_search, action.text_value.c_str(), sizeof(runtime.param_search));
             runtime.selected_param_group_index = 0;
@@ -533,20 +725,80 @@ void ApplyEditorPanelActionImpl(AppRuntime &runtime, const EditorPanelAction &ac
                 runtime.editor_project_dirty = true;
             }
             break;
+        case EditorPanelActionType::SetGroupTargetsToDefault:
+        case EditorPanelActionType::SetGroupTargetsToMin:
+        case EditorPanelActionType::SetGroupTargetsToMax: {
+            const std::vector<ParamGroup> groups = BuildParamGroups(runtime, runtime.param_group_mode, runtime.param_search);
+            if (groups.empty()) {
+                runtime.editor_status = "group apply failed: no parameter group";
+                runtime.editor_status_ttl = 2.5f;
+                break;
+            }
+            const int group_index = std::clamp(runtime.selected_param_group_index, 0, static_cast<int>(groups.size()) - 1);
+            const auto &selected_group = groups[static_cast<std::size_t>(group_index)];
+            int applied = 0;
+            for (int param_idx : selected_group.second) {
+                if (param_idx < 0 || param_idx >= static_cast<int>(runtime.model.parameters.size())) {
+                    continue;
+                }
+                auto &model_param = runtime.model.parameters[static_cast<std::size_t>(param_idx)];
+                auto &param = model_param.param;
+                const auto &spec = param.spec();
+                const float before_target_value = param.target();
+                float target_value = spec.default_value;
+                if (action.type == EditorPanelActionType::SetGroupTargetsToMin) {
+                    target_value = spec.min_value;
+                } else if (action.type == EditorPanelActionType::SetGroupTargetsToMax) {
+                    target_value = spec.max_value;
+                }
+                target_value = std::clamp(target_value, spec.min_value, spec.max_value);
+                param.SetTarget(target_value);
+                EditCommand cmd{};
+                cmd.type = EditCommand::Type::Param;
+                cmd.param_id = model_param.id;
+                cmd.before_param_value = before_target_value;
+                cmd.after_param_value = target_value;
+                PushEditCommand(runtime.undo_stack, runtime.redo_stack, std::move(cmd));
+                runtime.editor_project_dirty = true;
+                applied += 1;
+            }
+            runtime.editor_status = "group apply: " + std::to_string(applied) + " params";
+            runtime.editor_status_ttl = 2.5f;
+            break;
+        }
         case EditorPanelActionType::SetBatchBindPropType:
             runtime.batch_bind_prop_type = std::clamp(action.int_value, 0, 5);
+            runtime.batch_bind_template_index = 0;
             break;
+        case EditorPanelActionType::SetBatchBindTemplateIndex: {
+            runtime.batch_bind_template_index = std::max(0, action.int_value);
+            const auto templates = BuildBatchBindTemplatesForActions();
+            if (runtime.batch_bind_template_index > 0 &&
+                runtime.batch_bind_template_index <= static_cast<int>(templates.size())) {
+                const auto &tmpl = templates[static_cast<std::size_t>(runtime.batch_bind_template_index - 1)];
+                runtime.batch_bind_prop_type = static_cast<int>(tmpl.bind_prop_type);
+                runtime.batch_bind_in_min = tmpl.bind_in_min;
+                runtime.batch_bind_in_max = tmpl.bind_in_max;
+                runtime.batch_bind_out_min = tmpl.bind_out_min;
+                runtime.batch_bind_out_max = tmpl.bind_out_max;
+            }
+            break;
+        }
         case EditorPanelActionType::SetBatchBindInMin:
             runtime.batch_bind_in_min = action.float_value;
+            runtime.batch_bind_template_index = 0;
             break;
         case EditorPanelActionType::SetBatchBindInMax:
             runtime.batch_bind_in_max = action.float_value;
+            runtime.batch_bind_template_index = 0;
             break;
         case EditorPanelActionType::SetBatchBindOutMin:
             runtime.batch_bind_out_min = action.float_value;
+            runtime.batch_bind_template_index = 0;
             break;
         case EditorPanelActionType::SetBatchBindOutMax:
             runtime.batch_bind_out_max = action.float_value;
+            runtime.batch_bind_template_index = 0;
             break;
         case EditorPanelActionType::ApplyBatchBindToSelectedPart:
         case EditorPanelActionType::ApplyBatchBindToAllParts: {
@@ -559,6 +811,18 @@ void ApplyEditorPanelActionImpl(AppRuntime &runtime, const EditorPanelAction &ac
             const int group_index = std::clamp(runtime.selected_param_group_index, 0, static_cast<int>(groups.size()) - 1);
             const auto &selected_group = groups[static_cast<std::size_t>(group_index)];
             const BindingType bt = static_cast<BindingType>(std::clamp(runtime.batch_bind_prop_type, 0, 5));
+            const std::string validation_error = ValidateBatchBindForActions(runtime,
+                                                                            selected_group.second,
+                                                                            bt,
+                                                                            runtime.batch_bind_in_min,
+                                                                            runtime.batch_bind_in_max,
+                                                                            runtime.batch_bind_out_min,
+                                                                            runtime.batch_bind_out_max);
+            if (!validation_error.empty()) {
+                runtime.editor_status = validation_error;
+                runtime.editor_status_ttl = 3.0f;
+                break;
+            }
             if (action.type == EditorPanelActionType::ApplyBatchBindToSelectedPart) {
                 if (runtime.selected_part_index >= 0 && runtime.selected_part_index < static_cast<int>(runtime.model.parts.size())) {
                     auto &part = runtime.model.parts[static_cast<std::size_t>(runtime.selected_part_index)];

@@ -4,8 +4,8 @@
 
 namespace desktoper2D {
 
-void RenderRuntimeAsrChatPanel(AppRuntime &runtime) {
-    ImGui::BeginChild("asr_chat_status_child", ImVec2(-1.0f, 220.0f), ImGuiChildFlags_Borders);
+void RenderRuntimeAsrPanel(AppRuntime &runtime) {
+    ImGui::BeginChild("asr_status_child", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
     ImGui::SeparatorText("Status Card");
     ImGui::Text("ASR: %s (%s)", runtime.asr_ready ? "ready" : "not ready", runtime.feature_asr_enabled ? "enabled" : "disabled");
     RenderLongTextBlock("ASR Text", "asr_text_child", &runtime.asr_last_result.text, 10, 100.0f);
@@ -18,7 +18,11 @@ void RenderRuntimeAsrChatPanel(AppRuntime &runtime) {
     if (!runtime.asr_last_error.empty()) {
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "ASR Error: %s", runtime.asr_last_error.c_str());
     }
+    ImGui::EndChild();
+}
 
+void RenderRuntimePluginWorkerPanel(AppRuntime &runtime) {
+    ImGui::BeginChild("plugin_worker_child", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
     ImGui::SeparatorText("Plugin Worker");
     ImGui::Text("update_hz: %d", runtime.plugin_current_update_hz);
     ImGui::Text("total updates: %llu", static_cast<unsigned long long>(runtime.plugin_total_update_count));
@@ -55,7 +59,9 @@ void RenderRuntimeAsrChatPanel(AppRuntime &runtime) {
     }
 
     ImGui::EndChild();
+}
 
+void RenderRuntimeChatPanel(AppRuntime &runtime) {
     ImGui::BeginChild("asr_chat_interaction_child", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
     ImGui::SeparatorText("Param Card (Editable)");
     ImGui::Checkbox("Enable Periodic Observability Log", &runtime.runtime_observability_log_enabled);

@@ -32,12 +32,16 @@ struct WorkspaceWindowVisibility {
     bool show_editor_window = true;
     bool show_timeline_window = true;
     bool show_perception_window = true;
+    bool show_ocr_window = true;
     bool show_mapping_window = true;
     bool show_asr_chat_window = true;
+    bool show_plugin_worker_window = true;
+    bool show_chat_window = true;
     bool show_error_window = true;
     bool show_inspector_window = true;
     bool show_reminder_window = true;
     bool show_plugin_quick_control_window = true;
+    bool show_plugin_detail_window = false;
 };
 
 inline WorkspaceWindowVisibility BuildWorkspaceDefaultVisibility(const WorkspaceMode mode) {
@@ -52,16 +56,28 @@ inline WorkspaceWindowVisibility BuildWorkspaceDefaultVisibility(const Workspace
             v.show_editor_window = false;
             v.show_timeline_window = false;
             v.show_mapping_window = false;
+            v.show_ocr_window = false;
             v.show_asr_chat_window = false;
+            v.show_plugin_worker_window = false;
+            v.show_chat_window = false;
+            v.show_plugin_detail_window = false;
             break;
         case WorkspaceMode::Animation:
             v.show_error_window = false;
+            v.show_ocr_window = false;
             v.show_asr_chat_window = false;
+            v.show_plugin_worker_window = false;
+            v.show_chat_window = false;
             v.show_reminder_window = false;
             v.show_plugin_quick_control_window = false;
+            v.show_plugin_detail_window = false;
             break;
         case WorkspaceMode::Authoring:
+            v.show_ocr_window = false;
             v.show_asr_chat_window = false;
+            v.show_plugin_worker_window = false;
+            v.show_chat_window = false;
+            v.show_plugin_detail_window = false;
             break;
         default:
             break;
@@ -75,12 +91,16 @@ inline void ApplyWorkspaceWindowVisibility(AppRuntime &runtime, const WorkspaceW
     runtime.show_editor_window = v.show_editor_window;
     runtime.show_timeline_window = v.show_timeline_window;
     runtime.show_perception_window = v.show_perception_window;
+    runtime.show_ocr_window = v.show_ocr_window;
     runtime.show_mapping_window = v.show_mapping_window;
     runtime.show_asr_chat_window = v.show_asr_chat_window;
+    runtime.show_plugin_worker_window = v.show_plugin_worker_window;
+    runtime.show_chat_window = v.show_chat_window;
     runtime.show_error_window = v.show_error_window;
     runtime.show_inspector_window = v.show_inspector_window;
     runtime.show_reminder_window = v.show_reminder_window;
     runtime.show_plugin_quick_control_window = v.show_plugin_quick_control_window;
+    runtime.show_plugin_detail_window = v.show_plugin_detail_window;
 }
 
 inline bool HasAnyWorkspaceChildWindowVisible(const AppRuntime &runtime) {
@@ -88,12 +108,16 @@ inline bool HasAnyWorkspaceChildWindowVisible(const AppRuntime &runtime) {
            runtime.show_editor_window ||
            runtime.show_timeline_window ||
            runtime.show_perception_window ||
+           runtime.show_ocr_window ||
            runtime.show_mapping_window ||
            runtime.show_asr_chat_window ||
+           runtime.show_plugin_worker_window ||
+           runtime.show_chat_window ||
            runtime.show_error_window ||
            runtime.show_inspector_window ||
            runtime.show_reminder_window ||
-           runtime.show_plugin_quick_control_window;
+           runtime.show_plugin_quick_control_window ||
+           runtime.show_plugin_detail_window;
 }
 
 struct TimelineInteractionStorage {

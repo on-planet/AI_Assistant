@@ -17,9 +17,14 @@ void RenderRuntimeEditorBatchBind(AppRuntime &runtime, const std::string &group_
 void RenderRuntimeTimelinePanel(AppRuntime &runtime);
 void RenderRuntimePerceptionPanel(AppRuntime &runtime);
 void RenderRuntimeMappingPanel(AppRuntime &runtime);
-void RenderRuntimeAsrChatPanel(AppRuntime &runtime);
+void RenderRuntimePerceptionPanel(AppRuntime &runtime);
+void RenderRuntimeOcrPanel(AppRuntime &runtime);
+void RenderRuntimeAsrPanel(AppRuntime &runtime);
+void RenderRuntimePluginWorkerPanel(AppRuntime &runtime);
+void RenderRuntimeChatPanel(AppRuntime &runtime);
 void RenderRuntimeErrorPanel(AppRuntime &runtime);
 void RenderRuntimePluginQuickControlPanel(AppRuntime &runtime);
+void RenderRuntimePluginDetailPanel(AppRuntime &runtime);
 void RenderRuntimeOpsPanel(AppRuntime &runtime);
 
 }  // namespace desktoper2D

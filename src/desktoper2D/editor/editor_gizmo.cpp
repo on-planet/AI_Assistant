@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "desktoper2D/lifecycle/state/app_runtime_state.h"
+
 namespace desktoper2D {
 
 namespace {
@@ -65,7 +67,8 @@ GizmoHandle PickGizmoHandle(const ModelPart &part, float mouse_x, float mouse_y)
 void RenderGizmoOverlay(SDL_Renderer *renderer,
                         const ModelPart &part,
                         GizmoHandle hover,
-                        GizmoHandle active) {
+                        GizmoHandle active,
+                        AxisConstraint constraint) {
     const float cx = part.runtime_pos_x;
     const float cy = part.runtime_pos_y;
 
@@ -73,12 +76,18 @@ void RenderGizmoOverlay(SDL_Renderer *renderer,
     const float ring_r = 42.0f;
     const float scale_offset = 30.0f;
 
-    const auto color_for = [](GizmoHandle h, GizmoHandle hover_h, GizmoHandle active_h, SDL_Color base) {
+    const auto color_for = [constraint](GizmoHandle h, GizmoHandle hover_h, GizmoHandle active_h, SDL_Color base) {
         if (h == active_h) {
             return SDL_Color{255, 255, 255, 255};
         }
         if (h == hover_h) {
             return SDL_Color{255, 230, 120, 255};
+        }
+        if (constraint == AxisConstraint::XOnly && h == GizmoHandle::MoveX) {
+            return SDL_Color{255, 210, 120, 255};
+        }
+        if (constraint == AxisConstraint::YOnly && h == GizmoHandle::MoveY) {
+            return SDL_Color{255, 210, 120, 255};
         }
         return base;
     };

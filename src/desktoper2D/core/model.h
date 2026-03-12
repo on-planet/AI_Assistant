@@ -134,6 +134,8 @@ struct ModelPart {
 
     std::vector<ParamBinding> bindings;
 
+    bool pick_locked = false;
+
     // part 级脏标记与缓存复用
     bool transform_dirty = true;
     bool deformer_dirty = true;

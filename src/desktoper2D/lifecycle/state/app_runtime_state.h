@@ -19,6 +19,7 @@
 #include "desktoper2D/editor/editor_commands.h"
 #include "desktoper2D/editor/editor_controller.h"
 #include "desktoper2D/editor/editor_gizmo.h"
+#include "desktoper2D/editor/editor_types.h"
 #include "desktoper2D/lifecycle/inference_adapter.h"
 #include "desktoper2D/lifecycle/perception_pipeline.h"
 #include "desktoper2D/lifecycle/plugin_lifecycle.h"
@@ -49,6 +50,7 @@ struct PluginConfigEntry {
     std::string config_path;
     std::string model_id;
     std::string model_version;
+    bool enabled = true;
 };
 
 struct AsrProviderEntry {
@@ -79,6 +81,16 @@ enum class UnifiedPluginStatus {
     Ready,
     Error,
     Disabled,
+};
+
+enum class PluginDetailKind {
+    None,
+    Behavior,
+    Asr,
+    Ocr,
+    Scene,
+    Facemesh,
+    Chat,
 };
 
 struct UnifiedPluginEntry {
@@ -115,7 +127,8 @@ struct PluginAssetOverride {
 
 struct UserPluginCreateRequest {
     std::string name;
-    std::string template_path = "assets/plugin_behavior_config.json";
+    std::string template_path;
+    bool use_folder_layout = true;
 };
 
 struct RuntimeFeatureFlags {
@@ -126,12 +139,6 @@ struct RuntimeFeatureFlags {
     bool asr_enabled = false;
     bool plugin_enabled = true;
     bool chat_enabled = true;
-};
-
-enum class AxisConstraint {
-    None,
-    XOnly,
-    YOnly,
 };
 
 enum class WorkspaceMode {
@@ -156,7 +163,10 @@ enum class UiCommandType {
     ToggleTimelineWindow,
     TogglePerceptionWindow,
     ToggleMappingWindow,
+    ToggleOcrWindow,
     ToggleAsrChatWindow,
+    TogglePluginWorkerWindow,
+    ToggleChatWindow,
     ToggleErrorWindow,
     ToggleInspectorWindow,
     ToggleReminderWindow,
@@ -237,6 +247,10 @@ struct AppRuntime {
     bool dragging_pivot = false;
     float drag_last_x = 0.0f;
     float drag_last_y = 0.0f;
+    float drag_start_mouse_x = 0.0f;
+    float drag_start_mouse_y = 0.0f;
+    float drag_start_world_x = 0.0f;
+    float drag_start_world_y = 0.0f;
     float drag_start_pos_x = 0.0f;
     float drag_start_pos_y = 0.0f;
     float drag_start_pivot_x = 0.0f;
@@ -253,6 +267,12 @@ struct AppRuntime {
     AxisConstraint axis_constraint = AxisConstraint::None;
     bool snap_enabled = false;
     float snap_grid = 10.0f;
+    float editor_drag_sensitivity = 1.0f;
+    float editor_gizmo_sensitivity = 1.0f;
+    bool editor_snap_active_x = false;
+    bool editor_snap_active_y = false;
+    float editor_snap_world_x = 0.0f;
+    float editor_snap_world_y = 0.0f;
 
     bool dragging_model_whole = false;
     float dragging_model_last_x = 0.0f;
@@ -265,6 +285,15 @@ struct AppRuntime {
     char resource_tree_filter[128] = "";
     bool resource_tree_auto_expand_matches = true;
     int selected_deformer_type = 0; // 0=Warp, 1=Rotation
+
+    // 拾取策略
+    bool pick_lock_filter_enabled = true;
+    bool pick_scope_filter_enabled = false;
+    int pick_scope_mode = 0; // 0=All,1=Selected,2=Children
+    bool pick_name_filter_enabled = false;
+    char pick_name_filter[128] = "";
+    bool pick_cycle_enabled = false;
+    int pick_cycle_offset = 0;
 
     struct WindowLayoutState {
         float pos_x = 0.0f;
@@ -281,12 +310,16 @@ struct AppRuntime {
          bool show_editor_window = true;
          bool show_timeline_window = true;
          bool show_perception_window = true;
+         bool show_ocr_window = true;
          bool show_mapping_window = true;
          bool show_asr_chat_window = true;
+         bool show_plugin_worker_window = true;
+         bool show_chat_window = true;
          bool show_error_window = true;
          bool show_inspector_window = true;
          bool show_reminder_window = true;
          bool show_plugin_quick_control_window = true;
+         bool show_plugin_detail_window = false;
          std::string manual_docking_ini;
          WorkspaceLayoutMode layout_mode = WorkspaceLayoutMode::Preset;
          WorkspaceMode last_applied_mode = WorkspaceMode::Debug;
@@ -296,7 +329,7 @@ struct AppRuntime {
          bool manual_layout_save_suppressed = false;
          int manual_layout_stable_frames = 0;
      };
-WindowLayoutState runtime_debug_window_layout{};
+ WindowLayoutState runtime_debug_window_layout{};
 
     SDL_Window *&window = window_state.window;
     SDL_Renderer *&renderer = window_state.renderer;
@@ -326,13 +359,17 @@ WindowLayoutState runtime_debug_window_layout{};
     bool &show_editor_window = workspace.show_editor_window;
     bool &show_timeline_window = workspace.show_timeline_window;
     bool &show_perception_window = workspace.show_perception_window;
+    bool &show_ocr_window = workspace.show_ocr_window;
     bool &show_mapping_window = workspace.show_mapping_window;
-     bool &show_asr_chat_window = workspace.show_asr_chat_window;
-     bool &show_error_window = workspace.show_error_window;
-     bool &show_inspector_window = workspace.show_inspector_window;
-     bool &show_reminder_window = workspace.show_reminder_window;
-     bool &show_plugin_quick_control_window = workspace.show_plugin_quick_control_window;
-std::string &workspace_manual_docking_ini = workspace.manual_docking_ini;
+    bool &show_asr_chat_window = workspace.show_asr_chat_window;
+    bool &show_plugin_worker_window = workspace.show_plugin_worker_window;
+    bool &show_chat_window = workspace.show_chat_window;
+    bool &show_error_window = workspace.show_error_window;
+    bool &show_inspector_window = workspace.show_inspector_window;
+    bool &show_reminder_window = workspace.show_reminder_window;
+    bool &show_plugin_quick_control_window = workspace.show_plugin_quick_control_window;
+    bool &show_plugin_detail_window = workspace.show_plugin_detail_window;
+ std::string &workspace_manual_docking_ini = workspace.manual_docking_ini;
     WorkspaceLayoutMode &workspace_layout_mode = workspace.layout_mode;
     WorkspaceMode &last_applied_workspace_mode = workspace.last_applied_mode;
     bool &workspace_preset_apply_requested = workspace.preset_apply_requested;
@@ -346,10 +383,15 @@ std::string &workspace_manual_docking_ini = workspace.manual_docking_ini;
     int selected_param_group_index = 0;
     char param_search[128] = "";
     int batch_bind_prop_type = 0; // 对应 BindingType 枚举值
+    int batch_bind_template_index = 0; // 0=Custom, >=1 表示模板序号
     float batch_bind_in_min = -1.0f;
     float batch_bind_in_max = 1.0f;
     float batch_bind_out_min = -1.0f;
     float batch_bind_out_max = 1.0f;
+    bool editor_param_panel_expanded = true;
+    bool editor_param_quick_expanded = true;
+    bool editor_param_group_table_expanded = true;
+    bool editor_param_batch_bind_expanded = true;
 
     // 时间轴 v1
     bool timeline_enabled = false;
@@ -372,6 +414,8 @@ std::string &workspace_manual_docking_ini = workspace.manual_docking_ini;
     float gizmo_drag_start_mouse_y = 0.0f;
     float gizmo_drag_start_pos_x = 0.0f;
     float gizmo_drag_start_pos_y = 0.0f;
+    float gizmo_drag_start_world_x = 0.0f;
+    float gizmo_drag_start_world_y = 0.0f;
     float gizmo_drag_start_rot_deg = 0.0f;
     float gizmo_drag_start_scale_x = 1.0f;
     float gizmo_drag_start_scale_y = 1.0f;
@@ -384,9 +428,20 @@ std::string &workspace_manual_docking_ini = workspace.manual_docking_ini;
     std::string editor_status;
     float editor_status_ttl = 0.0f;
 
+    bool editor_autosave_enabled = true;
+    float editor_autosave_interval_sec = 120.0f;
+    float editor_autosave_accum_sec = 0.0f;
+    bool editor_autosave_recovery_available = false;
+    bool editor_autosave_recovery_prompted = false;
+    bool editor_autosave_recovery_checked = false;
+    std::string editor_autosave_path;
+    std::string editor_autosave_last_error;
+
     // 工程级会话文件（project.json）路径
     std::string current_project_path = "assets/project.json";
     bool editor_project_dirty = false;
+
+    int editor_history_selected_index = -1;
 
     float debug_fps = 0.0f;
     float debug_frame_ms = 0.0f;
@@ -405,14 +460,30 @@ std::string &workspace_manual_docking_ini = workspace.manual_docking_ini;
     BehaviorFusionConfig behavior_fusion_config{};
 
     std::vector<PluginConfigEntry> plugin_config_entries;
+    std::unordered_map<std::string, bool> plugin_enabled_states;
     int plugin_selected_entry_index = -1;
     bool plugin_config_refresh_requested = false;
     std::string plugin_config_scan_error;
     char plugin_name_input[128] = "";
+    char plugin_edit_model_id_input[128] = "";
+    char plugin_edit_onnx_input[260] = "";
+    char plugin_edit_extra_onnx_input[512] = "";
+    std::string plugin_edit_config_path;
     std::string plugin_switch_status;
     std::string plugin_switch_error;
     std::string plugin_delete_status;
     std::string plugin_delete_error;
+
+    bool plugin_detail_edit_loaded = false;
+    std::string plugin_detail_edit_source;
+    char plugin_detail_edit_model_id_input[128] = "";
+    char plugin_detail_edit_onnx_input[260] = "";
+    char plugin_detail_edit_extra_onnx_input[512] = "";
+    char plugin_detail_edit_labels_input[260] = "";
+    char plugin_detail_edit_det_input[260] = "";
+    char plugin_detail_edit_rec_input[260] = "";
+    char plugin_detail_edit_keys_input[260] = "";
+    char plugin_detail_edit_model_input[260] = "";
 
     std::vector<UnifiedPluginEntry> unified_plugin_entries;
     int unified_plugin_selected_index = -1;
@@ -420,6 +491,7 @@ std::string &workspace_manual_docking_ini = workspace.manual_docking_ini;
     std::string unified_plugin_scan_error;
     char unified_plugin_name_input[128] = "";
     char unified_plugin_new_name_input[128] = "";
+    bool show_unified_plugin_create_modal = false;
     std::string unified_plugin_switch_status;
     std::string unified_plugin_switch_error;
     std::string unified_plugin_create_status;
@@ -554,6 +626,14 @@ std::string &workspace_manual_docking_ini = workspace.manual_docking_ini;
     std::string chat_last_switch_reason;
     char chat_input[512] = "Hello, introduce yourself";
     std::string chat_last_answer;
+ 
+    PluginDetailKind plugin_detail_kind = PluginDetailKind::None;
+    std::string plugin_detail_title;
+    std::string plugin_detail_source;
+    std::vector<std::string> plugin_detail_assets;
+    std::string plugin_detail_backend;
+    std::string plugin_detail_status;
+    std::string plugin_detail_last_error;
 
     EnergyVadSegmenter asr_vad;
     std::vector<float> asr_audio_buffer;

@@ -27,6 +27,27 @@ bool PluginInferenceAdapter::Init(const PluginRuntimeConfig &runtime_cfg,
         worker_cfg_ = worker_cfg;
     }
 
+    if (!pending_plugin_) {
+        if (!config_path_.empty()) {
+            std::string rebuild_err;
+            PluginArtifactSpec spec{};
+            auto plugin = CreateOnnxBehaviorPluginFromConfig(config_path_, &rebuild_err, &spec);
+            if (plugin) {
+                const PluginWorkerConfig rebuilt_cfg = BuildPluginWorkerConfig(spec.worker_tuning);
+                if (rebuilt_cfg.update_hz > 0) {
+                    worker_cfg_ = rebuilt_cfg;
+                }
+                pending_plugin_ = std::move(plugin);
+            } else {
+                config_path_.clear();
+                hot_reload_enabled_ = false;
+                pending_plugin_ = CreateDefaultBehaviorPlugin();
+            }
+        } else {
+            pending_plugin_ = CreateDefaultBehaviorPlugin();
+        }
+    }
+
     if (!BuildManager(std::move(pending_plugin_), out_error)) {
         ready_ = false;
         return false;

@@ -27,10 +27,16 @@ struct AppRenderContext {
     int selected_part_index = -1;
     GizmoHandle gizmo_hover_handle = GizmoHandle::None;
     GizmoHandle gizmo_active_handle = GizmoHandle::None;
+    AxisConstraint axis_constraint = AxisConstraint::None;
+    bool snap_active_x = false;
+    bool snap_active_y = false;
+    float snap_world_x = 0.0f;
+    float snap_world_y = 0.0f;
 
     const char *editor_status = nullptr;
     float editor_status_ttl = 0.0f;
     int window_h = 0;
+    int window_w = 0;
 
     // 编辑器视图（用于画布平移/缩放）。
     float view_pan_x = 0.0f;

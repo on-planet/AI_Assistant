@@ -18,8 +18,11 @@ constexpr const char *kOverviewWindowName = "Runtime Overview";
 constexpr const char *kEditorWindowName = "Runtime Editor";
 constexpr const char *kTimelineWindowName = "Runtime Timeline";
 constexpr const char *kPerceptionWindowName = "Runtime Perception";
+constexpr const char *kOcrWindowName = "Runtime OCR";
 constexpr const char *kMappingWindowName = "Runtime Mapping";
-constexpr const char *kAsrChatWindowName = "Runtime ASR + Chat";
+constexpr const char *kAsrWindowName = "Runtime ASR";
+constexpr const char *kPluginWorkerWindowName = "Runtime Plugin Worker";
+constexpr const char *kChatWindowName = "Runtime Chat";
 constexpr const char *kErrorWindowName = "Runtime Health";
 constexpr const char *kInspectorWindowName = "Model Hierarchy + Inspector";
 constexpr const char *kReminderWindowName = "Reminder";
@@ -142,10 +145,15 @@ void ApplyWorkspaceDockLayout(AppRuntime &runtime, const ImGuiID dockspace_id) {
         {DockRecipeOpType::Split, DockSlot::Main, ImGuiDir_Right, 0.30f, DockSlot::Right, DockSlot::Main},
         {DockRecipeOpType::Split, DockSlot::Right, ImGuiDir_Down, 0.32f, DockSlot::RightBottom, DockSlot::Right},
         {DockRecipeOpType::Split, DockSlot::Main, ImGuiDir_Down, 0.24f, DockSlot::Bottom, DockSlot::Main},
+        {DockRecipeOpType::Split, DockSlot::Bottom, ImGuiDir_Down, 0.38f, DockSlot::RightBottom, DockSlot::Bottom},
+        {DockRecipeOpType::Split, DockSlot::Right, ImGuiDir_Down, 0.45f, DockSlot::RightBottom, DockSlot::Right},
         {DockRecipeOpType::DockWindow, DockSlot::Main, ImGuiDir_Left, 0.0f, DockSlot::Left, DockSlot::Main, kOverviewWindowName, DockSlot::Left},
         {DockRecipeOpType::DockWindow, DockSlot::Main, ImGuiDir_Left, 0.0f, DockSlot::Left, DockSlot::Main, kErrorWindowName, DockSlot::Main},
         {DockRecipeOpType::DockWindow, DockSlot::Main, ImGuiDir_Left, 0.0f, DockSlot::Left, DockSlot::Main, kPerceptionWindowName, DockSlot::Right},
-        {DockRecipeOpType::DockWindow, DockSlot::Main, ImGuiDir_Left, 0.0f, DockSlot::Left, DockSlot::Main, kAsrChatWindowName, DockSlot::Bottom},
+        {DockRecipeOpType::DockWindow, DockSlot::Main, ImGuiDir_Left, 0.0f, DockSlot::Left, DockSlot::Main, kOcrWindowName, DockSlot::RightBottom},
+        {DockRecipeOpType::DockWindow, DockSlot::Main, ImGuiDir_Left, 0.0f, DockSlot::Left, DockSlot::Main, kAsrWindowName, DockSlot::Bottom},
+        {DockRecipeOpType::DockWindow, DockSlot::Main, ImGuiDir_Left, 0.0f, DockSlot::Left, DockSlot::Main, kPluginWorkerWindowName, DockSlot::RightBottom},
+        {DockRecipeOpType::DockWindow, DockSlot::Main, ImGuiDir_Left, 0.0f, DockSlot::Left, DockSlot::Main, kChatWindowName, DockSlot::Bottom},
         {DockRecipeOpType::DockWindow, DockSlot::Main, ImGuiDir_Left, 0.0f, DockSlot::Left, DockSlot::Main, kInspectorWindowName, DockSlot::Left},
         {DockRecipeOpType::DockWindow, DockSlot::Main, ImGuiDir_Left, 0.0f, DockSlot::Left, DockSlot::Main, kReminderWindowName, DockSlot::RightBottom},
         {DockRecipeOpType::DockWindow, DockSlot::Main, ImGuiDir_Left, 0.0f, DockSlot::Left, DockSlot::Main, kPluginQuickControlWindowName, DockSlot::RightBottom},
@@ -386,6 +394,13 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
             ImGui::End();
         }
 
+        if (runtime.show_ocr_window) {
+            if (ImGui::Begin(kOcrWindowName, &runtime.show_ocr_window, panel_flags)) {
+                RenderRuntimeOcrPanel(runtime);
+            }
+            ImGui::End();
+        }
+
         if (runtime.show_mapping_window) {
             if (ImGui::Begin(kMappingWindowName, &runtime.show_mapping_window, panel_flags)) {
                 RenderRuntimeMappingPanel(runtime);
@@ -394,8 +409,22 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
         }
 
         if (runtime.show_asr_chat_window) {
-            if (ImGui::Begin(kAsrChatWindowName, &runtime.show_asr_chat_window, panel_flags)) {
-                RenderRuntimeAsrChatPanel(runtime);
+            if (ImGui::Begin(kAsrWindowName, &runtime.show_asr_chat_window, panel_flags)) {
+                RenderRuntimeAsrPanel(runtime);
+            }
+            ImGui::End();
+        }
+
+        if (runtime.show_plugin_worker_window) {
+            if (ImGui::Begin(kPluginWorkerWindowName, &runtime.show_plugin_worker_window, panel_flags)) {
+                RenderRuntimePluginWorkerPanel(runtime);
+            }
+            ImGui::End();
+        }
+
+        if (runtime.show_chat_window) {
+            if (ImGui::Begin(kChatWindowName, &runtime.show_chat_window, panel_flags)) {
+                RenderRuntimeChatPanel(runtime);
             }
             ImGui::End();
         }
@@ -406,10 +435,24 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
             }
             ImGui::End();
         }
- 
+  
         if (runtime.show_plugin_quick_control_window) {
             if (ImGui::Begin(kPluginQuickControlWindowName, &runtime.show_plugin_quick_control_window, panel_flags)) {
                 RenderRuntimePluginQuickControlPanel(runtime);
+            }
+            ImGui::End();
+        }
+
+        if (runtime.show_plugin_detail_window) {
+            const ImGuiViewport *detail_vp = ImGui::GetMainViewport();
+            ImGui::SetNextWindowPos(detail_vp->WorkPos);
+            ImGui::SetNextWindowSize(detail_vp->WorkSize);
+            ImGuiWindowFlags detail_flags = ImGuiWindowFlags_NoDocking |
+                                            ImGuiWindowFlags_NoCollapse |
+                                            ImGuiWindowFlags_NoResize |
+                                            ImGuiWindowFlags_NoMove;
+            if (ImGui::Begin("Plugin Detail", &runtime.show_plugin_detail_window, detail_flags)) {
+                RenderRuntimePluginDetailPanel(runtime);
             }
             ImGui::End();
         }
@@ -501,6 +544,16 @@ constexpr int kManualLayoutSaveStableFrames = 12;
             ImGui::SetNextWindowSize(ImVec2(right_w, reminder_h), ImGuiCond_FirstUseEver);
             if (ImGui::Begin(kPluginQuickControlWindowName, &runtime.show_plugin_quick_control_window)) {
                 RenderRuntimePluginQuickControlPanel(runtime);
+            }
+            ImGui::End();
+        }
+
+        if (runtime.show_plugin_detail_window) {
+            ImGui::SetNextWindowPos(ImVec2(base_x + margin, base_y + top_offset), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(usable_w, usable_h), ImGuiCond_FirstUseEver);
+            ImGuiWindowFlags detail_flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+            if (ImGui::Begin("Plugin Detail", &runtime.show_plugin_detail_window, detail_flags)) {
+                RenderRuntimePluginDetailPanel(runtime);
             }
             ImGui::End();
         }

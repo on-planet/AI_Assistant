@@ -4,22 +4,72 @@
 #include "desktoper2D/lifecycle/state/app_runtime_state.h"
 #include "desktoper2D/controllers/interaction_controller.h"
 
+#include <string>
+
 namespace desktoper2D {
 
 EditorInputCallbacks BuildEditorInputCallbacksFromRuntime(AppRuntime &runtime,
                                                           EditorInputBindingBridge bridge) {
+    auto set_editor_status = [&runtime](const std::string &text, float ttl_sec) {
+        runtime.editor_status = text;
+        runtime.editor_status_ttl = std::max(0.0f, ttl_sec);
+    };
+
     const auto ctx = AppInputControllerContext{
         .running = &runtime.running,
         .show_debug_stats = &runtime.show_debug_stats,
         .gui_enabled = &runtime.gui_enabled,
         .edit_mode = &runtime.edit_mode,
         .manual_param_mode = &runtime.manual_param_mode,
-        .toggle_edit_mode = bridge.toggle_edit_mode,
-        .toggle_manual_param_mode = bridge.toggle_manual_param_mode,
+        .toggle_edit_mode = [&runtime, bridge, set_editor_status]() {
+            if (bridge.toggle_edit_mode) {
+                bridge.toggle_edit_mode();
+                if (runtime.edit_mode && !runtime.manual_param_mode) {
+                    set_editor_status("进入编辑态：参数仍由运行态驱动", 2.5f);
+                } else if (runtime.edit_mode && runtime.manual_param_mode) {
+                    set_editor_status("编辑态 + 手动参数：将覆盖运行态/动画通道参数", 2.5f);
+                } else {
+                    set_editor_status("退出编辑态：回到运行态驱动", 2.0f);
+                }
+            }
+        },
+        .toggle_manual_param_mode = [&runtime, bridge, set_editor_status]() {
+            if (bridge.toggle_manual_param_mode) {
+                bridge.toggle_manual_param_mode();
+                if (runtime.manual_param_mode && !runtime.edit_mode) {
+                    set_editor_status("手动参数开启：运行态参数将被手动编辑覆盖", 2.5f);
+                } else if (runtime.manual_param_mode) {
+                    set_editor_status("编辑态 + 手动参数：将覆盖运行态/动画通道参数", 2.5f);
+                } else {
+                    set_editor_status("手动参数关闭：回到运行态参数驱动", 2.0f);
+                }
+            }
+        },
         .cycle_selected_part = bridge.cycle_selected_part,
-        .adjust_selected_param = bridge.adjust_selected_param,
-        .reset_selected_param = bridge.reset_selected_param,
-        .reset_all_params = bridge.reset_all_params,
+        .adjust_selected_param = [&runtime, bridge, set_editor_status](float delta) {
+            if (bridge.adjust_selected_param) {
+                bridge.adjust_selected_param(delta);
+                if (!runtime.edit_mode && runtime.manual_param_mode) {
+                    set_editor_status("运行态参数被手动输入覆盖", 1.8f);
+                }
+            }
+        },
+        .reset_selected_param = [&runtime, bridge, set_editor_status]() {
+            if (bridge.reset_selected_param) {
+                bridge.reset_selected_param();
+                if (!runtime.edit_mode && runtime.manual_param_mode) {
+                    set_editor_status("运行态参数重置：仍处于手动覆盖", 1.8f);
+                }
+            }
+        },
+        .reset_all_params = [&runtime, bridge, set_editor_status]() {
+            if (bridge.reset_all_params) {
+                bridge.reset_all_params();
+                if (!runtime.edit_mode && runtime.manual_param_mode) {
+                    set_editor_status("运行态参数重置：仍处于手动覆盖", 1.8f);
+                }
+            }
+        },
         .save_model = bridge.save_model,
         .save_project = bridge.save_project,
         .save_project_as = bridge.save_project_as,
@@ -45,6 +95,9 @@ EditorInputCallbacks BuildEditorInputCallbacksFromRuntime(AppRuntime &runtime,
                 if (shift_pressed) {
                     bridge.BeginDragPivot(mx, my);
                 } else {
+                    if (runtime.pick_cycle_enabled) {
+                        runtime.pick_cycle_offset += 1;
+                    }
                     bridge.BeginDragPart(mx, my);
                 }
             } else if (button == SDL_BUTTON_RIGHT) {

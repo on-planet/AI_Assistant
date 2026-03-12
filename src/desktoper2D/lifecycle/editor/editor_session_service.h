@@ -16,6 +16,11 @@ bool LoadEditorProjectJsonFromDisk(AppRuntime &runtime,
                                    const std::string &project_path,
                                    std::string *out_error = nullptr);
 
+bool SaveEditorAutosaveProject(AppRuntime &runtime, std::string *out_error = nullptr);
+bool LoadEditorAutosaveProject(AppRuntime &runtime, std::string *out_error = nullptr);
+bool ClearEditorAutosaveProject(AppRuntime &runtime, std::string *out_error = nullptr);
+void RefreshEditorAutosaveState(AppRuntime &runtime);
+
 void SaveEditedModelJsonToDisk(AppRuntime &runtime);
 void SaveEditorProjectToDisk(AppRuntime &runtime);
 void SaveEditorProjectAsToDisk(AppRuntime &runtime);

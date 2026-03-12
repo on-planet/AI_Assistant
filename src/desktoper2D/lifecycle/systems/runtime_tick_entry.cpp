@@ -2,9 +2,10 @@
 
 #include <vector>
 #include <cmath>
-
+#include <algorithm>
 
 #include "desktoper2D/controllers/interaction_controller.h"
+#include "desktoper2D/lifecycle/editor/editor_session_service.h"
 #include "desktoper2D/core/model.h"
 #include "desktoper2D/lifecycle/behavior_applier.h"
 #include "desktoper2D/lifecycle/model_reload_service.h"
@@ -19,6 +20,30 @@ namespace desktoper2D {
 
 void RunRuntimeTickEntry(AppRuntime &runtime, float dt, const RuntimeTickBridge &bridge) {
     ConsumeUiCommandQueue(runtime);
+
+    if (!runtime.editor_autosave_recovery_checked) {
+        RefreshEditorAutosaveState(runtime);
+    }
+
+    if (runtime.editor_autosave_enabled && runtime.model_loaded) {
+        if (!runtime.editor_project_dirty) {
+            runtime.editor_autosave_accum_sec = 0.0f;
+        } else {
+            runtime.editor_autosave_accum_sec += std::max(0.0f, dt);
+            if (runtime.editor_autosave_accum_sec >= runtime.editor_autosave_interval_sec) {
+                std::string err;
+                if (SaveEditorAutosaveProject(runtime, &err)) {
+                    runtime.editor_status = "autosaved project";
+                    runtime.editor_status_ttl = 2.0f;
+                } else {
+                    runtime.editor_status = "autosave failed: " + err;
+                    runtime.editor_status_ttl = 3.5f;
+                }
+                runtime.editor_autosave_accum_sec = 0.0f;
+            }
+        }
+    }
+
     UpdatePluginLifecycle(runtime);
 
     if (runtime.model_loaded) {

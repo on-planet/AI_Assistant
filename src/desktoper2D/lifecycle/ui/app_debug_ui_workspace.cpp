@@ -73,9 +73,21 @@ void RenderWorkspaceToolbar(AppRuntime &runtime) {
         if (ImGui::MenuItem("Mapping", nullptr, &show_mapping)) {
             ApplyWorkspaceAction(bridge, WorkspaceAction{.type = WorkspaceActionType::ToggleMappingWindow, .bool_value = show_mapping});
         }
-        bool show_asr_chat = runtime.show_asr_chat_window;
-        if (ImGui::MenuItem("ASR/Chat", nullptr, &show_asr_chat)) {
-            ApplyWorkspaceAction(bridge, WorkspaceAction{.type = WorkspaceActionType::ToggleAsrChatWindow, .bool_value = show_asr_chat});
+        bool show_ocr = runtime.show_ocr_window;
+        if (ImGui::MenuItem("OCR", nullptr, &show_ocr)) {
+            ApplyWorkspaceAction(bridge, WorkspaceAction{.type = WorkspaceActionType::ToggleOcrWindow, .bool_value = show_ocr});
+        }
+        bool show_asr = runtime.show_asr_chat_window;
+        if (ImGui::MenuItem("ASR", nullptr, &show_asr)) {
+            ApplyWorkspaceAction(bridge, WorkspaceAction{.type = WorkspaceActionType::ToggleAsrChatWindow, .bool_value = show_asr});
+        }
+        bool show_plugin_worker = runtime.show_plugin_worker_window;
+        if (ImGui::MenuItem("Plugin Worker", nullptr, &show_plugin_worker)) {
+            ApplyWorkspaceAction(bridge, WorkspaceAction{.type = WorkspaceActionType::TogglePluginWorkerWindow, .bool_value = show_plugin_worker});
+        }
+        bool show_chat = runtime.show_chat_window;
+        if (ImGui::MenuItem("Chat", nullptr, &show_chat)) {
+            ApplyWorkspaceAction(bridge, WorkspaceAction{.type = WorkspaceActionType::ToggleChatWindow, .bool_value = show_chat});
         }
         bool show_error = runtime.show_error_window;
         if (ImGui::MenuItem("Health", nullptr, &show_error)) {

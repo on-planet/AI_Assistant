@@ -54,6 +54,33 @@ std::string ToString(UnifiedPluginStatus status) {
     }
 }
 
+std::vector<std::tuple<std::string, std::string, std::string>> BuildOcrCandidateTriplesForPaths(
+    const std::string &det_path,
+    const std::string &rec_path,
+    const std::string &keys_path) {
+    std::vector<std::tuple<std::string, std::string, std::string>> out;
+    if (det_path.empty() || rec_path.empty() || keys_path.empty()) {
+        return out;
+    }
+
+    std::vector<std::tuple<std::string, std::string, std::string>> relative_triples;
+    relative_triples.emplace_back(det_path, rec_path, keys_path);
+    if (keys_path == "assets/ppocr_keys.txt") {
+        relative_triples.emplace_back(det_path, rec_path, "assets/ocr/ppocr_keys.txt");
+    } else if (keys_path == "assets/ocr/ppocr_keys.txt") {
+        relative_triples.emplace_back(det_path, rec_path, "assets/ppocr_keys.txt");
+    }
+
+    for (const auto &triple : relative_triples) {
+        auto candidates = ResourceLocator::BuildCandidateTriples(
+            std::get<0>(triple),
+            std::get<1>(triple),
+            std::get<2>(triple));
+        out.insert(out.end(), candidates.begin(), candidates.end());
+    }
+    return out;
+}
+
 UnifiedPluginEntry MakeEntry(UnifiedPluginKind kind,
                              const std::string &name,
                              const std::string &version,
@@ -502,6 +529,35 @@ bool SwitchUnifiedPluginById(AppRuntime &runtime, const std::string &id, std::st
     return true;
 }
 
+bool DeleteUnifiedPluginById(AppRuntime &runtime, const std::string &id, std::string *out_error) {
+    const auto it = std::find_if(runtime.unified_plugin_entries.begin(), runtime.unified_plugin_entries.end(),
+                                 [&](const UnifiedPluginEntry &entry) { return entry.id == id; });
+    if (it == runtime.unified_plugin_entries.end()) {
+        if (out_error) *out_error = "unified plugin not found: " + id;
+        return false;
+    }
+
+    if (it->kind != UnifiedPluginKind::BehaviorUser) {
+        if (out_error) *out_error = "delete only supported for behavior user plugins";
+        return false;
+    }
+
+    std::string err;
+    const std::filesystem::path config_path = it->source.empty() ? it->name : it->source;
+    const bool ok = DeletePluginConfig(runtime, config_path.generic_string(), &err);
+    if (!ok) {
+        if (out_error) *out_error = err.empty() ? "delete plugin failed" : err;
+        const std::string msg = out_error ? *out_error : std::string("delete plugin failed");
+        AppendPluginLog(runtime, it->id, PluginLogLevel::Error, msg,
+                        ToErrorCode(msg, RuntimeErrorCode::InitFailed));
+        return false;
+    }
+
+    AppendPluginLog(runtime, it->id, PluginLogLevel::Info, "plugin deleted");
+    if (out_error) out_error->clear();
+    return true;
+}
+
 bool ReplaceUnifiedPluginAssets(AppRuntime &runtime,
                                 const std::string &id,
                                 const PluginAssetOverride &override,
@@ -716,10 +772,10 @@ bool ApplyOverrideModels(AppRuntime &runtime, std::string *out_error) {
         scene_labels.empty() ? "assets/mobileclip_labels.json" : scene_labels);
     std::vector<std::tuple<std::string, std::string, std::string>> ocr_candidates;
     if (!ocr_det.empty() && !ocr_rec.empty() && !ocr_keys.empty()) {
-        ocr_candidates.push_back({ocr_det, ocr_rec, ocr_keys});
+        ocr_candidates = BuildOcrCandidateTriplesForPaths(ocr_det, ocr_rec, ocr_keys);
     } else if (!runtime.ocr_model_entries.empty()) {
         const auto &entry = runtime.ocr_model_entries.front();
-        ocr_candidates.push_back({entry.det_path, entry.rec_path, entry.keys_path});
+        ocr_candidates = BuildOcrCandidateTriplesForPaths(entry.det_path, entry.rec_path, entry.keys_path);
     }
     const auto facemesh_candidates = ResourceLocator::BuildCandidatePairs(
         face_model.empty() ? "assets/facemesh.onnx" : face_model,
@@ -761,9 +817,7 @@ bool SwitchOcrModelByName(AppRuntime &runtime, const std::string &name, std::str
     const auto scene_model_candidates = ResourceLocator::BuildCandidatePairs(
         "assets/mobileclip_image.onnx",
         "assets/mobileclip_labels.json");
-    std::vector<std::tuple<std::string, std::string, std::string>> ocr_candidates = {
-        {it->det_path, it->rec_path, it->keys_path},
-    };
+    const auto ocr_candidates = BuildOcrCandidateTriplesForPaths(it->det_path, it->rec_path, it->keys_path);
     const auto facemesh_candidates = ResourceLocator::BuildCandidatePairs(
         "assets/facemesh.onnx",
         "assets/facemesh.labels.json");

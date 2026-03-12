@@ -32,8 +32,10 @@ void ReduceToggleTimelineWindow(AppRuntime &runtime, const UiCommand &cmd) { run
 void ReduceTogglePerceptionWindow(AppRuntime &runtime, const UiCommand &cmd) { runtime.show_perception_window = cmd.bool_value; }
 void ReduceToggleMappingWindow(AppRuntime &runtime, const UiCommand &cmd) { runtime.show_mapping_window = cmd.bool_value; }
 void ReduceToggleAsrChatWindow(AppRuntime &runtime, const UiCommand &cmd) { runtime.show_asr_chat_window = cmd.bool_value; }
-void ReduceToggleErrorWindow(AppRuntime &runtime, const UiCommand &cmd) { runtime.show_error_window = cmd.bool_value; }void ReduceToggleInspectorWindow(AppRuntime &runtime, const UiCommand &cmd) { runtime.show_inspector_window = cmd.bool_value; }
+void ReduceToggleErrorWindow(AppRuntime &runtime, const UiCommand &cmd) { runtime.show_error_window = cmd.bool_value; }
+void ReduceToggleInspectorWindow(AppRuntime &runtime, const UiCommand &cmd) { runtime.show_inspector_window = cmd.bool_value; }
 void ReduceToggleReminderWindow(AppRuntime &runtime, const UiCommand &cmd) { runtime.show_reminder_window = cmd.bool_value; }
+void ReduceTogglePluginQuickControlWindow(AppRuntime &runtime, const UiCommand &cmd) { runtime.show_plugin_quick_control_window = cmd.bool_value; }
 
 void ReduceResetPerceptionState(AppRuntime &runtime, const UiCommand &cmd) {
     ResetPerceptionRuntimeState(runtime.perception_state);
@@ -71,7 +73,7 @@ void ReduceCloseProgram(AppRuntime &runtime, const UiCommand &cmd) {
                                   .message = "Program close requested"});
 }
 
-const std::array<UiCommandReducerEntry, 20> kUiCommandReducerTable = {{
+const std::array<UiCommandReducerEntry, 21> kUiCommandReducerTable = {{
     {UiCommandType::SwitchWorkspaceMode, &ReduceSwitchWorkspaceMode},
     {UiCommandType::ApplyPresetLayout, &ReduceApplyPresetLayout},
     {UiCommandType::ResetManualLayout, &ReduceResetManualLayout},
@@ -85,6 +87,7 @@ const std::array<UiCommandReducerEntry, 20> kUiCommandReducerTable = {{
     {UiCommandType::ToggleErrorWindow, &ReduceToggleErrorWindow},
     {UiCommandType::ToggleInspectorWindow, &ReduceToggleInspectorWindow},
     {UiCommandType::ToggleReminderWindow, &ReduceToggleReminderWindow},
+    {UiCommandType::TogglePluginQuickControlWindow, &ReduceTogglePluginQuickControlWindow},
     {UiCommandType::ForceDockRebuild, &ReduceForceDockRebuild},
     {UiCommandType::ResetPerceptionState, &ReduceResetPerceptionState},
     {UiCommandType::ResetErrorCounters, &ReduceResetErrorCounters},

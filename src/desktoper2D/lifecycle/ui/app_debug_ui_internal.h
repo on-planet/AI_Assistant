@@ -35,9 +35,9 @@ struct WorkspaceWindowVisibility {
     bool show_mapping_window = true;
     bool show_asr_chat_window = true;
     bool show_error_window = true;
-    bool show_ops_window = true;
     bool show_inspector_window = true;
     bool show_reminder_window = true;
+    bool show_plugin_quick_control_window = true;
 };
 
 inline WorkspaceWindowVisibility BuildWorkspaceDefaultVisibility(const WorkspaceMode mode) {
@@ -56,9 +56,9 @@ inline WorkspaceWindowVisibility BuildWorkspaceDefaultVisibility(const Workspace
             break;
         case WorkspaceMode::Animation:
             v.show_error_window = false;
-            v.show_ops_window = false;
             v.show_asr_chat_window = false;
             v.show_reminder_window = false;
+            v.show_plugin_quick_control_window = false;
             break;
         case WorkspaceMode::Authoring:
             v.show_asr_chat_window = false;
@@ -80,6 +80,7 @@ inline void ApplyWorkspaceWindowVisibility(AppRuntime &runtime, const WorkspaceW
     runtime.show_error_window = v.show_error_window;
     runtime.show_inspector_window = v.show_inspector_window;
     runtime.show_reminder_window = v.show_reminder_window;
+    runtime.show_plugin_quick_control_window = v.show_plugin_quick_control_window;
 }
 
 inline bool HasAnyWorkspaceChildWindowVisible(const AppRuntime &runtime) {
@@ -91,7 +92,8 @@ inline bool HasAnyWorkspaceChildWindowVisible(const AppRuntime &runtime) {
            runtime.show_asr_chat_window ||
            runtime.show_error_window ||
            runtime.show_inspector_window ||
-           runtime.show_reminder_window;
+           runtime.show_reminder_window ||
+           runtime.show_plugin_quick_control_window;
 }
 
 struct TimelineInteractionStorage {
@@ -127,7 +129,6 @@ void RenderUnifiedPluginStatusCard(const AppRuntime &runtime, const char *empty_
 void RenderRuntimePluginHealthPanel(AppRuntime &runtime);
 std::string &RuntimeOpsStatusStorage();
 void RenderRuntimeOpsActions(AppRuntime &runtime);
-void RenderRuntimePluginManagement(AppRuntime &runtime);
 void RenderRuntimePluginManagement(AppRuntime &runtime);
 
 }  // namespace desktoper2D

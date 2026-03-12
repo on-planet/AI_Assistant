@@ -41,6 +41,7 @@ public:
               int camera_index = 0);
 
     void Shutdown() noexcept;
+    void CancelPending() noexcept;
 
     bool IsReady() const noexcept;
 

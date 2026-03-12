@@ -23,9 +23,9 @@ void ApplyWorkspaceAction(const UiCommandBridge &bridge, const WorkspaceAction &
         {WorkspaceActionType::ToggleMappingWindow, UiCommandType::ToggleMappingWindow, false},
         {WorkspaceActionType::ToggleAsrChatWindow, UiCommandType::ToggleAsrChatWindow, false},
         {WorkspaceActionType::ToggleErrorWindow, UiCommandType::ToggleErrorWindow, false},
-        {WorkspaceActionType::ToggleOpsWindow, UiCommandType::ToggleOpsWindow, false},
         {WorkspaceActionType::ToggleInspectorWindow, UiCommandType::ToggleInspectorWindow, false},
         {WorkspaceActionType::ToggleReminderWindow, UiCommandType::ToggleReminderWindow, false},
+        {WorkspaceActionType::TogglePluginQuickControlWindow, UiCommandType::TogglePluginQuickControlWindow, false},
         {WorkspaceActionType::ForceDockRebuild, UiCommandType::ForceDockRebuild, false},
     }};
 

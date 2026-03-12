@@ -17,9 +17,9 @@ enum class WorkspaceActionType {
     ToggleMappingWindow,
     ToggleAsrChatWindow,
     ToggleErrorWindow,
-    ToggleOpsWindow,
     ToggleInspectorWindow,
     ToggleReminderWindow,
+    TogglePluginQuickControlWindow,
     ForceDockRebuild,
 };
 

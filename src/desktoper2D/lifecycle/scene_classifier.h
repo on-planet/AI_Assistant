@@ -20,6 +20,7 @@ public:
               const std::string &labels_path,
               std::string *out_error);
     void Shutdown() noexcept;
+    void CancelPending() noexcept;
 
     bool IsReady() const noexcept;
 

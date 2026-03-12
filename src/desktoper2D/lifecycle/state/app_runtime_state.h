@@ -158,9 +158,9 @@ enum class UiCommandType {
     ToggleMappingWindow,
     ToggleAsrChatWindow,
     ToggleErrorWindow,
-    ToggleOpsWindow,
     ToggleInspectorWindow,
     ToggleReminderWindow,
+    TogglePluginQuickControlWindow,
     ForceDockRebuild,
     ResetPerceptionState,
     ResetErrorCounters,
@@ -284,9 +284,9 @@ struct AppRuntime {
          bool show_mapping_window = true;
          bool show_asr_chat_window = true;
          bool show_error_window = true;
-         bool show_ops_window = true;
          bool show_inspector_window = true;
          bool show_reminder_window = true;
+         bool show_plugin_quick_control_window = true;
          std::string manual_docking_ini;
          WorkspaceLayoutMode layout_mode = WorkspaceLayoutMode::Preset;
          WorkspaceMode last_applied_mode = WorkspaceMode::Debug;
@@ -329,9 +329,9 @@ WindowLayoutState runtime_debug_window_layout{};
     bool &show_mapping_window = workspace.show_mapping_window;
      bool &show_asr_chat_window = workspace.show_asr_chat_window;
      bool &show_error_window = workspace.show_error_window;
-     bool &show_ops_window = workspace.show_ops_window;
      bool &show_inspector_window = workspace.show_inspector_window;
      bool &show_reminder_window = workspace.show_reminder_window;
+     bool &show_plugin_quick_control_window = workspace.show_plugin_quick_control_window;
 std::string &workspace_manual_docking_ini = workspace.manual_docking_ini;
     WorkspaceLayoutMode &workspace_layout_mode = workspace.layout_mode;
     WorkspaceMode &last_applied_workspace_mode = workspace.last_applied_mode;
@@ -424,6 +424,8 @@ std::string &workspace_manual_docking_ini = workspace.manual_docking_ini;
     std::string unified_plugin_switch_error;
     std::string unified_plugin_create_status;
     std::string unified_plugin_create_error;
+    std::string unified_plugin_delete_status;
+    std::string unified_plugin_delete_error;
 
     std::vector<AsrProviderEntry> asr_provider_entries;
     int asr_selected_entry_index = -1;

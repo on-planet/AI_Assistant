@@ -1,6 +1,7 @@
 #include "desktoper2D/lifecycle/ui/app_debug_ui_widgets.h"
 
 #include <cctype>
+#include <cstdlib>
 #include <sstream>
 
 #include "desktoper2D/lifecycle/ui/app_debug_ui_types.h"
@@ -8,6 +9,27 @@
 #include "nfd.h"
 
 namespace desktoper2D {
+
+namespace {
+
+bool EnsureNfdInitialized(std::string *out_error) {
+    static bool initialized = false;
+    if (initialized) {
+        return true;
+    }
+    if (NFD_Init() != NFD_OKAY) {
+        if (out_error != nullptr) {
+            const char *err = NFD_GetError();
+            *out_error = err ? err : "nfd init failed";
+        }
+        return false;
+    }
+    std::atexit([]() { NFD_Quit(); });
+    initialized = true;
+    return true;
+}
+
+}  // namespace
 
 const char *UnifiedPluginStatusLabel(UnifiedPluginStatus status) {
     switch (status) {
@@ -177,18 +199,30 @@ std::string LimitTextLines(const std::string &text, int max_lines, bool *out_tru
         return text;
     }
 
+    constexpr std::size_t kMaxChars = 4000;
+    bool truncated = false;
+
     int lines = 1;
     std::size_t cut_pos = std::string::npos;
-    for (std::size_t i = 0; i < text.size(); ++i) {
+    const std::size_t n = text.size();
+    const std::size_t scan_limit = std::min(n, kMaxChars + 1);
+    for (std::size_t i = 0; i < scan_limit; ++i) {
         if (text[i] == '\n') {
             lines += 1;
             if (lines > max_lines) {
                 cut_pos = i;
+                truncated = true;
                 break;
             }
         }
+        if (i >= kMaxChars) {
+            cut_pos = i;
+            truncated = true;
+            break;
+        }
     }
-    if (cut_pos == std::string::npos) {
+
+    if (!truncated) {
         return text;
     }
     if (out_truncated != nullptr) {
@@ -242,11 +276,7 @@ bool RenderFilePickerButton(const char *button_label,
         return false;
     }
 
-    if (NFD_Init() != NFD_OKAY) {
-        if (out_error != nullptr) {
-            const char *err = NFD_GetError();
-            *out_error = err ? err : "nfd init failed";
-        }
+    if (!EnsureNfdInitialized(out_error)) {
         return false;
     }
 
@@ -270,7 +300,6 @@ bool RenderFilePickerButton(const char *button_label,
         }
     }
 
-    NFD_Quit();
     return res == NFD_OKAY;
 }
 

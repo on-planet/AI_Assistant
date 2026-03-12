@@ -151,6 +151,8 @@ private:
     };
 
     std::thread scene_worker_;
+    // TODO: consider bundling running flags + packets into a single thread-safe struct
+    // to avoid future data races when more shared state is added.
     std::atomic<bool> scene_running_{false};
     std::mutex scene_mutex_;
     AsyncScenePacket scene_packet_;

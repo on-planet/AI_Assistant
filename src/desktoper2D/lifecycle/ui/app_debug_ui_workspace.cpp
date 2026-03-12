@@ -81,9 +81,9 @@ void RenderWorkspaceToolbar(AppRuntime &runtime) {
         if (ImGui::MenuItem("Health", nullptr, &show_error)) {
             ApplyWorkspaceAction(bridge, WorkspaceAction{.type = WorkspaceActionType::ToggleErrorWindow, .bool_value = show_error});
         }
-        bool show_ops = runtime.show_ops_window;
-        if (ImGui::MenuItem("Ops", nullptr, &show_ops)) {
-            ApplyWorkspaceAction(bridge, WorkspaceAction{.type = WorkspaceActionType::ToggleOpsWindow, .bool_value = show_ops});
+        bool show_plugin_quick = runtime.show_plugin_quick_control_window;
+        if (ImGui::MenuItem("Plugin Quick Control", nullptr, &show_plugin_quick)) {
+            ApplyWorkspaceAction(bridge, WorkspaceAction{.type = WorkspaceActionType::TogglePluginQuickControlWindow, .bool_value = show_plugin_quick});
         }
         bool show_inspector = runtime.show_inspector_window;
         if (ImGui::MenuItem("Inspector", nullptr, &show_inspector)) {

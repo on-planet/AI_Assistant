@@ -1,6 +1,7 @@
 #include "desktoper2D/lifecycle/ocr_service.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -163,6 +164,9 @@ DetBox MakeBoxFromDetPeak(const float *det,
 struct OcrService::Impl {
     Ort::Env env{ORT_LOGGING_LEVEL_WARNING, "k2d_ocr_service"};
     Ort::SessionOptions sess_opt;
+    Ort::RunOptions det_run_options;
+    Ort::RunOptions rec_run_options;
+    std::atomic<bool> terminate_requested{false};
 
     std::unique_ptr<Ort::Session> det_session;
     std::unique_ptr<Ort::Session> rec_session;
@@ -190,6 +194,12 @@ bool OcrService::Init(const std::string &det_model_path,
                       std::string *out_error) {
     Shutdown();
     auto impl = std::make_unique<Impl>();
+    impl->terminate_requested.store(false, std::memory_order_release);
+    try {
+        impl->det_run_options.UnsetTerminate();
+        impl->rec_run_options.UnsetTerminate();
+    } catch (...) {
+    }
 
     impl->rec_keys = ReadKeys(keys_path, out_error);
     if (impl->rec_keys.empty()) {
@@ -245,6 +255,13 @@ void OcrService::Shutdown() noexcept {
     impl_ = nullptr;
 }
 
+void OcrService::CancelPending() noexcept {
+    if (!impl_) return;
+    impl_->terminate_requested.store(true, std::memory_order_release);
+    impl_->det_run_options.SetTerminate();
+    impl_->rec_run_options.SetTerminate();
+}
+
 bool OcrService::IsReady() const noexcept {
     return impl_ && impl_->det_session && impl_->rec_session;
 }
@@ -275,6 +292,15 @@ bool OcrService::Recognize(const ScreenCaptureFrame &frame,
     if (frame.width <= 0 || frame.height <= 0 || frame.bgra.empty()) {
         if (out_error) *out_error = "invalid frame";
         return false;
+    }
+    if (impl_->terminate_requested.load(std::memory_order_acquire)) {
+        if (out_error) *out_error = "ocr cancelled";
+        return false;
+    }
+    try {
+        impl_->det_run_options.UnsetTerminate();
+        impl_->rec_run_options.UnsetTerminate();
+    } catch (...) {
     }
 
     // V1 最小落地：先跑 det session 做链路验证；rec 结构也已加载。
@@ -327,7 +353,7 @@ bool OcrService::Recognize(const ScreenCaptureFrame &frame,
         const char *in_names[] = {impl_->det_input_name.c_str()};
         const char *out_names[] = {impl_->det_output_name.c_str()};
         const auto det_infer_t0 = std::chrono::steady_clock::now();
-        auto det_out = impl_->det_session->Run(Ort::RunOptions{nullptr}, in_names, &det_tensor, 1, out_names, 1);
+        auto det_out = impl_->det_session->Run(impl_->det_run_options, in_names, &det_tensor, 1, out_names, 1);
         const auto det_infer_t1 = std::chrono::steady_clock::now();
         if (out_perf) {
             out_perf->infer_det_ms = static_cast<int>(
@@ -400,7 +426,7 @@ bool OcrService::Recognize(const ScreenCaptureFrame &frame,
         const char *rec_in_names[] = {impl_->rec_input_name.c_str()};
         const char *rec_out_names[] = {impl_->rec_output_name.c_str()};
         const auto rec_infer_t0 = std::chrono::steady_clock::now();
-        auto rec_out = impl_->rec_session->Run(Ort::RunOptions{nullptr}, rec_in_names, &rec_tensor, 1, rec_out_names, 1);
+        auto rec_out = impl_->rec_session->Run(impl_->rec_run_options, rec_in_names, &rec_tensor, 1, rec_out_names, 1);
         const auto rec_infer_t1 = std::chrono::steady_clock::now();
         if (out_perf) {
             out_perf->infer_rec_ms = static_cast<int>(

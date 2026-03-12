@@ -3,10 +3,13 @@
 
 #include <SDL3/SDL_stdinc.h>
 
+#include <functional>
 #include <vector>
 
+#include "desktoper2D/lifecycle/observability/runtime_error_codes.h"
 #include "desktoper2D/lifecycle/services/plugin_runtime_service.h"
 #include "desktoper2D/lifecycle/ui/app_debug_ui_internal.h"
+#include "desktoper2D/lifecycle/ui/app_debug_ui_presenter.h"
 #include "desktoper2D/lifecycle/ui/app_debug_ui_widgets.h"
 #include "desktoper2D/lifecycle/ui/commands/ops_commands.h"
 #include "desktoper2D/lifecycle/ui/commands/ui_command_bridge.h"
@@ -37,20 +40,70 @@ void RenderRuntimeOpsActions(AppRuntime &runtime) {
     OpsReadModel model = BuildOpsReadModel(runtime, runtime_ops_status);
     ImGui::BeginChild("ops_actions_child", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiWindowFlags_NoScrollbar);
 
-        if (ImGui::Button("Reset Perception State")) {
-            ApplyOpsAction(bridge, OpsAction{.type = OpsActionType::ResetPerceptionState}, runtime_ops_status);
+        std::vector<RuntimeErrorRow> rows = BuildRuntimeErrorRows(runtime);
+        std::string all_errors;
+        all_errors.reserve(1024);
+        for (const auto &row : rows) {
+            all_errors += row.label;
+            all_errors += " | count=";
+            all_errors += std::to_string(static_cast<long long>(row.info->count));
+            all_errors += " | degraded=";
+            all_errors += std::to_string(static_cast<long long>(row.info->degraded_count));
+            all_errors += " | recent_seq=";
+            all_errors += std::to_string(row.recent_seq);
+            all_errors += " | ";
+            all_errors += RuntimeErrorDomainName(row.info->domain);
+            all_errors += ".";
+            all_errors += RuntimeErrorCodeName(row.info->code);
+            if (!row.info->detail.empty()) {
+                all_errors += " | detail=";
+                all_errors += row.info->detail;
+            }
+            all_errors += "\n";
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Reset Error Counters")) {
-            ApplyOpsAction(bridge, OpsAction{.type = OpsActionType::ResetErrorCounters}, runtime_ops_status);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Export Runtime Snapshot (json)")) {
-            ApplyOpsAction(bridge, OpsAction{.type = OpsActionType::ExportRuntimeSnapshot}, runtime_ops_status);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Single-step Sampling")) {
-            ApplyOpsAction(bridge, OpsAction{.type = OpsActionType::TriggerSingleStepSampling}, runtime_ops_status);
+
+        struct OpsButtonSpec {
+            const char *label;
+            std::function<void()> on_click;
+        };
+
+        const OpsButtonSpec buttons[] = {
+            {"Reset Perception State", [&]() {
+                 ApplyOpsAction(bridge, OpsAction{.type = OpsActionType::ResetPerceptionState}, runtime_ops_status);
+             }},
+            {"Copy All Errors", [&]() {
+                 ImGui::SetClipboardText(all_errors.c_str());
+             }},
+            {"Reset Error Counters", [&]() {
+                 ApplyOpsAction(bridge, OpsAction{.type = OpsActionType::ResetErrorCounters}, runtime_ops_status);
+             }},
+            {"Export Runtime Snapshot (json)", [&]() {
+                 ApplyOpsAction(bridge, OpsAction{.type = OpsActionType::ExportRuntimeSnapshot}, runtime_ops_status);
+             }},
+            {"Single-step Sampling", [&]() {
+                 ApplyOpsAction(bridge, OpsAction{.type = OpsActionType::TriggerSingleStepSampling}, runtime_ops_status);
+             }},
+        };
+
+        const float avail_width = ImGui::GetContentRegionAvail().x;
+        const ImVec2 padding = ImGui::GetStyle().FramePadding;
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        float line_width = 0.0f;
+
+        for (const auto &btn : buttons) {
+            const ImVec2 text_size = ImGui::CalcTextSize(btn.label);
+            const float button_width = text_size.x + padding.x * 2.0f;
+            const float next_width = (line_width == 0.0f) ? button_width : (line_width + spacing + button_width);
+            if (next_width > avail_width && line_width > 0.0f) {
+                line_width = 0.0f;
+            }
+            if (line_width > 0.0f) {
+                ImGui::SameLine();
+            }
+            if (ImGui::Button(btn.label)) {
+                btn.on_click();
+            }
+            line_width = (line_width == 0.0f) ? button_width : (line_width + spacing + button_width);
         }
 
         model.runtime_ops_status = runtime_ops_status;
@@ -251,10 +304,6 @@ void RenderRuntimePluginManagement(AppRuntime &runtime) {
     ImGui::EndChild();
 
     ImGui::BeginChild("ops_program_child", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
-    ImGui::SeparatorText("Program");
-    if (ImGui::Button("Close Program")) {
-        ApplyOpsAction(bridge, OpsAction{.type = OpsActionType::CloseProgram}, runtime_ops_status);
-    }
     ImGui::SameLine();
     ImGui::TextDisabled("(Esc)");
     ImGui::EndChild();

@@ -19,6 +19,7 @@ bool SwitchOcrModelByName(AppRuntime &runtime, const std::string &name, std::str
 
 void RefreshUnifiedPlugins(AppRuntime &runtime);
 bool SwitchUnifiedPluginById(AppRuntime &runtime, const std::string &id, std::string *out_error = nullptr);
+bool DeleteUnifiedPluginById(AppRuntime &runtime, const std::string &id, std::string *out_error = nullptr);
 
 bool ReplaceUnifiedPluginAssets(AppRuntime &runtime,
                                 const std::string &id,

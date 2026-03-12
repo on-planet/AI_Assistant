@@ -34,6 +34,19 @@ namespace desktoper2D {
 
 namespace {
 
+std::vector<std::tuple<std::string, std::string, std::string>> BuildOcrCandidateTriples(
+    const std::vector<std::tuple<std::string, std::string, std::string>> &relative_triples) {
+    std::vector<std::tuple<std::string, std::string, std::string>> out;
+    for (const auto &triple : relative_triples) {
+        auto candidates = ResourceLocator::BuildCandidateTriples(
+            std::get<0>(triple),
+            std::get<1>(triple),
+            std::get<2>(triple));
+        out.insert(out.end(), candidates.begin(), candidates.end());
+    }
+    return out;
+}
+
 void SyncAnimationChannelState() {
     if (!g_runtime.model_loaded) {
         return;
@@ -75,7 +88,11 @@ void SDLCALL MicAudioInputCallback(void *userdata, SDL_AudioStream *stream, int 
     for (int i = 0; i < n; ++i) runtime->mic_pcm_queue.push_back(tmp[static_cast<std::size_t>(i)]);
 
     constexpr std::size_t kMaxQueueSamples = 16000 * 20;
-    while (runtime->mic_pcm_queue.size() > kMaxQueueSamples) runtime->mic_pcm_queue.pop_front();
+    if (runtime->mic_pcm_queue.size() > kMaxQueueSamples) {
+        const std::size_t overflow = runtime->mic_pcm_queue.size() - kMaxQueueSamples;
+        runtime->mic_pcm_queue.erase(runtime->mic_pcm_queue.begin(),
+                                     runtime->mic_pcm_queue.begin() + static_cast<std::ptrdiff_t>(overflow));
+    }
 }
 
 }  // namespace
@@ -249,17 +266,15 @@ bool AppLifecycleBootstrapImpl(AppLifecycleContext &ctx) {
         const auto scene_model_candidates = ResourceLocator::BuildCandidatePairs(
             "assets/mobileclip_image.onnx",
             "assets/mobileclip_labels.json");
-        auto ocr_candidates = ResourceLocator::BuildCandidateTriples(
-            "assets/PP-OCRv5_server_det_infer.onnx",
-            "assets/PP-OCRv5_server_rec_infer.onnx",
-            "assets/ocr/ppocr_keys.txt");
-        const auto ocr_candidates_compat = ResourceLocator::BuildCandidateTriples(
-            "assets/PP-OCRv5_server_det_infer.onnx",
-            "assets/PP-OCRv5_server_rec_infer.onnx",
-            "assets/ppocr_keys.txt");
-        ocr_candidates.insert(ocr_candidates.end(),
-                              ocr_candidates_compat.begin(),
-                              ocr_candidates_compat.end());
+        const std::vector<std::tuple<std::string, std::string, std::string>> ocr_relative_paths = {
+            {"assets/PP-OCRv5_server_det_infer.onnx",
+             "assets/PP-OCRv5_server_rec_infer.onnx",
+             "assets/ocr/ppocr_keys.txt"},
+            {"assets/PP-OCRv5_server_det_infer.onnx",
+             "assets/PP-OCRv5_server_rec_infer.onnx",
+             "assets/ppocr_keys.txt"},
+        };
+        const auto ocr_candidates = BuildOcrCandidateTriples(ocr_relative_paths);
         const auto facemesh_candidates = ResourceLocator::BuildCandidatePairs(
             "assets/facemesh.onnx",
             "assets/facemesh.labels.json");

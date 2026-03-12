@@ -23,7 +23,7 @@ constexpr const char *kAsrChatWindowName = "Runtime ASR + Chat";
 constexpr const char *kErrorWindowName = "Runtime Health";
 constexpr const char *kInspectorWindowName = "Model Hierarchy + Inspector";
 constexpr const char *kReminderWindowName = "Reminder";
-constexpr const char *kOpsWindowName = "Runtime Ops";
+constexpr const char *kPluginQuickControlWindowName = "Plugin Quick Control";
 constexpr const char *kWorkspaceDockspaceName = "Runtime Workspace DockSpace";
 
 const char *WorkspaceModeName(WorkspaceMode mode) {
@@ -148,7 +148,7 @@ void ApplyWorkspaceDockLayout(AppRuntime &runtime, const ImGuiID dockspace_id) {
         {DockRecipeOpType::DockWindow, DockSlot::Main, ImGuiDir_Left, 0.0f, DockSlot::Left, DockSlot::Main, kAsrChatWindowName, DockSlot::Bottom},
         {DockRecipeOpType::DockWindow, DockSlot::Main, ImGuiDir_Left, 0.0f, DockSlot::Left, DockSlot::Main, kInspectorWindowName, DockSlot::Left},
         {DockRecipeOpType::DockWindow, DockSlot::Main, ImGuiDir_Left, 0.0f, DockSlot::Left, DockSlot::Main, kReminderWindowName, DockSlot::RightBottom},
-        {DockRecipeOpType::DockWindow, DockSlot::Main, ImGuiDir_Left, 0.0f, DockSlot::Left, DockSlot::Main, kOpsWindowName, DockSlot::Right},
+        {DockRecipeOpType::DockWindow, DockSlot::Main, ImGuiDir_Left, 0.0f, DockSlot::Left, DockSlot::Main, kPluginQuickControlWindowName, DockSlot::RightBottom},
     };
     static const DockRecipeOp kPerceptionRecipeOps[] = {
         {DockRecipeOpType::Split, DockSlot::Main, ImGuiDir_Left, 0.34f, DockSlot::Left, DockSlot::Main},
@@ -159,7 +159,7 @@ void ApplyWorkspaceDockLayout(AppRuntime &runtime, const ImGuiID dockspace_id) {
         {DockRecipeOpType::DockWindow, DockSlot::Main, ImGuiDir_Left, 0.0f, DockSlot::Left, DockSlot::Main, kErrorWindowName, DockSlot::Right},
         {DockRecipeOpType::DockWindow, DockSlot::Main, ImGuiDir_Left, 0.0f, DockSlot::Left, DockSlot::Main, kReminderWindowName, DockSlot::Bottom},
         {DockRecipeOpType::DockWindow, DockSlot::Main, ImGuiDir_Left, 0.0f, DockSlot::Left, DockSlot::Main, kInspectorWindowName, DockSlot::Right},
-        {DockRecipeOpType::DockWindow, DockSlot::Main, ImGuiDir_Left, 0.0f, DockSlot::Left, DockSlot::Main, kOpsWindowName, DockSlot::RightBottom},
+        {DockRecipeOpType::DockWindow, DockSlot::Main, ImGuiDir_Left, 0.0f, DockSlot::Left, DockSlot::Main, kPluginQuickControlWindowName, DockSlot::RightBottom},
     };
     static const DockRecipeOp kAuthoringRecipeOps[] = {
         {DockRecipeOpType::Split, DockSlot::Main, ImGuiDir_Left, 0.28f, DockSlot::Left, DockSlot::Main},
@@ -407,10 +407,9 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
             ImGui::End();
         }
  
-        if (runtime.show_ops_window) {
-            if (ImGui::Begin(kOpsWindowName, &runtime.show_ops_window, panel_flags)) {
-                RenderRuntimeOpsActions(runtime);
-                RenderRuntimePluginManagement(runtime);
+        if (runtime.show_plugin_quick_control_window) {
+            if (ImGui::Begin(kPluginQuickControlWindowName, &runtime.show_plugin_quick_control_window, panel_flags)) {
+                RenderRuntimePluginQuickControlPanel(runtime);
             }
             ImGui::End();
         }
@@ -493,6 +492,15 @@ constexpr int kManualLayoutSaveStableFrames = 12;
             ImGui::SetNextWindowSize(ImVec2(right_w, inspector_h), ImGuiCond_FirstUseEver);
             if (ImGui::Begin(kErrorWindowName, &runtime.show_error_window)) {
                 RenderRuntimeErrorPanel(runtime);
+            }
+            ImGui::End();
+        }
+
+        if (runtime.show_plugin_quick_control_window) {
+            ImGui::SetNextWindowPos(ImVec2(right_x, right_y + inspector_h + gap), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(right_w, reminder_h), ImGuiCond_FirstUseEver);
+            if (ImGui::Begin(kPluginQuickControlWindowName, &runtime.show_plugin_quick_control_window)) {
+                RenderRuntimePluginQuickControlPanel(runtime);
             }
             ImGui::End();
         }

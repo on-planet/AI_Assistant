@@ -3,6 +3,7 @@
 #include "desktoper2D/core/json.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <fstream>
 #include <memory>
@@ -123,6 +124,8 @@ struct SceneClassifier::Impl {
     Ort::Env env{ORT_LOGGING_LEVEL_WARNING, "k2d_scene_classifier"};
     std::unique_ptr<Ort::Session> session;
     Ort::SessionOptions sess_opt;
+    Ort::RunOptions run_options;
+    std::atomic<bool> terminate_requested{false};
 
     std::string input_name;
     std::vector<int64_t> input_shape;
@@ -144,6 +147,11 @@ bool SceneClassifier::Init(const std::string &model_path,
                            std::string *out_error) {
     Shutdown();
     auto impl = std::make_unique<Impl>();
+    impl->terminate_requested.store(false, std::memory_order_release);
+    try {
+        impl->run_options.UnsetTerminate();
+    } catch (...) {
+    }
 
     std::string labels_text = ReadTextFile(labels_path, out_error);
     if (labels_text.empty()) {
@@ -207,6 +215,15 @@ void SceneClassifier::Shutdown() noexcept {
     impl_ = nullptr;
 }
 
+void SceneClassifier::CancelPending() noexcept {
+    if (!impl_) return;
+    impl_->terminate_requested.store(true, std::memory_order_release);
+    try {
+        impl_->run_options.SetTerminate();
+    } catch (...) {
+    }
+}
+
 bool SceneClassifier::IsReady() const noexcept {
     return impl_ && impl_->session;
 }
@@ -221,6 +238,14 @@ bool SceneClassifier::Classify(const ScreenCaptureFrame &frame,
     if (frame.width <= 0 || frame.height <= 0 || frame.bgra.empty()) {
         if (out_error) *out_error = "invalid frame";
         return false;
+    }
+    if (impl_->terminate_requested.load(std::memory_order_acquire)) {
+        if (out_error) *out_error = "scene classifier cancelled";
+        return false;
+    }
+    try {
+        impl_->run_options.UnsetTerminate();
+    } catch (...) {
     }
 
     const int target_h = impl_->input_h;
@@ -287,7 +312,7 @@ bool SceneClassifier::Classify(const ScreenCaptureFrame &frame,
         const char *in_names[] = {impl_->input_name.c_str()};
         const char *out_names[] = {impl_->output_name.c_str()};
 
-        auto out_vals = impl_->session->Run(Ort::RunOptions{nullptr},
+        auto out_vals = impl_->session->Run(impl_->run_options,
                                             in_names,
                                             &in_tensor,
                                             1,

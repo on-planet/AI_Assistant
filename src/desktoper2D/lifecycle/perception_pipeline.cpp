@@ -117,6 +117,9 @@ void PerceptionPipeline::StartWorkers() {
 
 void PerceptionPipeline::StopWorkers() noexcept {
     workers_stop_.store(true, std::memory_order_release);
+    scene_classifier_.CancelPending();
+    ocr_service_.CancelPending();
+    camera_facemesh_service_.CancelPending();
     scene_task_cv_.notify_all();
     ocr_task_cv_.notify_all();
     face_task_cv_.notify_all();

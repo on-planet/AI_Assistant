@@ -68,6 +68,11 @@ void RenderModuleLatencyPanel(const AppRuntime &runtime) {
 }
 
 void RenderRuntimeErrorClassificationTable(const AppRuntime &runtime, ErrorViewFilter filter) {
+
+    static int error_filter_idx = 1; // 默认 Non-OK
+    const char *filters[] = {"All", "Non-OK", "Failed", "Degraded"};
+    error_filter_idx = std::clamp(error_filter_idx, 0, 3);
+
     std::vector<RuntimeErrorRow> rows = BuildRuntimeErrorRows(runtime);
     std::stable_sort(rows.begin(), rows.end(), [](const RuntimeErrorRow &a, const RuntimeErrorRow &b) {
         if (a.info->count != b.info->count) {
@@ -127,12 +132,9 @@ void RenderRuntimeErrorClassificationTable(const AppRuntime &runtime, ErrorViewF
                                 ImVec4(0.45f, 0.85f, 0.45f, 1.0f));
         return;
     }
-
-    if (ImGui::Button("Copy All Errors")) {
-        ImGui::SetClipboardText(all_errors.c_str());
-    }
     ImGui::SameLine();
-    ImGui::TextUnformatted("recent_seq 越小表示越近期（当前为近似时序）");
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::Combo("##error_filter", &error_filter_idx, filters, 4);
 
     if (ImGui::BeginTable("runtime_error_table", 7, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("Module", ImGuiTableColumnFlags_WidthStretch, 0.24f);

@@ -4,10 +4,12 @@
 #include <array>
 #include <cctype>
 #include <ctime>
+#include <filesystem>
 #include <map>
 #include <string>
 #include <vector>
 
+#include <SDL3/SDL.h>
 #include <SDL3/SDL_iostream.h>
 
 #include "app_debug_ui_internal.h"
@@ -81,6 +83,7 @@ void ResetPerceptionRuntimeState(PerceptionPipelineState &state) {
 void ResetAllRuntimeErrorCounters(AppRuntime &runtime) {
     auto reset_err = [](RuntimeErrorInfo &err) {
         ClearRuntimeError(err);
+        err.detail.clear();
         err.count = 0;
         err.degraded_count = 0;
     };
@@ -114,6 +117,8 @@ bool ExportRuntimeSnapshotJson(const AppRuntime &runtime, const char *path, std:
     SDL_CloseIO(io);
 
     if (w != n) {
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
         if (out_error) {
             *out_error = "write snapshot file failed";
         }
@@ -136,7 +141,14 @@ void TriggerSingleStepSampling(AppRuntime &runtime) {
 }
 
 std::string DetectParamPrefix(const std::string &param_id) {
-    if (param_id.empty()) return "";
+    static std::size_t empty_id_count = 0;
+    static std::size_t abnormal_id_count = 0;
+
+    if (param_id.empty()) {
+        ++empty_id_count;
+        SDL_Log("[ParamGroup] empty param id encountered (count=%zu)", empty_id_count);
+        return "misc";
+    }
     const std::size_t us = param_id.find('_');
     if (us != std::string::npos && us > 0) {
         return param_id.substr(0, us);
@@ -149,7 +161,11 @@ std::string DetectParamPrefix(const std::string &param_id) {
         }
         ++cut;
     }
-    if (cut == 0) return "misc";
+    if (cut == 0) {
+        ++abnormal_id_count;
+        SDL_Log("[ParamGroup] abnormal param id: '%s' (count=%zu)", param_id.c_str(), abnormal_id_count);
+        return "misc";
+    }
     return param_id.substr(0, cut);
 }
 

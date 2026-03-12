@@ -19,6 +19,7 @@ void RenderRuntimePerceptionPanel(AppRuntime &runtime);
 void RenderRuntimeMappingPanel(AppRuntime &runtime);
 void RenderRuntimeAsrChatPanel(AppRuntime &runtime);
 void RenderRuntimeErrorPanel(AppRuntime &runtime);
+void RenderRuntimePluginQuickControlPanel(AppRuntime &runtime);
 void RenderRuntimeOpsPanel(AppRuntime &runtime);
 
 }  // namespace desktoper2D

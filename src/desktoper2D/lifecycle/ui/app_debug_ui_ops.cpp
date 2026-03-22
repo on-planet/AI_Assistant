@@ -9,11 +9,11 @@
 #include <vector>
 
 #include "desktoper2D/lifecycle/observability/runtime_error_codes.h"
-#include "desktoper2D/lifecycle/services/plugin_runtime_service.h"
 #include "desktoper2D/lifecycle/ui/app_debug_ui_internal.h"
 #include "desktoper2D/lifecycle/ui/app_debug_ui_presenter.h"
 #include "desktoper2D/lifecycle/ui/app_debug_ui_widgets.h"
 #include "desktoper2D/lifecycle/ui/commands/ops_commands.h"
+#include "desktoper2D/lifecycle/ui/commands/plugin_commands.h"
 #include "desktoper2D/lifecycle/ui/commands/ui_command_bridge.h"
 
 namespace desktoper2D {
@@ -117,28 +117,27 @@ void RenderRuntimePluginManagement(AppRuntime &runtime) {
     const UiCommandBridge bridge = BuildUiCommandBridge(runtime);
     ImGui::BeginChild("ops_plugin_child", ImVec2(-1.0f, 220.0f), ImGuiChildFlags_Borders);
     ImGui::SeparatorText("Plugin 管理");
-    ImGui::Text("Plugin Ready: %s", runtime.plugin_ready ? "true" : "false");
-    if (!runtime.plugin_last_error.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Plugin Error: %s", runtime.plugin_last_error.c_str());
+    ImGui::Text("Plugin Ready: %s", runtime.plugin.ready ? "true" : "false");
+    if (!runtime.plugin.last_error.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Plugin Error: %s", runtime.plugin.last_error.c_str());
     }
 
     if (ImGui::Button("Refresh Plugin List")) {
-        runtime.plugin_config_refresh_requested = true;
-        RefreshPluginConfigs(runtime);
+        ApplyPluginAction(bridge, PluginAction{.type = PluginActionType::RefreshPluginConfigs});
     }
-    if (!runtime.plugin_config_scan_error.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Scan Error: %s", runtime.plugin_config_scan_error.c_str());
+    if (!runtime.plugin.config_scan_error.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Scan Error: %s", runtime.plugin.config_scan_error.c_str());
     }
 
     ImGui::BeginGroup();
     if (ImGui::BeginListBox("##plugin_config_list", ImVec2(-1.0f, 88.0f))) {
-        for (int i = 0; i < static_cast<int>(runtime.plugin_config_entries.size()); ++i) {
-            const auto &entry = runtime.plugin_config_entries[static_cast<std::size_t>(i)];
-            const bool selected = (i == runtime.plugin_selected_entry_index);
+        for (int i = 0; i < static_cast<int>(runtime.plugin.config_entries.size()); ++i) {
+            const auto &entry = runtime.plugin.config_entries[static_cast<std::size_t>(i)];
+            const bool selected = (i == runtime.plugin.selected_entry_index);
             ImGui::PushID(i);
             if (ImGui::Selectable(entry.name.c_str(), selected)) {
-                runtime.plugin_selected_entry_index = i;
-                SDL_strlcpy(runtime.plugin_name_input, entry.name.c_str(), sizeof(runtime.plugin_name_input));
+                runtime.plugin.selected_entry_index = i;
+                SDL_strlcpy(runtime.plugin.name_input, entry.name.c_str(), sizeof(runtime.plugin.name_input));
             }
             ImGui::PopID();
         }
@@ -146,9 +145,9 @@ void RenderRuntimePluginManagement(AppRuntime &runtime) {
     }
     ImGui::EndGroup();
 
-    if (runtime.plugin_selected_entry_index >= 0 &&
-        runtime.plugin_selected_entry_index < static_cast<int>(runtime.plugin_config_entries.size())) {
-        const auto &entry = runtime.plugin_config_entries[static_cast<std::size_t>(runtime.plugin_selected_entry_index)];
+    if (runtime.plugin.selected_entry_index >= 0 &&
+        runtime.plugin.selected_entry_index < static_cast<int>(runtime.plugin.config_entries.size())) {
+        const auto &entry = runtime.plugin.config_entries[static_cast<std::size_t>(runtime.plugin.selected_entry_index)];
         ImGui::SeparatorText("Selected Behavior Plugin");
         ImGui::Text("Name: %s", entry.name.c_str());
         if (!entry.model_id.empty()) {
@@ -166,59 +165,42 @@ void RenderRuntimePluginManagement(AppRuntime &runtime) {
                                 ImVec4(0.72f, 0.82f, 1.0f, 1.0f));
     }
 
-    ImGui::InputTextWithHint("Plugin Name", "输入插件名称", runtime.plugin_name_input, sizeof(runtime.plugin_name_input));
+    ImGui::InputTextWithHint("Plugin Name", "输入插件名称", runtime.plugin.name_input, sizeof(runtime.plugin.name_input));
     if (ImGui::Button("Switch Plugin")) {
-        std::string err;
-        const bool ok = SwitchPluginByName(runtime, runtime.plugin_name_input, &err);
-        if (ok) {
-            runtime.plugin_switch_status = "plugin switch queued";
-            runtime.plugin_switch_error.clear();
-        } else {
-            runtime.plugin_switch_status.clear();
-            runtime.plugin_switch_error = err.empty() ? "plugin switch failed" : err;
-        }
+        ApplyPluginAction(bridge,
+                          PluginAction{.type = PluginActionType::SwitchPluginByName, .text_value = runtime.plugin.name_input});
     }
     ImGui::SameLine();
     if (ImGui::Button("Use Selected")) {
-        if (runtime.plugin_selected_entry_index >= 0 &&
-            runtime.plugin_selected_entry_index < static_cast<int>(runtime.plugin_config_entries.size())) {
-            const auto &entry = runtime.plugin_config_entries[static_cast<std::size_t>(runtime.plugin_selected_entry_index)];
-            SDL_strlcpy(runtime.plugin_name_input, entry.name.c_str(), sizeof(runtime.plugin_name_input));
+        if (runtime.plugin.selected_entry_index >= 0 &&
+            runtime.plugin.selected_entry_index < static_cast<int>(runtime.plugin.config_entries.size())) {
+            const auto &entry = runtime.plugin.config_entries[static_cast<std::size_t>(runtime.plugin.selected_entry_index)];
+            SDL_strlcpy(runtime.plugin.name_input, entry.name.c_str(), sizeof(runtime.plugin.name_input));
         }
     }
     ImGui::SameLine();
     if (ImGui::Button("Delete Selected")) {
-        if (runtime.plugin_selected_entry_index >= 0 &&
-            runtime.plugin_selected_entry_index < static_cast<int>(runtime.plugin_config_entries.size())) {
-            const auto &entry = runtime.plugin_config_entries[static_cast<std::size_t>(runtime.plugin_selected_entry_index)];
-            std::string err;
-            const bool ok = DeletePluginConfig(runtime, entry.config_path, &err);
-            if (ok) {
-                runtime.plugin_delete_status = "plugin deleted";
-                runtime.plugin_delete_error.clear();
-                runtime.plugin_switch_status.clear();
-                runtime.plugin_switch_error.clear();
-            } else {
-                runtime.plugin_delete_status.clear();
-                runtime.plugin_delete_error = err.empty() ? "plugin delete failed" : err;
-            }
-        } else {
-            runtime.plugin_delete_status.clear();
-            runtime.plugin_delete_error = "no plugin selected";
+        std::string selected_config_path;
+        if (runtime.plugin.selected_entry_index >= 0 &&
+            runtime.plugin.selected_entry_index < static_cast<int>(runtime.plugin.config_entries.size())) {
+            selected_config_path =
+                runtime.plugin.config_entries[static_cast<std::size_t>(runtime.plugin.selected_entry_index)].config_path;
         }
+        ApplyPluginAction(bridge,
+                          PluginAction{.type = PluginActionType::DeletePluginConfig, .text_value = selected_config_path});
     }
 
-    if (!runtime.plugin_switch_status.empty()) {
-        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f), "%s", runtime.plugin_switch_status.c_str());
+    if (!runtime.plugin.switch_status.empty()) {
+        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f), "%s", runtime.plugin.switch_status.c_str());
     }
-    if (!runtime.plugin_switch_error.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "%s", runtime.plugin_switch_error.c_str());
+    if (!runtime.plugin.switch_error.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "%s", runtime.plugin.switch_error.c_str());
     }
-    if (!runtime.plugin_delete_status.empty()) {
-        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f), "%s", runtime.plugin_delete_status.c_str());
+    if (!runtime.plugin.delete_status.empty()) {
+        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f), "%s", runtime.plugin.delete_status.c_str());
     }
-    if (!runtime.plugin_delete_error.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "%s", runtime.plugin_delete_error.c_str());
+    if (!runtime.plugin.delete_error.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "%s", runtime.plugin.delete_error.c_str());
     }
     ImGui::EndChild();
 
@@ -229,48 +211,41 @@ void RenderRuntimePluginManagement(AppRuntime &runtime) {
     if (!runtime.asr_last_error.empty()) {
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "ASR Error: %s", runtime.asr_last_error.c_str());
     }
-    if (runtime.asr_provider_entries.empty()) {
-        RefreshAsrProviders(runtime);
+    if (runtime.plugin.asr_provider_entries.empty()) {
+        ApplyPluginAction(bridge, PluginAction{.type = PluginActionType::RefreshAsrProviders});
     }
     if (ImGui::BeginListBox("##asr_provider_list", ImVec2(-1.0f, 80.0f))) {
-        for (int i = 0; i < static_cast<int>(runtime.asr_provider_entries.size()); ++i) {
-            const auto &entry = runtime.asr_provider_entries[static_cast<std::size_t>(i)];
-            const bool selected = (i == runtime.asr_selected_entry_index);
+        for (int i = 0; i < static_cast<int>(runtime.plugin.asr_provider_entries.size()); ++i) {
+            const auto &entry = runtime.plugin.asr_provider_entries[static_cast<std::size_t>(i)];
+            const bool selected = (i == runtime.plugin.asr_selected_entry_index);
             ImGui::PushID(i);
             if (ImGui::Selectable(entry.name.c_str(), selected)) {
-                runtime.asr_selected_entry_index = i;
-                SDL_strlcpy(runtime.asr_provider_input, entry.name.c_str(), sizeof(runtime.asr_provider_input));
+                runtime.plugin.asr_selected_entry_index = i;
+                SDL_strlcpy(runtime.plugin.asr_provider_input, entry.name.c_str(), sizeof(runtime.plugin.asr_provider_input));
             }
             ImGui::PopID();
         }
         ImGui::EndListBox();
     }
-    ImGui::InputTextWithHint("ASR Provider", "offline/cloud/hybrid", runtime.asr_provider_input, sizeof(runtime.asr_provider_input));
+    ImGui::InputTextWithHint("ASR Provider", "offline/cloud/hybrid", runtime.plugin.asr_provider_input, sizeof(runtime.plugin.asr_provider_input));
     if (ImGui::Button("Switch ASR")) {
-        std::string err;
-        const bool ok = SwitchAsrProviderByName(runtime, runtime.asr_provider_input, &err);
-        if (ok) {
-            runtime.asr_switch_status = "asr switch ok";
-            runtime.asr_switch_error.clear();
-            runtime.asr_current_provider_name = runtime.asr_provider_input;
-        } else {
-            runtime.asr_switch_status.clear();
-            runtime.asr_switch_error = err.empty() ? "asr switch failed" : err;
-        }
+        ApplyPluginAction(bridge,
+                          PluginAction{.type = PluginActionType::SwitchAsrProviderByName,
+                                       .text_value = runtime.plugin.asr_provider_input});
     }
     ImGui::SameLine();
     if (ImGui::Button("Use Selected##asr")) {
-        if (runtime.asr_selected_entry_index >= 0 &&
-            runtime.asr_selected_entry_index < static_cast<int>(runtime.asr_provider_entries.size())) {
-            const auto &entry = runtime.asr_provider_entries[static_cast<std::size_t>(runtime.asr_selected_entry_index)];
-            SDL_strlcpy(runtime.asr_provider_input, entry.name.c_str(), sizeof(runtime.asr_provider_input));
+        if (runtime.plugin.asr_selected_entry_index >= 0 &&
+            runtime.plugin.asr_selected_entry_index < static_cast<int>(runtime.plugin.asr_provider_entries.size())) {
+            const auto &entry = runtime.plugin.asr_provider_entries[static_cast<std::size_t>(runtime.plugin.asr_selected_entry_index)];
+            SDL_strlcpy(runtime.plugin.asr_provider_input, entry.name.c_str(), sizeof(runtime.plugin.asr_provider_input));
         }
     }
-    if (!runtime.asr_switch_status.empty()) {
-        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f), "%s", runtime.asr_switch_status.c_str());
+    if (!runtime.plugin.asr_switch_status.empty()) {
+        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f), "%s", runtime.plugin.asr_switch_status.c_str());
     }
-    if (!runtime.asr_switch_error.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "%s", runtime.asr_switch_error.c_str());
+    if (!runtime.plugin.asr_switch_error.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "%s", runtime.plugin.asr_switch_error.c_str());
     }
     ImGui::EndChild();
 
@@ -280,47 +255,41 @@ void RenderRuntimePluginManagement(AppRuntime &runtime) {
     if (!runtime.perception_state.ocr_last_error.empty()) {
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "OCR Error: %s", runtime.perception_state.ocr_last_error.c_str());
     }
-    if (runtime.ocr_model_entries.empty()) {
-        RefreshOcrModels(runtime);
+    if (runtime.plugin.ocr_model_entries.empty()) {
+        ApplyPluginAction(bridge, PluginAction{.type = PluginActionType::RefreshOcrModels});
     }
     if (ImGui::BeginListBox("##ocr_model_list", ImVec2(-1.0f, 80.0f))) {
-        for (int i = 0; i < static_cast<int>(runtime.ocr_model_entries.size()); ++i) {
-            const auto &entry = runtime.ocr_model_entries[static_cast<std::size_t>(i)];
-            const bool selected = (i == runtime.ocr_selected_entry_index);
+        for (int i = 0; i < static_cast<int>(runtime.plugin.ocr_model_entries.size()); ++i) {
+            const auto &entry = runtime.plugin.ocr_model_entries[static_cast<std::size_t>(i)];
+            const bool selected = (i == runtime.plugin.ocr_selected_entry_index);
             ImGui::PushID(i);
             if (ImGui::Selectable(entry.name.c_str(), selected)) {
-                runtime.ocr_selected_entry_index = i;
-                SDL_strlcpy(runtime.ocr_model_input, entry.name.c_str(), sizeof(runtime.ocr_model_input));
+                runtime.plugin.ocr_selected_entry_index = i;
+                SDL_strlcpy(runtime.plugin.ocr_model_input, entry.name.c_str(), sizeof(runtime.plugin.ocr_model_input));
             }
             ImGui::PopID();
         }
         ImGui::EndListBox();
     }
-    ImGui::InputTextWithHint("OCR Model", "ppocr_v5_default", runtime.ocr_model_input, sizeof(runtime.ocr_model_input));
+    ImGui::InputTextWithHint("OCR Model", "ppocr_v5_default", runtime.plugin.ocr_model_input, sizeof(runtime.plugin.ocr_model_input));
     if (ImGui::Button("Switch OCR")) {
-        std::string err;
-        const bool ok = SwitchOcrModelByName(runtime, runtime.ocr_model_input, &err);
-        if (ok) {
-            runtime.ocr_switch_status = "ocr switch ok";
-            runtime.ocr_switch_error.clear();
-        } else {
-            runtime.ocr_switch_status.clear();
-            runtime.ocr_switch_error = err.empty() ? "ocr switch failed" : err;
-        }
+        ApplyPluginAction(bridge,
+                          PluginAction{.type = PluginActionType::SwitchOcrModelByName,
+                                       .text_value = runtime.plugin.ocr_model_input});
     }
     ImGui::SameLine();
     if (ImGui::Button("Use Selected##ocr")) {
-        if (runtime.ocr_selected_entry_index >= 0 &&
-            runtime.ocr_selected_entry_index < static_cast<int>(runtime.ocr_model_entries.size())) {
-            const auto &entry = runtime.ocr_model_entries[static_cast<std::size_t>(runtime.ocr_selected_entry_index)];
-            SDL_strlcpy(runtime.ocr_model_input, entry.name.c_str(), sizeof(runtime.ocr_model_input));
+        if (runtime.plugin.ocr_selected_entry_index >= 0 &&
+            runtime.plugin.ocr_selected_entry_index < static_cast<int>(runtime.plugin.ocr_model_entries.size())) {
+            const auto &entry = runtime.plugin.ocr_model_entries[static_cast<std::size_t>(runtime.plugin.ocr_selected_entry_index)];
+            SDL_strlcpy(runtime.plugin.ocr_model_input, entry.name.c_str(), sizeof(runtime.plugin.ocr_model_input));
         }
     }
-    if (!runtime.ocr_switch_status.empty()) {
-        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f), "%s", runtime.ocr_switch_status.c_str());
+    if (!runtime.plugin.ocr_switch_status.empty()) {
+        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f), "%s", runtime.plugin.ocr_switch_status.c_str());
     }
-    if (!runtime.ocr_switch_error.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "%s", runtime.ocr_switch_error.c_str());
+    if (!runtime.plugin.ocr_switch_error.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "%s", runtime.plugin.ocr_switch_error.c_str());
     }
     ImGui::EndChild();
 

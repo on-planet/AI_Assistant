@@ -39,17 +39,17 @@ void RenderModuleLatencyPanel(const AppRuntime &runtime) {
         RenderModuleLatencyRow("Perception.Scene",
                                runtime.perception_state.scene_avg_latency_ms,
                                runtime.perception_state.scene_avg_latency_ms,
-                               runtime.scene_p95_latency_ms,
+                               runtime.observability.scene_p95_latency_ms,
                                "scene classifier");
         RenderModuleLatencyRow("Perception.OCR",
                                runtime.perception_state.ocr_avg_latency_ms,
                                runtime.perception_state.ocr_avg_latency_ms,
-                               runtime.ocr_p95_latency_ms,
+                               runtime.observability.ocr_p95_latency_ms,
                                runtime.perception_state.ocr_skipped_due_timeout ? "timeout skipped" : "det+rec pipeline");
         RenderModuleLatencyRow("Perception.FaceMesh",
                                runtime.perception_state.face_avg_latency_ms,
                                runtime.perception_state.face_avg_latency_ms,
-                               runtime.face_p95_latency_ms,
+                               runtime.observability.face_p95_latency_ms,
                                "camera facemesh");
         RenderModuleLatencyRow("ASR",
                                static_cast<double>(runtime.asr_last_result.latency_ms),
@@ -58,10 +58,10 @@ void RenderModuleLatencyPanel(const AppRuntime &runtime) {
                                static_cast<double>(runtime.asr_last_result.latency_ms),
                                runtime.asr_last_switch_reason.empty() ? "provider route" : runtime.asr_last_switch_reason.c_str());
         RenderModuleLatencyRow("Plugin.Worker",
-                               runtime.plugin_last_latency_ms,
-                               runtime.plugin_avg_latency_ms,
-                               runtime.plugin_latency_p95_ms,
-                               runtime.plugin_auto_disabled ? "auto disabled" : "worker stats");
+                               runtime.plugin.last_latency_ms,
+                               runtime.plugin.avg_latency_ms,
+                               runtime.plugin.latency_p95_ms,
+                               runtime.plugin.auto_disabled ? "auto disabled" : "worker stats");
 
         ImGui::EndTable();
     }
@@ -175,13 +175,13 @@ void RenderRuntimeErrorClassificationTable(const AppRuntime &runtime, ErrorViewF
         }
 
         const UnifiedPluginEntry *selected_plugin = nullptr;
-        if (runtime.unified_plugin_selected_index >= 0 &&
-            runtime.unified_plugin_selected_index < static_cast<int>(runtime.unified_plugin_entries.size())) {
-            selected_plugin = &runtime.unified_plugin_entries[static_cast<std::size_t>(runtime.unified_plugin_selected_index)];
+        if (runtime.plugin.unified_selected_index >= 0 &&
+            runtime.plugin.unified_selected_index < static_cast<int>(runtime.plugin.unified_entries.size())) {
+            selected_plugin = &runtime.plugin.unified_entries[static_cast<std::size_t>(runtime.plugin.unified_selected_index)];
         }
         if (selected_plugin != nullptr) {
-            auto it = runtime.plugin_logs.find(selected_plugin->id);
-            if (it != runtime.plugin_logs.end()) {
+            auto it = runtime.plugin.logs.find(selected_plugin->id);
+            if (it != runtime.plugin.logs.end()) {
                 for (const auto &log : it->second) {
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0);

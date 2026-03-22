@@ -235,7 +235,7 @@ bool SceneClassifier::Classify(const ScreenCaptureFrame &frame,
         if (out_error) *out_error = "scene classifier not ready";
         return false;
     }
-    if (frame.width <= 0 || frame.height <= 0 || frame.bgra.empty()) {
+    if (frame.width <= 0 || frame.height <= 0 || !frame.HasPixels()) {
         if (out_error) *out_error = "invalid frame";
         return false;
     }
@@ -255,7 +255,7 @@ bool SceneClassifier::Classify(const ScreenCaptureFrame &frame,
     std::fill(impl_->input_buffer.begin(), impl_->input_buffer.end(), 0.0f);
     auto &input = impl_->input_buffer;
 
-    cv::Mat bgra(frame.height, frame.width, CV_8UC4, const_cast<std::uint8_t *>(frame.bgra.data()));
+    cv::Mat bgra(frame.height, frame.width, CV_8UC4, const_cast<std::uint8_t *>(frame.Data()));
     cv::Mat rgb;
     cv::cvtColor(bgra, rgb, cv::COLOR_BGRA2RGB);
 

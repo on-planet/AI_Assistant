@@ -12,10 +12,15 @@
 namespace desktoper2D {
 
 void AppLifecycleRun(AppLifecycleContext &ctx) {
-    AppRuntime &runtime = ctx.runtime ? *ctx.runtime : g_runtime;
+    const AppLifecyclePhaseCapabilityContext run_ctx = ctx.RunCapability();
+    AppRuntime *runtime_ptr = run_ctx.RequireRuntime();
+    if (!runtime_ptr) {
+        return;
+    }
+    AppRuntime &runtime = *runtime_ptr;
     desktoper2D::RunAppLoop(desktoper2D::AppLoopContext{
         .running = &runtime.running,
-        .window_visible = &runtime.window_visible,
+        .window_visible = &runtime.window_state.window_visible,
         .model_time = &runtime.model_time,
         .editor_status_ttl = &runtime.editor_status_ttl,
         .debug_frame_ms = &runtime.debug_frame_ms,
@@ -35,6 +40,7 @@ void AppLifecycleRun(AppLifecycleContext &ctx) {
             runtime.editor_status.clear();
         },
     });
+    run_ctx.SetExitCode(0);
 }
 
 }  // namespace desktoper2D

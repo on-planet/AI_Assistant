@@ -4,20 +4,17 @@
 
 #include "desktoper2D/editor/editor_gizmo.h"
 #include "desktoper2D/core/model.h"
+#include "desktoper2D/lifecycle/state/runtime_window_state.h"
 
 #include <functional>
 
 namespace desktoper2D {
 
 struct AppRenderContext {
-    SDL_Renderer *renderer = nullptr;
+    const RuntimeWindowState *window_state = nullptr;
 
     bool model_loaded = false;
     ModelRuntime *model = nullptr;
-
-    SDL_Texture *demo_texture = nullptr;
-    int demo_texture_w = 0;
-    int demo_texture_h = 0;
 
     bool show_debug_stats = true;
     bool manual_param_mode = false;
@@ -35,9 +32,6 @@ struct AppRenderContext {
 
     const char *editor_status = nullptr;
     float editor_status_ttl = 0.0f;
-    int window_h = 0;
-    int window_w = 0;
-
     // 编辑器视图（用于画布平移/缩放）。
     float view_pan_x = 0.0f;
     float view_pan_y = 0.0f;

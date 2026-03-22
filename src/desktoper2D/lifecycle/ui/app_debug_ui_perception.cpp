@@ -19,7 +19,7 @@ void RenderRuntimePerceptionPanel(AppRuntime &runtime) {
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Scene Error: %s", runtime.perception_state.scene_classifier_last_error.c_str());
     }
 
-    ImGui::Text("Camera FaceMesh: %s (%s)", runtime.perception_state.camera_facemesh_ready ? "ready" : "not ready", runtime.feature_face_emotion_enabled ? "enabled" : "disabled");
+    ImGui::Text("Camera FaceMesh: %s (%s)", runtime.perception_state.camera_facemesh_ready ? "ready" : "not ready", runtime.feature_flags.face_emotion_enabled ? "enabled" : "disabled");
     if (runtime.perception_state.camera_facemesh_ready) {
         ImGui::Text("Face: %s", runtime.perception_state.face_emotion_result.face_detected ? "present" : "none");
         ImGui::Text("Emotion: %s (%.2f)",
@@ -87,7 +87,7 @@ void RenderRuntimePerceptionPanel(AppRuntime &runtime) {
 void RenderRuntimeOcrPanel(AppRuntime &runtime) {
     ImGui::BeginChild("perception_ocr_child", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
     ImGui::SeparatorText("OCR Status");
-    ImGui::Text("OCR: %s (%s)", runtime.perception_state.ocr_ready ? "ready" : "not ready", runtime.feature_ocr_enabled ? "enabled" : "disabled");
+    ImGui::Text("OCR: %s (%s)", runtime.perception_state.ocr_ready ? "ready" : "not ready", runtime.feature_flags.ocr_enabled ? "enabled" : "disabled");
     if (!runtime.perception_state.ocr_last_error.empty()) {
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "OCR Error: %s", runtime.perception_state.ocr_last_error.c_str());
     }

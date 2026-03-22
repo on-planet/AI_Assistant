@@ -87,16 +87,22 @@ add_executable(AI_assistant WIN32
     src/desktoper2D/lifecycle/camera_facemesh_service.cpp
     src/desktoper2D/lifecycle/utils/app_text_utils.cpp
     src/desktoper2D/lifecycle/ui/ui_empty_state.cpp
-    src/desktoper2D/lifecycle/services/task_category_service.cpp
+    src/desktoper2D/lifecycle/services/task_category_features.cpp
+    src/desktoper2D/lifecycle/services/task_category_scoring.cpp
+    src/desktoper2D/lifecycle/services/task_category_decision.cpp
     src/desktoper2D/lifecycle/services/ocr_postprocess_service.cpp
     src/desktoper2D/lifecycle/services/plugin_runtime_service.cpp
+    src/desktoper2D/lifecycle/services/plugin_runtime_service_internal.cpp
+    src/desktoper2D/lifecycle/services/plugin_runtime_config_repository.cpp
+    src/desktoper2D/lifecycle/services/plugin_runtime_catalog_service.cpp
+    src/desktoper2D/lifecycle/services/plugin_runtime_switch_service.cpp
+    src/desktoper2D/lifecycle/services/plugin_runtime_override_service.cpp
     src/desktoper2D/lifecycle/asr/offline_asr_provider.cpp
     src/desktoper2D/lifecycle/asr/cloud_asr_provider.cpp
     src/desktoper2D/lifecycle/asr/hybrid_asr_provider.cpp
     src/desktoper2D/lifecycle/asr/vad_segmenter.cpp
     src/desktoper2D/lifecycle/asr/asr_session_service.cpp
     src/desktoper2D/lifecycle/services/decision_service.cpp
-    src/desktoper2D/lifecycle/state/app_runtime_state.cpp
     src/desktoper2D/lifecycle/systems/app_systems.cpp
     src/desktoper2D/lifecycle/ui/app_debug_ui.cpp
     src/desktoper2D/lifecycle/ui/app_debug_ui_widgets.cpp
@@ -109,6 +115,7 @@ add_executable(AI_assistant WIN32
     src/desktoper2D/lifecycle/ui/commands/ui_command_bridge.cpp
     src/desktoper2D/lifecycle/ui/commands/workspace_commands.cpp
     src/desktoper2D/lifecycle/ui/commands/ops_commands.cpp
+    src/desktoper2D/lifecycle/ui/commands/plugin_commands.cpp
     src/desktoper2D/lifecycle/ui/app_debug_ui_actions.cpp
     src/desktoper2D/lifecycle/ui/app_debug_ui_workspace.cpp
     src/desktoper2D/lifecycle/ui/app_debug_ui_overview.cpp
@@ -125,12 +132,14 @@ add_executable(AI_assistant WIN32
     src/desktoper2D/lifecycle/events/app_event_handler.cpp
     src/desktoper2D/lifecycle/systems/runtime_tick_entry.cpp
     src/desktoper2D/lifecycle/ui/runtime_render_entry.cpp
+    src/desktoper2D/lifecycle/ui/runtime_imgui_backend.cpp
     src/desktoper2D/lifecycle/systems/runtime_command_executor.cpp
     src/desktoper2D/lifecycle/systems/workspace_reducer.cpp
     src/desktoper2D/lifecycle/editor/editor_interaction_facade.cpp
     src/desktoper2D/lifecycle/editor/editor_session_service.cpp
     src/desktoper2D/lifecycle/bridge_factory.cpp
     src/desktoper2D/lifecycle/state/runtime_state_ops.cpp
+    src/desktoper2D/lifecycle/state/runtime_audio_state_ops.cpp
 )
 
 target_link_libraries(AI_assistant PRIVATE SDL3::SDL3 "${ONNXRUNTIME_LIB}" ${OpenCV_LIBS} d3d11 dxgi windowsapp runtimeobject)
@@ -202,7 +211,9 @@ add_executable(lifecycle_decoupling_tests
     tests/lifecycle_decoupling_tests.cpp
     src/desktoper2D/lifecycle/asr/asr_session_service.cpp
     src/desktoper2D/lifecycle/services/decision_service.cpp
-    src/desktoper2D/lifecycle/services/task_category_service.cpp
+    src/desktoper2D/lifecycle/services/task_category_features.cpp
+    src/desktoper2D/lifecycle/services/task_category_scoring.cpp
+    src/desktoper2D/lifecycle/services/task_category_decision.cpp
 )
 
 target_include_directories(lifecycle_decoupling_tests PRIVATE

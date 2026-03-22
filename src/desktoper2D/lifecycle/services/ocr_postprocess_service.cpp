@@ -4,6 +4,7 @@
 #include <cctype>
 
 #include "desktoper2D/lifecycle/perception_pipeline.h"
+#include "desktoper2D/lifecycle/services/decision_service.h"
 
 namespace desktoper2D {
 
@@ -61,6 +62,7 @@ void OcrPostprocessService::Apply(const OcrResult &ocr_result,
     state.blackboard.ocr.domain_tags = ocr_result.domain_tags;
 
     InferDomainTags(norm_text, state.blackboard.ocr.domain_tags);
+    PublishTaskDecisionOcrInput(state);
 }
 
 std::string OcrPostprocessService::NormalizeSummary(const std::string &summary,

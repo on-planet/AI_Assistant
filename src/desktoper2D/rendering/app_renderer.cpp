@@ -8,12 +8,17 @@ namespace desktoper2D {
 
 namespace {
 
+SDL_Renderer *GetRenderer(const AppRenderContext &ctx) {
+    return ctx.window_state ? ctx.window_state->renderer : nullptr;
+}
+
 void RenderPartEditorOverlay(const AppRenderContext &ctx) {
-    if (!ctx.renderer || !ctx.model || !ctx.has_model_parts || !ctx.has_model_parts()) {
+    SDL_Renderer *renderer = GetRenderer(ctx);
+    if (!renderer || !ctx.model || !ctx.has_model_parts || !ctx.has_model_parts()) {
         return;
     }
 
-    SDL_SetRenderDrawColor(ctx.renderer, 255, 255, 255, 255);
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
 
     if (ctx.ensure_selected_part_index_valid) {
         ctx.ensure_selected_part_index_valid();
@@ -34,18 +39,18 @@ void RenderPartEditorOverlay(const AppRenderContext &ctx) {
             box.w + 6.0f,
             box.h + 6.0f,
         };
-        SDL_SetRenderDrawColor(ctx.renderer, 255, 220, 64, ctx.edit_mode ? 230 : 180);
-        SDL_RenderRect(ctx.renderer, &glow_box);
-        SDL_SetRenderDrawColor(ctx.renderer, 255, 220, 64, 255);
-        SDL_RenderRect(ctx.renderer, &box);
+        SDL_SetRenderDrawColor(renderer, 255, 220, 64, ctx.edit_mode ? 230 : 180);
+        SDL_RenderRect(renderer, &glow_box);
+        SDL_SetRenderDrawColor(renderer, 255, 220, 64, 255);
+        SDL_RenderRect(renderer, &box);
     }
 
     const float px = part.runtime_pos_x;
     const float py = part.runtime_pos_y;
 
-    SDL_SetRenderDrawColor(ctx.renderer, 255, 64, 64, ctx.edit_mode ? 240 : 180);
-    SDL_RenderLine(ctx.renderer, px - 10.0f, py, px + 10.0f, py);
-    SDL_RenderLine(ctx.renderer, px, py - 10.0f, px, py + 10.0f);
+    SDL_SetRenderDrawColor(renderer, 255, 64, 64, ctx.edit_mode ? 240 : 180);
+    SDL_RenderLine(renderer, px - 10.0f, py, px + 10.0f, py);
+    SDL_RenderLine(renderer, px, py - 10.0f, px, py + 10.0f);
 
     char part_line[256]{};
     std::snprintf(part_line, sizeof(part_line),
@@ -58,11 +63,11 @@ void RenderPartEditorOverlay(const AppRenderContext &ctx) {
                   part.base_pos_y,
                   part.pivot_x,
                   part.pivot_y);
-    SDL_RenderDebugText(ctx.renderer, 12.0f, 108.0f, part_line);
+    SDL_RenderDebugText(renderer, 12.0f, 108.0f, part_line);
 
     if (ctx.edit_mode) {
-        RenderGizmoOverlay(ctx.renderer, part, ctx.gizmo_hover_handle, ctx.gizmo_active_handle, ctx.axis_constraint);
-        SDL_RenderDebugText(ctx.renderer,
+        RenderGizmoOverlay(renderer, part, ctx.gizmo_hover_handle, ctx.gizmo_active_handle, ctx.axis_constraint);
+        SDL_RenderDebugText(renderer,
                             12.0f,
                             124.0f,
                             "EditKeys: E toggle | LMB Gizmo(X/Y/Rotate/Scale) | Shift+LMB pivot | Tab prev/next | Ctrl+S save project | Ctrl+O load project");
@@ -70,20 +75,23 @@ void RenderPartEditorOverlay(const AppRenderContext &ctx) {
 }
 
 void RenderEditorStatus(const AppRenderContext &ctx) {
-    if (!ctx.renderer || !ctx.editor_status || ctx.editor_status_ttl <= 0.0f) {
+    SDL_Renderer *renderer = GetRenderer(ctx);
+    if (!renderer || !ctx.editor_status || ctx.editor_status_ttl <= 0.0f) {
         return;
     }
 
-    SDL_SetRenderDrawColor(ctx.renderer, 255, 255, 255, 255);
-    SDL_RenderDebugText(ctx.renderer, 12.0f, static_cast<float>(ctx.window_h - 24), ctx.editor_status);
+    const int window_h = ctx.window_state ? ctx.window_state->window_h : 0;
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+    SDL_RenderDebugText(renderer, 12.0f, static_cast<float>(window_h - 24), ctx.editor_status);
 }
 
 void RenderDebugStats(const AppRenderContext &ctx) {
-    if (!ctx.renderer || !ctx.model) {
+    SDL_Renderer *renderer = GetRenderer(ctx);
+    if (!renderer || !ctx.model) {
         return;
     }
 
-    SDL_SetRenderDrawColor(ctx.renderer, 255, 255, 255, 255);
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
 
     char line1[128]{};
     char line2[128]{};
@@ -98,15 +106,15 @@ void RenderDebugStats(const AppRenderContext &ctx) {
     std::snprintf(line3, sizeof(line3), "Verts: %d  Tris: %d", ctx.model->debug_stats.vertex_count,
                   ctx.model->debug_stats.triangle_count);
 
-    SDL_RenderDebugText(ctx.renderer, 12.0f, 12.0f, line1);
-    SDL_RenderDebugText(ctx.renderer, 12.0f, 28.0f, line2);
-    SDL_RenderDebugText(ctx.renderer, 12.0f, 44.0f, line3);
+    SDL_RenderDebugText(renderer, 12.0f, 12.0f, line1);
+    SDL_RenderDebugText(renderer, 12.0f, 28.0f, line2);
+    SDL_RenderDebugText(renderer, 12.0f, 44.0f, line3);
 
     if (ctx.model_loaded) {
         std::snprintf(line4, sizeof(line4), "Animation Channels: %s | Manual Param: %s",
                       ctx.model->animation_channels_enabled ? "ON" : "OFF",
                       ctx.manual_param_mode ? "ON" : "OFF");
-        SDL_RenderDebugText(ctx.renderer, 12.0f, 60.0f, line4);
+        SDL_RenderDebugText(renderer, 12.0f, 60.0f, line4);
 
         if (ctx.has_model_params && ctx.has_model_params()) {
             if (ctx.ensure_selected_param_index_valid) {
@@ -123,8 +131,8 @@ void RenderDebugStats(const AppRenderContext &ctx) {
                               p.param.target());
                 std::snprintf(line6, sizeof(line6),
                               "Keys: F1 debug | M manual | Tab switch | <-/-> fine | Up/Down coarse | Space reset | R reset all");
-                SDL_RenderDebugText(ctx.renderer, 12.0f, 76.0f, line5);
-                SDL_RenderDebugText(ctx.renderer, 12.0f, 92.0f, line6);
+                SDL_RenderDebugText(renderer, 12.0f, 76.0f, line5);
+                SDL_RenderDebugText(renderer, 12.0f, 92.0f, line6);
             }
         }
     }
@@ -133,27 +141,28 @@ void RenderDebugStats(const AppRenderContext &ctx) {
 }  // namespace
 
 void RenderAppFrame(const AppRenderContext &ctx) {
-    if (!ctx.renderer || !ctx.model) {
+    SDL_Renderer *renderer = GetRenderer(ctx);
+    if (!renderer || !ctx.model) {
         return;
     }
 
-    SDL_SetRenderDrawBlendMode(ctx.renderer, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(ctx.renderer, 0, 0, 0, 128);
-    SDL_RenderClear(ctx.renderer);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 128);
+    SDL_RenderClear(renderer);
 
     if (ctx.model_loaded) {
-        RenderModelRuntime(ctx.renderer,
+        RenderModelRuntime(renderer,
                            ctx.model,
                            ctx.view_pan_x,
                            ctx.view_pan_y,
                            ctx.view_zoom);
-    } else if (ctx.demo_texture) {
+    } else if (ctx.window_state && ctx.window_state->demo_texture) {
         SDL_FRect dest_rect;
         dest_rect.x = 50.0f;
         dest_rect.y = 50.0f;
-        dest_rect.w = static_cast<float>(ctx.demo_texture_w);
-        dest_rect.h = static_cast<float>(ctx.demo_texture_h);
-        SDL_RenderTexture(ctx.renderer, ctx.demo_texture, nullptr, &dest_rect);
+        dest_rect.w = static_cast<float>(ctx.window_state->demo_texture_w);
+        dest_rect.h = static_cast<float>(ctx.window_state->demo_texture_h);
+        SDL_RenderTexture(renderer, ctx.window_state->demo_texture, nullptr, &dest_rect);
     }
 
     RenderPartEditorOverlay(ctx);
@@ -161,4 +170,3 @@ void RenderAppFrame(const AppRenderContext &ctx) {
 }
 
 }  // namespace desktoper2D
-

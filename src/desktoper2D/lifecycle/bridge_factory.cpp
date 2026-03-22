@@ -56,7 +56,6 @@ RuntimeTickBridge BuildRuntimeTickBridge(const RuntimeTickBridgeFactoryDeps &dep
         .build_model_reload_context = deps.build_model_reload_context,
         .build_behavior_apply_context = deps.build_behavior_apply_context,
         .task_secondary_category_name = deps.task_secondary_category_name,
-        .infer_task_category_inplace = deps.infer_task_category_inplace,
     };
 }
 

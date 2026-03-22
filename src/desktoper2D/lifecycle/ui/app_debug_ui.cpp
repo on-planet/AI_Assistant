@@ -24,6 +24,7 @@
 #include "desktoper2D/lifecycle/editor/editor_session_service.h"
 #include "desktoper2D/lifecycle/services/plugin_runtime_service.h"
 #include "desktoper2D/lifecycle/state/app_runtime_state.h"
+#include "desktoper2D/lifecycle/ui/commands/plugin_commands.h"
 #include "desktoper2D/lifecycle/ui/ui_empty_state.h"
 
 namespace desktoper2D {
@@ -54,209 +55,6 @@ std::vector<std::string> SplitExtraOnnxLines(const char *text) {
         if (!trimmed.empty()) {
             out.push_back(trimmed);
         }
-    }
-    return out;
-}
-
-void ResetPerceptionRuntimeState(PerceptionPipelineState &state) {
-    state.screen_capture_poll_accum_sec = 0.0f;
-    state.screen_capture_last_error.clear();
-    state.screen_capture_success_count = 0;
-    state.screen_capture_fail_count = 0;
-    ClearRuntimeError(state.capture_error_info);
-
-    state.scene_classifier_last_error.clear();
-    state.scene_result = SceneClassificationResult{};
-    state.scene_total_runs = 0;
-    state.scene_total_latency_ms = 0;
-    state.scene_avg_latency_ms = 0.0f;
-    ClearRuntimeError(state.scene_error_info);
-
-    state.ocr_last_error.clear();
-    state.ocr_result = OcrResult{};
-    state.ocr_last_stable_result = OcrResult{};
-    state.ocr_skipped_due_timeout = false;
-    state.ocr_total_runs = 0;
-    state.ocr_total_latency_ms = 0;
-    state.ocr_avg_latency_ms = 0.0f;
-    state.ocr_preprocess_det_avg_ms = 0.0f;
-    state.ocr_infer_det_avg_ms = 0.0f;
-    state.ocr_preprocess_rec_avg_ms = 0.0f;
-    state.ocr_infer_rec_avg_ms = 0.0f;
-    state.ocr_total_raw_lines = 0;
-    state.ocr_total_kept_lines = 0;
-    state.ocr_total_dropped_low_conf_lines = 0;
-    state.ocr_discard_rate = 0.0f;
-    state.ocr_conf_low_count = 0;
-    state.ocr_conf_mid_count = 0;
-    state.ocr_conf_high_count = 0;
-    state.ocr_summary_candidate.clear();
-    state.ocr_summary_stable.clear();
-    state.ocr_summary_consistent_count = 0;
-    ClearRuntimeError(state.ocr_error_info);
-
-    state.system_context_snapshot = SystemContextSnapshot{};
-    state.system_context_last_error.clear();
-    ClearRuntimeError(state.system_context_error_info);
-
-    state.camera_facemesh_last_error.clear();
-    state.face_emotion_result = FaceEmotionResult{};
-    state.face_total_runs = 0;
-    state.face_total_latency_ms = 0;
-    state.face_avg_latency_ms = 0.0f;
-    ClearRuntimeError(state.facemesh_error_info);
-
-    state.blackboard = PerceptionBlackboard{};
-}
-
-void ResetAllRuntimeErrorCounters(AppRuntime &runtime) {
-    auto reset_err = [](RuntimeErrorInfo &err) {
-        ClearRuntimeError(err);
-        err.detail.clear();
-        err.count = 0;
-        err.degraded_count = 0;
-    };
-
-    reset_err(runtime.perception_state.capture_error_info);
-    reset_err(runtime.perception_state.scene_error_info);
-    reset_err(runtime.perception_state.ocr_error_info);
-    reset_err(runtime.perception_state.system_context_error_info);
-    reset_err(runtime.perception_state.facemesh_error_info);
-    reset_err(runtime.plugin_error_info);
-    reset_err(runtime.asr_error_info);
-    reset_err(runtime.chat_error_info);
-    reset_err(runtime.reminder_error_info);
-}
-
-
-bool ExportRuntimeSnapshotJson(const AppRuntime &runtime, const char *path, std::string *out_error) {
-    const JsonValue snapshot = BuildRuntimeSnapshotJson(runtime);
-    const std::string text = StringifyJson(snapshot, 2);
-
-    SDL_IOStream *io = SDL_IOFromFile(path, "wb");
-    if (!io) {
-        if (out_error) {
-            *out_error = std::string("open snapshot file failed: ") + SDL_GetError();
-        }
-        return false;
-    }
-
-    const size_t n = text.size();
-    const size_t w = SDL_WriteIO(io, text.data(), n);
-    SDL_CloseIO(io);
-
-    if (w != n) {
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-        if (out_error) {
-            *out_error = "write snapshot file failed";
-        }
-        return false;
-    }
-
-    if (out_error) {
-        out_error->clear();
-    }
-    return true;
-}
-
-void TriggerSingleStepSampling(AppRuntime &runtime) {
-    runtime.perception_state.screen_capture_poll_accum_sec =
-        std::max(0.1f, runtime.perception_state.screen_capture_poll_interval_sec);
-    runtime.reminder_poll_accum_sec = 1.0f;
-    runtime.asr_poll_accum_sec = 0.02f;
-    runtime.runtime_observability_log_accum_sec =
-        std::max(0.2f, runtime.runtime_observability_log_interval_sec);
-}
-
-std::string DetectParamPrefix(const std::string &param_id) {
-    static std::size_t empty_id_count = 0;
-    static std::size_t abnormal_id_count = 0;
-
-    if (param_id.empty()) {
-        ++empty_id_count;
-        SDL_Log("[ParamGroup] empty param id encountered (count=%zu)", empty_id_count);
-        return "misc";
-    }
-    const std::size_t us = param_id.find('_');
-    if (us != std::string::npos && us > 0) {
-        return param_id.substr(0, us);
-    }
-    std::size_t cut = 0;
-    while (cut < param_id.size()) {
-        const unsigned char ch = static_cast<unsigned char>(param_id[cut]);
-        if ((ch >= 'A' && ch <= 'Z' && cut > 0) || (ch >= '0' && ch <= '9')) {
-            break;
-        }
-        ++cut;
-    }
-    if (cut == 0) {
-        ++abnormal_id_count;
-        SDL_Log("[ParamGroup] abnormal param id: '%s' (count=%zu)", param_id.c_str(), abnormal_id_count);
-        return "misc";
-    }
-    return param_id.substr(0, cut);
-}
-
-std::string DetectParamSemanticGroup(const std::string &param_id) {
-    std::string id_lower = param_id;
-    std::transform(id_lower.begin(), id_lower.end(), id_lower.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-
-    if (id_lower.find("eye") != std::string::npos || id_lower.find("blink") != std::string::npos) return "眼睛";
-    if (id_lower.find("head") != std::string::npos || id_lower.find("neck") != std::string::npos) return "头部";
-    if (id_lower.find("brow") != std::string::npos || id_lower.find("mouth") != std::string::npos ||
-        id_lower.find("lip") != std::string::npos || id_lower.find("cheek") != std::string::npos ||
-        id_lower.find("nose") != std::string::npos || id_lower.find("emotion") != std::string::npos ||
-        id_lower.find("smile") != std::string::npos || id_lower.find("angry") != std::string::npos) {
-        return "表情";
-    }
-    if (id_lower.find("window") != std::string::npos || id_lower.find("opacity") != std::string::npos ||
-        id_lower.find("clickthrough") != std::string::npos || id_lower.find("click_through") != std::string::npos) {
-        return "窗口";
-    }
-    if (id_lower.find("behavior") != std::string::npos || id_lower.find("idle") != std::string::npos ||
-        id_lower.find("debug") != std::string::npos || id_lower.find("manual") != std::string::npos) {
-        return "行为";
-    }
-    if (id_lower.find("hair") != std::string::npos || id_lower.find("bang") != std::string::npos) return "头发";
-    if (id_lower.find("body") != std::string::npos || id_lower.find("arm") != std::string::npos) return "身体";
-    return "其他";
-}
-
-bool ParamMatchesSearch(const std::string &param_id, const char *search_text) {
-    if (search_text == nullptr || search_text[0] == '\0') {
-        return true;
-    }
-    std::string id_lower = param_id;
-    std::transform(id_lower.begin(), id_lower.end(), id_lower.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-    std::string needle = search_text;
-    std::transform(needle.begin(), needle.end(), needle.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-    return id_lower.find(needle) != std::string::npos;
-}
-
-using ParamGroup = std::pair<std::string, std::vector<int>>;
-
-std::vector<ParamGroup> BuildParamGroups(const AppRuntime &runtime, int group_mode, const char *search_text) {
-    std::map<std::string, std::vector<int>, std::less<>> grouped;
-    for (int i = 0; i < static_cast<int>(runtime.model.parameters.size()); ++i) {
-        const auto &p = runtime.model.parameters[static_cast<std::size_t>(i)];
-        if (!ParamMatchesSearch(p.id, search_text)) {
-            continue;
-        }
-        const std::string key = (group_mode == 1) ? DetectParamSemanticGroup(p.id) : DetectParamPrefix(p.id);
-        grouped[key].push_back(i);
-    }
-
-    std::vector<ParamGroup> out;
-    out.reserve(grouped.size());
-    for (auto &kv : grouped) {
-        out.emplace_back(kv.first, std::move(kv.second));
     }
     return out;
 }
@@ -317,42 +115,6 @@ std::vector<int> BuildTimelineSelectedIndices(const AnimationChannel &ch,
         }
     }
     return indices;
-}
-
-void NormalizeTimelineSelection(AppRuntime &runtime, AnimationChannel &ch) {
-    desktoper2D::EnsureTimelineKeyframeStableIds(ch);
-
-    std::vector<std::uint64_t> normalized_ids;
-    normalized_ids.reserve(runtime.timeline_selected_keyframe_ids.size() + runtime.timeline_selected_keyframe_indices.size());
-
-    auto append_id = [&](std::uint64_t stable_id) {
-        if (stable_id == 0) {
-            return;
-        }
-        if (std::find(normalized_ids.begin(), normalized_ids.end(), stable_id) == normalized_ids.end()) {
-            normalized_ids.push_back(stable_id);
-        }
-    };
-
-    for (std::uint64_t stable_id : runtime.timeline_selected_keyframe_ids) {
-        append_id(stable_id);
-    }
-    for (int idx : runtime.timeline_selected_keyframe_indices) {
-        if (idx >= 0 && idx < static_cast<int>(ch.keyframes.size())) {
-            append_id(ch.keyframes[static_cast<std::size_t>(idx)].stable_id);
-        }
-    }
-
-    runtime.timeline_selected_keyframe_ids.clear();
-    for (std::uint64_t stable_id : normalized_ids) {
-        for (const auto &kf : ch.keyframes) {
-            if (kf.stable_id == stable_id) {
-                runtime.timeline_selected_keyframe_ids.push_back(stable_id);
-                break;
-            }
-        }
-    }
-    runtime.timeline_selected_keyframe_indices = desktoper2D::BuildTimelineSelectedIndices(ch, runtime.timeline_selected_keyframe_ids);
 }
 
 bool IsTimelineKeyframeSelected(const AppRuntime &runtime, const TimelineKeyframe &kf) {
@@ -512,24 +274,6 @@ bool TimelineKeyframeListEqual(const std::vector<TimelineKeyframe> &lhs,
     return true;
 }
 
-void PushTimelineEditCommand(AppRuntime &runtime,
-                             const AnimationChannel &channel,
-                             const std::vector<TimelineKeyframe> &before_keyframes,
-                             const std::vector<TimelineKeyframe> &after_keyframes,
-                             const std::vector<std::uint64_t> &before_selected_ids,
-                             const std::vector<std::uint64_t> &after_selected_ids) {
-    if (desktoper2D::TimelineKeyframeListEqual(before_keyframes, after_keyframes) && before_selected_ids == after_selected_ids) {
-        return;
-    }
-    PushEditCommand(runtime.undo_stack,
-                    runtime.redo_stack,
-                    desktoper2D::MakeTimelineEditCommand(channel,
-                                            before_keyframes,
-                                            after_keyframes,
-                                            before_selected_ids,
-                                            after_selected_ids));
-}
-
 void RenderRuntimeEditorFeatureToggles(AppRuntime &runtime) {
     EditorPanelState panel_state = BuildEditorPanelState(runtime);
 
@@ -687,35 +431,35 @@ TimelineInteractionStorage &GetTimelineInteractionStorage() {
 void RenderRuntimePluginDetailPanel(AppRuntime &runtime) {
     ImGui::SeparatorText("Plugin Detail");
     if (ImGui::Button("Back to Cards")) {
-        runtime.plugin_detail_kind = PluginDetailKind::None;
-        runtime.show_plugin_detail_window = false;
-        runtime.show_plugin_quick_control_window = true;
+        runtime.plugin.detail_kind = PluginDetailKind::None;
+        runtime.workspace_ui.panels.show_plugin_detail_window = false;
+        runtime.workspace_ui.panels.show_plugin_quick_control_window = true;
         return;
     }
     ImGui::Separator();
 
-    ImGui::Text("Title: %s", runtime.plugin_detail_title.empty() ? "(none)" : runtime.plugin_detail_title.c_str());
-    if (!runtime.plugin_detail_source.empty()) {
-        ImGui::TextWrapped("Source: %s", runtime.plugin_detail_source.c_str());
+    ImGui::Text("Title: %s", runtime.plugin.detail_title.empty() ? "(none)" : runtime.plugin.detail_title.c_str());
+    if (!runtime.plugin.detail_source.empty()) {
+        ImGui::TextWrapped("Source: %s", runtime.plugin.detail_source.c_str());
     }
-    if (!runtime.plugin_detail_backend.empty()) {
-        ImGui::Text("Backend: %s", runtime.plugin_detail_backend.c_str());
+    if (!runtime.plugin.detail_backend.empty()) {
+        ImGui::Text("Backend: %s", runtime.plugin.detail_backend.c_str());
     }
-    if (!runtime.plugin_detail_status.empty()) {
-        ImGui::Text("Status: %s", runtime.plugin_detail_status.c_str());
+    if (!runtime.plugin.detail_status.empty()) {
+        ImGui::Text("Status: %s", runtime.plugin.detail_status.c_str());
     }
-    if (!runtime.plugin_detail_last_error.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Last Error: %s", runtime.plugin_detail_last_error.c_str());
+    if (!runtime.plugin.detail_last_error.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "Last Error: %s", runtime.plugin.detail_last_error.c_str());
     }
-    if (!runtime.plugin_detail_assets.empty()) {
-        std::string assets_text = JoinAssetsUi(runtime.plugin_detail_assets);
+    if (!runtime.plugin.detail_assets.empty()) {
+        std::string assets_text = JoinAssetsUi(runtime.plugin.detail_assets);
         RenderLongTextBlock("Assets", "plugin_detail_assets", &assets_text, 8, 160.0f);
     } else {
         ImGui::TextDisabled("(no assets)");
     }
 
     ImGui::SeparatorText("编辑配置");
-    if (runtime.plugin_detail_source.empty()) {
+    if (runtime.plugin.detail_source.empty()) {
         ImGui::TextDisabled("(no editable config)");
         return;
     }
@@ -726,27 +470,27 @@ void RenderRuntimePluginDetailPanel(AppRuntime &runtime) {
         std::string onnx;
         std::vector<std::string> extra;
         std::string err;
-        if (!LoadPluginConfigFields(runtime.plugin_detail_source, &model_id, &model_version, &onnx, &extra, &err)) {
-            runtime.plugin_switch_status.clear();
-            runtime.plugin_switch_error = err.empty() ? "load behavior config failed" : err;
+        if (!LoadPluginConfigFields(runtime.plugin.detail_source, &model_id, &model_version, &onnx, &extra, &err)) {
+            runtime.plugin.switch_status.clear();
+            runtime.plugin.switch_error = err.empty() ? "load behavior config failed" : err;
             return false;
         }
-        SDL_strlcpy(runtime.plugin_detail_edit_model_id_input, model_id.c_str(), sizeof(runtime.plugin_detail_edit_model_id_input));
-        SDL_strlcpy(runtime.plugin_detail_edit_onnx_input, onnx.c_str(), sizeof(runtime.plugin_detail_edit_onnx_input));
+        SDL_strlcpy(runtime.plugin.detail_edit_model_id_input, model_id.c_str(), sizeof(runtime.plugin.detail_edit_model_id_input));
+        SDL_strlcpy(runtime.plugin.detail_edit_onnx_input, onnx.c_str(), sizeof(runtime.plugin.detail_edit_onnx_input));
         std::string extra_text;
         for (const auto &item : extra) {
             if (!extra_text.empty()) extra_text += "\n";
             extra_text += item;
         }
-        SDL_strlcpy(runtime.plugin_detail_edit_extra_onnx_input, extra_text.c_str(), sizeof(runtime.plugin_detail_edit_extra_onnx_input));
+        SDL_strlcpy(runtime.plugin.detail_edit_extra_onnx_input, extra_text.c_str(), sizeof(runtime.plugin.detail_edit_extra_onnx_input));
         return true;
     };
 
     auto load_default_edit = [&]() -> bool {
-        std::ifstream ifs(runtime.plugin_detail_source, std::ios::binary);
+        std::ifstream ifs(runtime.plugin.detail_source, std::ios::binary);
         if (!ifs) {
-            runtime.plugin_switch_status.clear();
-            runtime.plugin_switch_error = "load default config failed";
+            runtime.plugin.switch_status.clear();
+            runtime.plugin.switch_error = "load default config failed";
             return false;
         }
         std::ostringstream oss;
@@ -755,8 +499,8 @@ void RenderRuntimePluginDetailPanel(AppRuntime &runtime) {
         JsonParseError err{};
         auto root_opt = ParseJson(text, &err);
         if (!root_opt || !root_opt->isObject()) {
-            runtime.plugin_switch_status.clear();
-            runtime.plugin_switch_error = "parse default config failed";
+            runtime.plugin.switch_status.clear();
+            runtime.plugin.switch_error = "parse default config failed";
             return false;
         }
         const JsonValue &root = *root_opt;
@@ -764,77 +508,77 @@ void RenderRuntimePluginDetailPanel(AppRuntime &runtime) {
             const auto value = root.getString(key).value_or(std::string());
             SDL_strlcpy(buf, value.c_str(), len);
         };
-        read_string("onnx", runtime.plugin_detail_edit_onnx_input, sizeof(runtime.plugin_detail_edit_onnx_input));
-        read_string("labels", runtime.plugin_detail_edit_labels_input, sizeof(runtime.plugin_detail_edit_labels_input));
-        read_string("det", runtime.plugin_detail_edit_det_input, sizeof(runtime.plugin_detail_edit_det_input));
-        read_string("rec", runtime.plugin_detail_edit_rec_input, sizeof(runtime.plugin_detail_edit_rec_input));
-        read_string("keys", runtime.plugin_detail_edit_keys_input, sizeof(runtime.plugin_detail_edit_keys_input));
-        read_string("model", runtime.plugin_detail_edit_model_input, sizeof(runtime.plugin_detail_edit_model_input));
+        read_string("onnx", runtime.plugin.detail_edit_onnx_input, sizeof(runtime.plugin.detail_edit_onnx_input));
+        read_string("labels", runtime.plugin.detail_edit_labels_input, sizeof(runtime.plugin.detail_edit_labels_input));
+        read_string("det", runtime.plugin.detail_edit_det_input, sizeof(runtime.plugin.detail_edit_det_input));
+        read_string("rec", runtime.plugin.detail_edit_rec_input, sizeof(runtime.plugin.detail_edit_rec_input));
+        read_string("keys", runtime.plugin.detail_edit_keys_input, sizeof(runtime.plugin.detail_edit_keys_input));
+        read_string("model", runtime.plugin.detail_edit_model_input, sizeof(runtime.plugin.detail_edit_model_input));
         return true;
     };
 
-    const bool is_behavior = runtime.plugin_detail_kind == PluginDetailKind::Behavior;
-    if (!runtime.plugin_detail_edit_loaded || runtime.plugin_detail_edit_source != runtime.plugin_detail_source) {
-        runtime.plugin_detail_edit_loaded = false;
-        runtime.plugin_detail_edit_source = runtime.plugin_detail_source;
+    const bool is_behavior = runtime.plugin.detail_kind == PluginDetailKind::Behavior;
+    if (!runtime.plugin.detail_edit_loaded || runtime.plugin.detail_edit_source != runtime.plugin.detail_source) {
+        runtime.plugin.detail_edit_loaded = false;
+        runtime.plugin.detail_edit_source = runtime.plugin.detail_source;
         const bool loaded = is_behavior ? load_behavior_edit() : load_default_edit();
-        runtime.plugin_detail_edit_loaded = loaded;
+        runtime.plugin.detail_edit_loaded = loaded;
     }
 
-    if (!runtime.plugin_detail_edit_loaded) {
+    if (!runtime.plugin.detail_edit_loaded) {
         ImGui::TextDisabled("(config not loaded)");
         return;
     }
 
     if (is_behavior) {
-        ImGui::InputTextWithHint("Model Id", "model_id", runtime.plugin_detail_edit_model_id_input,
-                                 sizeof(runtime.plugin_detail_edit_model_id_input));
-        ImGui::InputTextWithHint("ONNX", "onnx path", runtime.plugin_detail_edit_onnx_input,
-                                 sizeof(runtime.plugin_detail_edit_onnx_input));
-        ImGui::InputTextMultiline("Extra ONNX (one per line)", runtime.plugin_detail_edit_extra_onnx_input,
-                                  sizeof(runtime.plugin_detail_edit_extra_onnx_input), ImVec2(-1.0f, 80.0f));
+        ImGui::InputTextWithHint("Model Id", "model_id", runtime.plugin.detail_edit_model_id_input,
+                                 sizeof(runtime.plugin.detail_edit_model_id_input));
+        ImGui::InputTextWithHint("ONNX", "onnx path", runtime.plugin.detail_edit_onnx_input,
+                                 sizeof(runtime.plugin.detail_edit_onnx_input));
+        ImGui::InputTextMultiline("Extra ONNX (one per line)", runtime.plugin.detail_edit_extra_onnx_input,
+                                  sizeof(runtime.plugin.detail_edit_extra_onnx_input), ImVec2(-1.0f, 80.0f));
         if (ImGui::Button("保存并重载")) {
             std::string err;
-            std::vector<std::string> extra = SplitExtraOnnxLines(runtime.plugin_detail_edit_extra_onnx_input);
-            const bool ok = SavePluginConfigFields(runtime.plugin_detail_source,
-                                                   runtime.plugin_detail_edit_model_id_input,
-                                                   runtime.plugin_detail_edit_onnx_input,
+            std::vector<std::string> extra = SplitExtraOnnxLines(runtime.plugin.detail_edit_extra_onnx_input);
+            const bool ok = SavePluginConfigFields(runtime.plugin.detail_source,
+                                                   runtime.plugin.detail_edit_model_id_input,
+                                                   runtime.plugin.detail_edit_onnx_input,
                                                    extra,
                                                    &err);
             if (ok) {
                 std::string reload_err;
-                ReloadPluginByConfigPath(runtime, runtime.plugin_detail_source, &reload_err);
-                runtime.plugin_switch_status = reload_err.empty() ? "plugin reloaded" : reload_err;
-                runtime.plugin_switch_error.clear();
-                runtime.plugin_config_refresh_requested = true;
+                ReloadPluginByConfigPath(runtime, runtime.plugin.detail_source, &reload_err);
+                runtime.plugin.switch_status = reload_err.empty() ? "plugin reloaded" : reload_err;
+                runtime.plugin.switch_error.clear();
+                runtime.plugin.config_refresh_requested = true;
             } else {
-                runtime.plugin_switch_status.clear();
-                runtime.plugin_switch_error = err.empty() ? "save failed" : err;
+                runtime.plugin.switch_status.clear();
+                runtime.plugin.switch_error = err.empty() ? "save failed" : err;
             }
         }
     } else {
-        if (runtime.plugin_detail_kind == PluginDetailKind::Asr) {
-            ImGui::InputTextWithHint("Model", "onnx", runtime.plugin_detail_edit_onnx_input,
-                                     sizeof(runtime.plugin_detail_edit_onnx_input));
-        } else if (runtime.plugin_detail_kind == PluginDetailKind::Ocr) {
-            ImGui::InputTextWithHint("Det", "det", runtime.plugin_detail_edit_det_input,
-                                     sizeof(runtime.plugin_detail_edit_det_input));
-            ImGui::InputTextWithHint("Rec", "rec", runtime.plugin_detail_edit_rec_input,
-                                     sizeof(runtime.plugin_detail_edit_rec_input));
-            ImGui::InputTextWithHint("Keys", "keys", runtime.plugin_detail_edit_keys_input,
-                                     sizeof(runtime.plugin_detail_edit_keys_input));
-        } else if (runtime.plugin_detail_kind == PluginDetailKind::Scene || runtime.plugin_detail_kind == PluginDetailKind::Facemesh) {
-            ImGui::InputTextWithHint("Model", "onnx", runtime.plugin_detail_edit_onnx_input,
-                                     sizeof(runtime.plugin_detail_edit_onnx_input));
-            ImGui::InputTextWithHint("Labels", "labels", runtime.plugin_detail_edit_labels_input,
-                                     sizeof(runtime.plugin_detail_edit_labels_input));
-        } else if (runtime.plugin_detail_kind == PluginDetailKind::Chat) {
-            ImGui::InputTextWithHint("Model", "model", runtime.plugin_detail_edit_model_input,
-                                     sizeof(runtime.plugin_detail_edit_model_input));
+        if (runtime.plugin.detail_kind == PluginDetailKind::Asr) {
+            ImGui::InputTextWithHint("Model", "onnx", runtime.plugin.detail_edit_onnx_input,
+                                     sizeof(runtime.plugin.detail_edit_onnx_input));
+        } else if (runtime.plugin.detail_kind == PluginDetailKind::Ocr) {
+            ImGui::InputTextWithHint("Det", "det", runtime.plugin.detail_edit_det_input,
+                                     sizeof(runtime.plugin.detail_edit_det_input));
+            ImGui::InputTextWithHint("Rec", "rec", runtime.plugin.detail_edit_rec_input,
+                                     sizeof(runtime.plugin.detail_edit_rec_input));
+            ImGui::InputTextWithHint("Keys", "keys", runtime.plugin.detail_edit_keys_input,
+                                     sizeof(runtime.plugin.detail_edit_keys_input));
+        } else if (runtime.plugin.detail_kind == PluginDetailKind::Scene || runtime.plugin.detail_kind == PluginDetailKind::Facemesh) {
+            ImGui::InputTextWithHint("Model", "onnx", runtime.plugin.detail_edit_onnx_input,
+                                     sizeof(runtime.plugin.detail_edit_onnx_input));
+            ImGui::InputTextWithHint("Labels", "labels", runtime.plugin.detail_edit_labels_input,
+                                     sizeof(runtime.plugin.detail_edit_labels_input));
+        } else if (runtime.plugin.detail_kind == PluginDetailKind::Chat) {
+            ImGui::InputTextWithHint("Model", "model", runtime.plugin.detail_edit_model_input,
+                                     sizeof(runtime.plugin.detail_edit_model_input));
         }
 
         if (ImGui::Button("保存并应用")) {
-            std::ifstream ifs(runtime.plugin_detail_source, std::ios::binary);
+            std::ifstream ifs(runtime.plugin.detail_source, std::ios::binary);
             std::ostringstream oss;
             if (ifs) {
                 oss << ifs.rdbuf();
@@ -842,8 +586,8 @@ void RenderRuntimePluginDetailPanel(AppRuntime &runtime) {
             JsonParseError err{};
             auto root_opt = ParseJson(oss.str(), &err);
             if (!root_opt || !root_opt->isObject()) {
-                runtime.plugin_switch_status.clear();
-                runtime.plugin_switch_error = "parse default config failed";
+                runtime.plugin.switch_status.clear();
+                runtime.plugin.switch_error = "parse default config failed";
             } else {
                 JsonValue root = *root_opt;
                 JsonObject *obj = root.asObject();
@@ -856,76 +600,91 @@ void RenderRuntimePluginDetailPanel(AppRuntime &runtime) {
                         if (it != obj->end()) obj->erase(it);
                     }
                 };
-                assign_string("onnx", runtime.plugin_detail_edit_onnx_input);
-                assign_string("labels", runtime.plugin_detail_edit_labels_input);
-                assign_string("det", runtime.plugin_detail_edit_det_input);
-                assign_string("rec", runtime.plugin_detail_edit_rec_input);
-                assign_string("keys", runtime.plugin_detail_edit_keys_input);
-                assign_string("model", runtime.plugin_detail_edit_model_input);
+                assign_string("onnx", runtime.plugin.detail_edit_onnx_input);
+                assign_string("labels", runtime.plugin.detail_edit_labels_input);
+                assign_string("det", runtime.plugin.detail_edit_det_input);
+                assign_string("rec", runtime.plugin.detail_edit_rec_input);
+                assign_string("keys", runtime.plugin.detail_edit_keys_input);
+                assign_string("model", runtime.plugin.detail_edit_model_input);
 
-                std::ofstream ofs(runtime.plugin_detail_source, std::ios::binary);
+                std::ofstream ofs(runtime.plugin.detail_source, std::ios::binary);
                 if (!ofs) {
-                    runtime.plugin_switch_status.clear();
-                    runtime.plugin_switch_error = "save default config failed";
+                    runtime.plugin.switch_status.clear();
+                    runtime.plugin.switch_error = "save default config failed";
                 } else {
                     ofs << StringifyJson(root, 2);
                     ofs.close();
-                    runtime.plugin_switch_status = "default plugin config saved";
-                    runtime.plugin_switch_error.clear();
+                    runtime.plugin.switch_status = "default plugin config saved";
+                    runtime.plugin.switch_error.clear();
+                    runtime.plugin.default_plugin_catalog_refresh_requested = true;
 
-                    if (runtime.plugin_detail_kind == PluginDetailKind::Asr) {
-                        runtime.override_asr_model_path = runtime.plugin_detail_edit_onnx_input;
-                        std::string apply_err;
-                        if (!ApplyOverrideModels(runtime, &apply_err)) {
-                            runtime.plugin_switch_status.clear();
-                            runtime.plugin_switch_error = apply_err.empty() ? "apply override failed" : apply_err;
-                        }
-                    } else if (runtime.plugin_detail_kind == PluginDetailKind::Ocr) {
-                        runtime.override_ocr_det_path = runtime.plugin_detail_edit_det_input;
-                        runtime.override_ocr_rec_path = runtime.plugin_detail_edit_rec_input;
-                        runtime.override_ocr_keys_path = runtime.plugin_detail_edit_keys_input;
-                        std::string apply_err;
-                        if (!ApplyOverrideModels(runtime, &apply_err)) {
-                            runtime.plugin_switch_status.clear();
-                            runtime.plugin_switch_error = apply_err.empty() ? "apply override failed" : apply_err;
-                        }
-                    } else if (runtime.plugin_detail_kind == PluginDetailKind::Scene) {
-                        runtime.override_scene_model_path = runtime.plugin_detail_edit_onnx_input;
-                        runtime.override_scene_labels_path = runtime.plugin_detail_edit_labels_input;
-                        std::string apply_err;
-                        if (!ApplyOverrideModels(runtime, &apply_err)) {
-                            runtime.plugin_switch_status.clear();
-                            runtime.plugin_switch_error = apply_err.empty() ? "apply override failed" : apply_err;
-                        }
-                    } else if (runtime.plugin_detail_kind == PluginDetailKind::Facemesh) {
-                        runtime.override_facemesh_model_path = runtime.plugin_detail_edit_onnx_input;
-                        runtime.override_facemesh_labels_path = runtime.plugin_detail_edit_labels_input;
-                        std::string apply_err;
-                        if (!ApplyOverrideModels(runtime, &apply_err)) {
-                            runtime.plugin_switch_status.clear();
-                            runtime.plugin_switch_error = apply_err.empty() ? "apply override failed" : apply_err;
-                        }
+                    if (runtime.plugin.detail_kind == PluginDetailKind::Asr) {
+                        runtime.plugin.override_asr_model_path = runtime.plugin.detail_edit_onnx_input;
+                        ApplyPluginAction(runtime,
+                                          PluginAction{
+                                              .type = PluginActionType::ApplyOverrideModels,
+                                              .feedback_slot = PluginActionFeedbackSlot::Switch,
+                                              .text_value = "default plugin config saved",
+                                              .text_value_2 = "apply override failed",
+                                              .text_value_3 = "asr",
+                                          });
+                    } else if (runtime.plugin.detail_kind == PluginDetailKind::Ocr) {
+                        runtime.plugin.override_ocr_det_path = runtime.plugin.detail_edit_det_input;
+                        runtime.plugin.override_ocr_rec_path = runtime.plugin.detail_edit_rec_input;
+                        runtime.plugin.override_ocr_keys_path = runtime.plugin.detail_edit_keys_input;
+                        ApplyPluginAction(runtime,
+                                          PluginAction{
+                                              .type = PluginActionType::ApplyOverrideModels,
+                                              .feedback_slot = PluginActionFeedbackSlot::Switch,
+                                              .text_value = "default plugin config saved",
+                                              .text_value_2 = "apply override failed",
+                                              .text_value_3 = "ocr",
+                                          });
+                    } else if (runtime.plugin.detail_kind == PluginDetailKind::Scene) {
+                        runtime.plugin.override_scene_model_path = runtime.plugin.detail_edit_onnx_input;
+                        runtime.plugin.override_scene_labels_path = runtime.plugin.detail_edit_labels_input;
+                        ApplyPluginAction(runtime,
+                                          PluginAction{
+                                              .type = PluginActionType::ApplyOverrideModels,
+                                              .feedback_slot = PluginActionFeedbackSlot::Switch,
+                                              .text_value = "default plugin config saved",
+                                              .text_value_2 = "apply override failed",
+                                              .text_value_3 = "scene",
+                                          });
+                    } else if (runtime.plugin.detail_kind == PluginDetailKind::Facemesh) {
+                        runtime.plugin.override_facemesh_model_path = runtime.plugin.detail_edit_onnx_input;
+                        runtime.plugin.override_facemesh_labels_path = runtime.plugin.detail_edit_labels_input;
+                        ApplyPluginAction(runtime,
+                                          PluginAction{
+                                              .type = PluginActionType::ApplyOverrideModels,
+                                              .feedback_slot = PluginActionFeedbackSlot::Switch,
+                                              .text_value = "default plugin config saved",
+                                              .text_value_2 = "apply override failed",
+                                              .text_value_3 = "facemesh",
+                                          });
+                    } else {
+                        runtime.plugin.unified_refresh_requested = true;
                     }
                 }
             }
         }
     }
 
-    if (!runtime.plugin_switch_status.empty()) {
-        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f), "%s", runtime.plugin_switch_status.c_str());
+    if (!runtime.plugin.switch_status.empty()) {
+        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f), "%s", runtime.plugin.switch_status.c_str());
     }
-    if (!runtime.plugin_switch_error.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "%s", runtime.plugin_switch_error.c_str());
+    if (!runtime.plugin.switch_error.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "%s", runtime.plugin.switch_error.c_str());
     }
 }
 
 void RenderUnifiedPluginStatusCard(const AppRuntime &runtime, const char *empty_hint) {
     const UnifiedPluginEntry *active_unified_plugin = nullptr;
-    if (runtime.unified_plugin_selected_index >= 0 &&
-        runtime.unified_plugin_selected_index < static_cast<int>(runtime.unified_plugin_entries.size())) {
-        active_unified_plugin = &runtime.unified_plugin_entries[static_cast<std::size_t>(runtime.unified_plugin_selected_index)];
-    } else if (!runtime.unified_plugin_entries.empty()) {
-        active_unified_plugin = &runtime.unified_plugin_entries.front();
+    if (runtime.plugin.unified_selected_index >= 0 &&
+        runtime.plugin.unified_selected_index < static_cast<int>(runtime.plugin.unified_entries.size())) {
+        active_unified_plugin = &runtime.plugin.unified_entries[static_cast<std::size_t>(runtime.plugin.unified_selected_index)];
+    } else if (!runtime.plugin.unified_entries.empty()) {
+        active_unified_plugin = &runtime.plugin.unified_entries.front();
     }
 
     if (active_unified_plugin != nullptr) {

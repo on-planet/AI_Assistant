@@ -7,7 +7,7 @@ namespace desktoper2D {
 void RenderRuntimeAsrPanel(AppRuntime &runtime) {
     ImGui::BeginChild("asr_status_child", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
     ImGui::SeparatorText("Status Card");
-    ImGui::Text("ASR: %s (%s)", runtime.asr_ready ? "ready" : "not ready", runtime.feature_asr_enabled ? "enabled" : "disabled");
+    ImGui::Text("ASR: %s (%s)", runtime.asr_ready ? "ready" : "not ready", runtime.feature_flags.asr_enabled ? "enabled" : "disabled");
     RenderLongTextBlock("ASR Text", "asr_text_child", &runtime.asr_last_result.text, 10, 100.0f);
     ImGui::Text("Switch Reason: %s", runtime.asr_last_switch_reason.empty() ? "(none)" : runtime.asr_last_switch_reason.c_str());
     ImGui::Text("RTF: %.3f", runtime.asr_rtf);
@@ -24,35 +24,35 @@ void RenderRuntimeAsrPanel(AppRuntime &runtime) {
 void RenderRuntimePluginWorkerPanel(AppRuntime &runtime) {
     ImGui::BeginChild("plugin_worker_child", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
     ImGui::SeparatorText("Plugin Worker");
-    ImGui::Text("update_hz: %d", runtime.plugin_current_update_hz);
-    ImGui::Text("total updates: %llu", static_cast<unsigned long long>(runtime.plugin_total_update_count));
+    ImGui::Text("update_hz: %d", runtime.plugin.current_update_hz);
+    ImGui::Text("total updates: %llu", static_cast<unsigned long long>(runtime.plugin.total_update_count));
     ImGui::Text("timeout/exception/internal: %llu / %llu / %llu",
-                static_cast<unsigned long long>(runtime.plugin_timeout_count),
-                static_cast<unsigned long long>(runtime.plugin_exception_count),
-                static_cast<unsigned long long>(runtime.plugin_internal_error_count));
-    ImGui::Text("timeout rate: %.2f%%", runtime.plugin_timeout_rate * 100.0);
+                static_cast<unsigned long long>(runtime.plugin.timeout_count),
+                static_cast<unsigned long long>(runtime.plugin.exception_count),
+                static_cast<unsigned long long>(runtime.plugin.internal_error_count));
+    ImGui::Text("timeout rate: %.2f%%", runtime.plugin.timeout_rate * 100.0);
     ImGui::Text("disable/recover: %llu / %llu",
-                static_cast<unsigned long long>(runtime.plugin_disable_count),
-                static_cast<unsigned long long>(runtime.plugin_recover_count));
-    ImGui::Text("auto_disabled: %s", runtime.plugin_auto_disabled ? "true" : "false");
-    if (!runtime.plugin_last_error.empty()) {
-        ImGui::TextWrapped("Plugin Last Error: %s", runtime.plugin_last_error.c_str());
+                static_cast<unsigned long long>(runtime.plugin.disable_count),
+                static_cast<unsigned long long>(runtime.plugin.recover_count));
+    ImGui::Text("auto_disabled: %s", runtime.plugin.auto_disabled ? "true" : "false");
+    if (!runtime.plugin.last_error.empty()) {
+        ImGui::TextWrapped("Plugin Last Error: %s", runtime.plugin.last_error.c_str());
     }
 
     ImGui::SeparatorText("Plugin Route Trace");
-    ImGui::Text("Selected: %s", runtime.plugin_route_selected.c_str());
-    ImGui::Text("Scene Score: %.2f", runtime.plugin_route_scene_score);
-    ImGui::Text("Task Score: %.2f", runtime.plugin_route_task_score);
-    ImGui::Text("Presence Score: %.2f", runtime.plugin_route_presence_score);
-    ImGui::Text("Total Score: %.2f", runtime.plugin_route_total_score);
-    if (runtime.plugin_route_rejected_summary.empty()) {
+    ImGui::Text("Selected: %s", runtime.plugin.route_selected.c_str());
+    ImGui::Text("Scene Score: %.2f", runtime.plugin.route_scene_score);
+    ImGui::Text("Task Score: %.2f", runtime.plugin.route_task_score);
+    ImGui::Text("Presence Score: %.2f", runtime.plugin.route_presence_score);
+    ImGui::Text("Total Score: %.2f", runtime.plugin.route_total_score);
+    if (runtime.plugin.route_rejected_summary.empty()) {
         RenderUnifiedEmptyState("plugin_route_no_rejected_empty_state",
                                 "无拒绝记录",
                                 "当前没有被拒绝的路由候选，说明候选链路较干净或尚未产生对比结果。",
                                 ImVec4(0.45f, 0.85f, 0.45f, 1.0f));
     } else {
         ImGui::BeginChild("plugin_route_trace_child", ImVec2(-1.0f, 88.0f), ImGuiChildFlags_Borders);
-        for (const auto &line : runtime.plugin_route_rejected_summary) {
+        for (const auto &line : runtime.plugin.route_rejected_summary) {
             ImGui::TextWrapped("%s", line.c_str());
         }
         ImGui::EndChild();
@@ -64,10 +64,10 @@ void RenderRuntimePluginWorkerPanel(AppRuntime &runtime) {
 void RenderRuntimeChatPanel(AppRuntime &runtime) {
     ImGui::BeginChild("asr_chat_interaction_child", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
     ImGui::SeparatorText("Param Card (Editable)");
-    ImGui::Checkbox("Enable Periodic Observability Log", &runtime.runtime_observability_log_enabled);
-    ImGui::SliderFloat("Log Interval (s)", &runtime.runtime_observability_log_interval_sec, 0.2f, 10.0f, "%.1f");
-    runtime.runtime_observability_log_interval_sec =
-        std::clamp(runtime.runtime_observability_log_interval_sec, 0.2f, 10.0f);
+    ImGui::Checkbox("Enable Periodic Observability Log", &runtime.observability.log_enabled);
+    ImGui::SliderFloat("Log Interval (s)", &runtime.observability.log_interval_sec, 0.2f, 10.0f, "%.1f");
+    runtime.observability.log_interval_sec =
+        std::clamp(runtime.observability.log_interval_sec, 0.2f, 10.0f);
 
     ImGui::SeparatorText("Chat");
     ImGui::Checkbox("Enable Chat", &runtime.feature_flags.chat_enabled);
@@ -124,7 +124,7 @@ void RenderRuntimeChatPanel(AppRuntime &runtime) {
     const std::string &asr_chat_recent_error =
         !runtime.chat_last_error.empty() ? runtime.chat_last_error :
         !runtime.asr_last_error.empty() ? runtime.asr_last_error :
-        runtime.plugin_last_error;
+        runtime.plugin.last_error;
     RenderModuleLatestErrorCard(asr_chat_recent_error);
     ImGui::EndChild();
 }

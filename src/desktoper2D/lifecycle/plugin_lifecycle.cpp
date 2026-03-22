@@ -146,6 +146,12 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
     impl_->consecutive_success_count = 0;
     impl_->consecutive_failures = 0;
     impl_->auto_disabled = false;
+    impl_->input_queue.clear();
+    impl_->latest_out = BehaviorOutput{};
+    impl_->out_seq = 0;
+    impl_->consumed_seq = 0;
+    impl_->next_run_scheduled = false;
+    impl_->next_run_tp = std::chrono::steady_clock::time_point{};
     impl_->total_update_count = 0;
     impl_->success_count = 0;
     impl_->timeout_count = 0;
@@ -165,27 +171,52 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
 
     impl_->worker = std::thread([this]() {
         while (impl_->running.load()) {
-            const int current_hz = std::max(1, impl_->current_update_hz);
-            const auto step = std::chrono::milliseconds(std::max(1, 1000 / current_hz));
-            const auto t0 = std::chrono::steady_clock::now();
+            PerceptionInput in{};
+            auto t0 = std::chrono::steady_clock::time_point{};
 
             {
-                std::lock_guard<std::mutex> lock(impl_->mtx);
-                if (impl_->auto_disabled) {
-                    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(t0 - impl_->last_disable_tp).count();
-                    if (ms >= impl_->cfg.auto_recover_after_ms) {
+                std::unique_lock<std::mutex> lock(impl_->mtx);
+                while (impl_->running.load()) {
+                    if (impl_->input_queue.empty()) {
+                        impl_->next_run_scheduled = false;
+                        impl_->cv.wait(lock, [this]() { return !impl_->running.load() || !impl_->input_queue.empty(); });
+                        continue;
+                    }
+
+                    const auto now = std::chrono::steady_clock::now();
+                    if (impl_->auto_disabled) {
+                        const auto recover_tp =
+                            impl_->last_disable_tp + std::chrono::milliseconds(std::max(0, impl_->cfg.auto_recover_after_ms));
+                        if (now < recover_tp) {
+                            impl_->cv.wait_until(lock, recover_tp, [this]() { return !impl_->running.load(); });
+                            continue;
+                        }
+
                         impl_->auto_disabled = false;
                         impl_->consecutive_failures = 0;
                         ++impl_->recover_count;
                         impl_->last_error = "plugin auto recovered";
+                        impl_->next_run_scheduled = false;
                     }
+                    if (!impl_->next_run_scheduled) {
+                        impl_->next_run_tp = now;
+                        impl_->next_run_scheduled = true;
+                    }
+
+                    if (now < impl_->next_run_tp) {
+                        impl_->cv.wait_until(lock, impl_->next_run_tp, [this]() { return !impl_->running.load(); });
+                        continue;
+                    }
+
+                    in = std::move(impl_->input_queue.front());
+                    impl_->input_queue.pop_front();
+                    t0 = std::chrono::steady_clock::now();
+                    break;
                 }
             }
 
-            PerceptionInput in{};
-            {
-                std::lock_guard<std::mutex> lock(impl_->mtx);
-                in = impl_->latest_in;
+            if (!impl_->running.load()) {
+                break;
             }
 
             BehaviorOutput out{};
@@ -277,16 +308,15 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
                         impl_->last_error = "plugin auto disabled due to consecutive failures";
                     }
                 }
-            }
 
-            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - t0);
-            if (elapsed.count() < impl_->cfg.frame_budget_ms) {
-                std::this_thread::sleep_for(step - std::min(step, elapsed));
-            }
-
-            if (impl_->auto_disabled) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                const int next_hz = std::max(1, impl_->current_update_hz);
+                if (impl_->input_queue.empty()) {
+                    impl_->next_run_tp = std::chrono::steady_clock::time_point{};
+                    impl_->next_run_scheduled = false;
+                } else {
+                    impl_->next_run_tp = t0 + std::chrono::milliseconds(std::max(1, 1000 / next_hz));
+                    impl_->next_run_scheduled = true;
+                }
             }
         }
     });
@@ -297,15 +327,19 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
 void PluginWorker::Stop() noexcept {
     if (!impl_) return;
     impl_->running.store(false);
+    impl_->cv.notify_one();
     if (impl_->worker.joinable()) {
         impl_->worker.join();
     }
 }
 
-void PluginWorker::SubmitInput(const PerceptionInput &in) {
+void PluginWorker::SubmitInput(PerceptionInput in) {
     if (!impl_) return;
-    std::lock_guard<std::mutex> lock(impl_->mtx);
-    impl_->latest_in = in;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mtx);
+        impl_->input_queue.push_back(std::move(in));
+    }
+    impl_->cv.notify_one();
 }
 
 bool PluginWorker::TryConsumeLatestOutput(BehaviorOutput &out, std::uint64_t *out_seq) {
@@ -398,7 +432,7 @@ PluginStatus BehaviorPluginModule::Init(const PluginRuntimeConfig &runtime_cfg,
     return PluginStatus::Ok;
 }
 
-PluginStatus BehaviorPluginModule::Update(const PerceptionInput &in,
+PluginStatus BehaviorPluginModule::Update(PerceptionInput in,
                                           BehaviorOutput *out,
                                           std::string *out_error) {
     if (!ready_) {
@@ -406,7 +440,7 @@ PluginStatus BehaviorPluginModule::Update(const PerceptionInput &in,
         return PluginStatus::InternalError;
     }
 
-    worker_.SubmitInput(in);
+    worker_.SubmitInput(std::move(in));
     BehaviorOutput next{};
     if (worker_.TryConsumeLatestOutput(next, nullptr)) {
         last_output_ = next;
@@ -480,10 +514,12 @@ struct PluginWorkerManager::Impl {
         running = false;
     }
 
-    void SubmitInput(const PerceptionInput &in) {
-        for (auto &entry : modules) {
+    void SubmitInput(PerceptionInput in) {
+        for (std::size_t i = 0; i < modules.size(); ++i) {
+            auto &entry = modules[i];
             BehaviorOutput scratch{};
-            entry.module->Update(in, &scratch, nullptr);
+            PerceptionInput module_input = (i + 1 == modules.size()) ? std::move(in) : in;
+            entry.module->Update(std::move(module_input), &scratch, nullptr);
             if (entry.module->ProducesBehaviorOutput()) {
                 entry.last_behavior = scratch;
                 entry.last_behavior_seq = ++behavior_seq;
@@ -543,9 +579,9 @@ void PluginWorkerManager::Shutdown() noexcept {
     }
 }
 
-void PluginWorkerManager::SubmitInput(const PerceptionInput &in) {
+void PluginWorkerManager::SubmitInput(PerceptionInput in) {
     if (impl_) {
-        impl_->SubmitInput(in);
+        impl_->SubmitInput(std::move(in));
     }
 }
 

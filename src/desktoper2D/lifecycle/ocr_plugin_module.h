@@ -17,7 +17,7 @@ public:
                       const PluginHostCallbacks &host,
                       std::string *out_error) override;
 
-    PluginStatus Update(const PerceptionInput &in,
+    PluginStatus Update(PerceptionInput in,
                         BehaviorOutput *out,
                         std::string *out_error) override;
 

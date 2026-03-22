@@ -2,10 +2,13 @@
 
 namespace desktoper2D {
 
+struct AppRuntime;
+
 struct AppRunContext {
     int argc = 0;
     char **argv = nullptr;
     int exit_code = 0;
+    AppRuntime *runtime = nullptr;
 };
 
 struct AppLifecycleOps {

@@ -229,7 +229,7 @@ bool CameraFacemeshService::RecognizeFromFrame(const ScreenCaptureFrame &frame,
         if (out_error) *out_error = "camera facemesh service not ready";
         return false;
     }
-    if (frame.width <= 0 || frame.height <= 0 || frame.bgra.empty()) {
+    if (frame.width <= 0 || frame.height <= 0 || !frame.HasPixels()) {
         if (out_error) *out_error = "invalid frame";
         return false;
     }
@@ -242,7 +242,7 @@ bool CameraFacemeshService::RecognizeFromFrame(const ScreenCaptureFrame &frame,
     } catch (...) {
     }
 
-    cv::Mat bgra(frame.height, frame.width, CV_8UC4, const_cast<std::uint8_t *>(frame.bgra.data()));
+    cv::Mat bgra(frame.height, frame.width, CV_8UC4, const_cast<std::uint8_t *>(frame.Data()));
     cv::Mat bgr;
     cv::cvtColor(bgra, bgr, cv::COLOR_BGRA2BGR);
 
@@ -511,8 +511,8 @@ bool CameraFacemeshService::RecognizeFromCamera(FaceEmotionResult &out,
     fake_frame.width = frame_bgra.cols;
     fake_frame.height = frame_bgra.rows;
     const std::size_t bytes = static_cast<std::size_t>(frame_bgra.cols) * static_cast<std::size_t>(frame_bgra.rows) * 4ull;
-    fake_frame.bgra.resize(bytes);
-    std::memcpy(fake_frame.bgra.data(), frame_bgra.data, bytes);
+    fake_frame.EnsureBgraSize(bytes);
+    std::memcpy(fake_frame.MutableData(), frame_bgra.data, bytes);
 
     return RecognizeFromFrame(fake_frame, out, out_error);
 }

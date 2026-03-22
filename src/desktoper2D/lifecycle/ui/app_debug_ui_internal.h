@@ -18,7 +18,9 @@
 #include "desktoper2D/lifecycle/state/app_runtime_state.h"
 #include "desktoper2D/lifecycle/ui/ui_empty_state.h"
 #include "desktoper2D/lifecycle/ui/app_debug_ui_types.h"
+#include "desktoper2D/lifecycle/ui/app_debug_ui_runtime_actions.h"
 #include "desktoper2D/lifecycle/ui/app_debug_ui_widgets.h"
+#include "desktoper2D/lifecycle/ui/app_debug_ui_panel_state.h"
 #include "desktoper2D/lifecycle/ui/app_debug_ui_presenter.h"
 #include "desktoper2D/lifecycle/ui/app_debug_ui_editor_service.h"
 
@@ -86,38 +88,38 @@ inline WorkspaceWindowVisibility BuildWorkspaceDefaultVisibility(const Workspace
 }
 
 inline void ApplyWorkspaceWindowVisibility(AppRuntime &runtime, const WorkspaceWindowVisibility &v) {
-    runtime.show_workspace_window = v.show_workspace_window;
-    runtime.show_overview_window = v.show_overview_window;
-    runtime.show_editor_window = v.show_editor_window;
-    runtime.show_timeline_window = v.show_timeline_window;
-    runtime.show_perception_window = v.show_perception_window;
-    runtime.show_ocr_window = v.show_ocr_window;
-    runtime.show_mapping_window = v.show_mapping_window;
-    runtime.show_asr_chat_window = v.show_asr_chat_window;
-    runtime.show_plugin_worker_window = v.show_plugin_worker_window;
-    runtime.show_chat_window = v.show_chat_window;
-    runtime.show_error_window = v.show_error_window;
-    runtime.show_inspector_window = v.show_inspector_window;
-    runtime.show_reminder_window = v.show_reminder_window;
-    runtime.show_plugin_quick_control_window = v.show_plugin_quick_control_window;
-    runtime.show_plugin_detail_window = v.show_plugin_detail_window;
+    runtime.workspace_ui.panels.show_workspace_window = v.show_workspace_window;
+    runtime.workspace_ui.panels.show_overview_window = v.show_overview_window;
+    runtime.workspace_ui.panels.show_editor_window = v.show_editor_window;
+    runtime.workspace_ui.panels.show_timeline_window = v.show_timeline_window;
+    runtime.workspace_ui.panels.show_perception_window = v.show_perception_window;
+    runtime.workspace_ui.panels.show_ocr_window = v.show_ocr_window;
+    runtime.workspace_ui.panels.show_mapping_window = v.show_mapping_window;
+    runtime.workspace_ui.panels.show_asr_chat_window = v.show_asr_chat_window;
+    runtime.workspace_ui.panels.show_plugin_worker_window = v.show_plugin_worker_window;
+    runtime.workspace_ui.panels.show_chat_window = v.show_chat_window;
+    runtime.workspace_ui.panels.show_error_window = v.show_error_window;
+    runtime.workspace_ui.panels.show_inspector_window = v.show_inspector_window;
+    runtime.workspace_ui.panels.show_reminder_window = v.show_reminder_window;
+    runtime.workspace_ui.panels.show_plugin_quick_control_window = v.show_plugin_quick_control_window;
+    runtime.workspace_ui.panels.show_plugin_detail_window = v.show_plugin_detail_window;
 }
 
 inline bool HasAnyWorkspaceChildWindowVisible(const AppRuntime &runtime) {
-    return runtime.show_overview_window ||
-           runtime.show_editor_window ||
-           runtime.show_timeline_window ||
-           runtime.show_perception_window ||
-           runtime.show_ocr_window ||
-           runtime.show_mapping_window ||
-           runtime.show_asr_chat_window ||
-           runtime.show_plugin_worker_window ||
-           runtime.show_chat_window ||
-           runtime.show_error_window ||
-           runtime.show_inspector_window ||
-           runtime.show_reminder_window ||
-           runtime.show_plugin_quick_control_window ||
-           runtime.show_plugin_detail_window;
+    return runtime.workspace_ui.panels.show_overview_window ||
+           runtime.workspace_ui.panels.show_editor_window ||
+           runtime.workspace_ui.panels.show_timeline_window ||
+           runtime.workspace_ui.panels.show_perception_window ||
+           runtime.workspace_ui.panels.show_ocr_window ||
+           runtime.workspace_ui.panels.show_mapping_window ||
+           runtime.workspace_ui.panels.show_asr_chat_window ||
+           runtime.workspace_ui.panels.show_plugin_worker_window ||
+           runtime.workspace_ui.panels.show_chat_window ||
+           runtime.workspace_ui.panels.show_error_window ||
+           runtime.workspace_ui.panels.show_inspector_window ||
+           runtime.workspace_ui.panels.show_reminder_window ||
+           runtime.workspace_ui.panels.show_plugin_quick_control_window ||
+           runtime.workspace_ui.panels.show_plugin_detail_window;
 }
 
 struct TimelineInteractionStorage {
@@ -141,14 +143,18 @@ const char *TaskSecondaryCategoryNameUi(TaskSecondaryCategory c);
 
 void RenderModuleLatencyPanel(const AppRuntime &runtime);
 void RenderRuntimeErrorClassificationTable(const AppRuntime &runtime, ErrorViewFilter filter);
-void ResetPerceptionRuntimeState(PerceptionPipelineState &state);
-void ResetAllRuntimeErrorCounters(AppRuntime &runtime);
-bool ExportRuntimeSnapshotJson(const AppRuntime &runtime, const char *path, std::string *out_error);
-void TriggerSingleStepSampling(AppRuntime &runtime);
 std::string DetectParamPrefix(const std::string &param_id);
 std::string DetectParamSemanticGroup(const std::string &param_id);
 bool ParamMatchesSearch(const std::string &param_id, const char *search_text);
 std::vector<ParamGroup> BuildParamGroups(const AppRuntime &runtime, int group_mode, const char *search_text);
+std::vector<EditorBatchBindTemplateItem> BuildEditorBatchBindTemplates();
+std::pair<float, float> BatchBindOutRangeFor(BindingType type);
+EditorBatchBindValidation ValidateBatchBind(const std::vector<EditorParamRowState> &param_rows,
+                                            BindingType type,
+                                            float in_min,
+                                            float in_max,
+                                            float out_min,
+                                            float out_max);
 void RenderUnifiedPluginStatusCard(const AppRuntime &runtime, const char *empty_hint);
 void RenderRuntimePluginHealthPanel(AppRuntime &runtime);
 std::string &RuntimeOpsStatusStorage();

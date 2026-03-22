@@ -53,55 +53,55 @@ void RenderWorkspaceToolbar(AppRuntime &runtime) {
     }
 
     if (ImGui::BeginMenu("Windows")) {
-        bool show_overview = runtime.show_overview_window;
+        bool show_overview = runtime.workspace_ui.panels.show_overview_window;
         if (ImGui::MenuItem("Overview", nullptr, &show_overview)) {
             ApplyWorkspaceAction(bridge, WorkspaceAction{.type = WorkspaceActionType::ToggleOverviewWindow, .bool_value = show_overview});
         }
-        bool show_editor = runtime.show_editor_window;
+        bool show_editor = runtime.workspace_ui.panels.show_editor_window;
         if (ImGui::MenuItem("Editor", nullptr, &show_editor)) {
             ApplyWorkspaceAction(bridge, WorkspaceAction{.type = WorkspaceActionType::ToggleEditorWindow, .bool_value = show_editor});
         }
-        bool show_timeline = runtime.show_timeline_window;
+        bool show_timeline = runtime.workspace_ui.panels.show_timeline_window;
         if (ImGui::MenuItem("Timeline", nullptr, &show_timeline)) {
             ApplyWorkspaceAction(bridge, WorkspaceAction{.type = WorkspaceActionType::ToggleTimelineWindow, .bool_value = show_timeline});
         }
-        bool show_perception = runtime.show_perception_window;
+        bool show_perception = runtime.workspace_ui.panels.show_perception_window;
         if (ImGui::MenuItem("Perception", nullptr, &show_perception)) {
             ApplyWorkspaceAction(bridge, WorkspaceAction{.type = WorkspaceActionType::TogglePerceptionWindow, .bool_value = show_perception});
         }
-        bool show_mapping = runtime.show_mapping_window;
+        bool show_mapping = runtime.workspace_ui.panels.show_mapping_window;
         if (ImGui::MenuItem("Mapping", nullptr, &show_mapping)) {
             ApplyWorkspaceAction(bridge, WorkspaceAction{.type = WorkspaceActionType::ToggleMappingWindow, .bool_value = show_mapping});
         }
-        bool show_ocr = runtime.show_ocr_window;
+        bool show_ocr = runtime.workspace_ui.panels.show_ocr_window;
         if (ImGui::MenuItem("OCR", nullptr, &show_ocr)) {
             ApplyWorkspaceAction(bridge, WorkspaceAction{.type = WorkspaceActionType::ToggleOcrWindow, .bool_value = show_ocr});
         }
-        bool show_asr = runtime.show_asr_chat_window;
+        bool show_asr = runtime.workspace_ui.panels.show_asr_chat_window;
         if (ImGui::MenuItem("ASR", nullptr, &show_asr)) {
             ApplyWorkspaceAction(bridge, WorkspaceAction{.type = WorkspaceActionType::ToggleAsrChatWindow, .bool_value = show_asr});
         }
-        bool show_plugin_worker = runtime.show_plugin_worker_window;
+        bool show_plugin_worker = runtime.workspace_ui.panels.show_plugin_worker_window;
         if (ImGui::MenuItem("Plugin Worker", nullptr, &show_plugin_worker)) {
             ApplyWorkspaceAction(bridge, WorkspaceAction{.type = WorkspaceActionType::TogglePluginWorkerWindow, .bool_value = show_plugin_worker});
         }
-        bool show_chat = runtime.show_chat_window;
+        bool show_chat = runtime.workspace_ui.panels.show_chat_window;
         if (ImGui::MenuItem("Chat", nullptr, &show_chat)) {
             ApplyWorkspaceAction(bridge, WorkspaceAction{.type = WorkspaceActionType::ToggleChatWindow, .bool_value = show_chat});
         }
-        bool show_error = runtime.show_error_window;
+        bool show_error = runtime.workspace_ui.panels.show_error_window;
         if (ImGui::MenuItem("Health", nullptr, &show_error)) {
             ApplyWorkspaceAction(bridge, WorkspaceAction{.type = WorkspaceActionType::ToggleErrorWindow, .bool_value = show_error});
         }
-        bool show_plugin_quick = runtime.show_plugin_quick_control_window;
+        bool show_plugin_quick = runtime.workspace_ui.panels.show_plugin_quick_control_window;
         if (ImGui::MenuItem("Plugin Quick Control", nullptr, &show_plugin_quick)) {
             ApplyWorkspaceAction(bridge, WorkspaceAction{.type = WorkspaceActionType::TogglePluginQuickControlWindow, .bool_value = show_plugin_quick});
         }
-        bool show_inspector = runtime.show_inspector_window;
+        bool show_inspector = runtime.workspace_ui.panels.show_inspector_window;
         if (ImGui::MenuItem("Inspector", nullptr, &show_inspector)) {
             ApplyWorkspaceAction(bridge, WorkspaceAction{.type = WorkspaceActionType::ToggleInspectorWindow, .bool_value = show_inspector});
         }
-        bool show_reminder = runtime.show_reminder_window;
+        bool show_reminder = runtime.workspace_ui.panels.show_reminder_window;
         if (ImGui::MenuItem("Reminder", nullptr, &show_reminder)) {
             ApplyWorkspaceAction(bridge, WorkspaceAction{.type = WorkspaceActionType::ToggleReminderWindow, .bool_value = show_reminder});
         }

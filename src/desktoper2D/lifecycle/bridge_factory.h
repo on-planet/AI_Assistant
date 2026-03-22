@@ -70,7 +70,6 @@ struct RuntimeTickBridgeFactoryDeps {
     std::function<ModelReloadServiceContext()> build_model_reload_context;
     std::function<BehaviorApplyContext()> build_behavior_apply_context;
     std::function<const char *(TaskSecondaryCategory)> task_secondary_category_name;
-    std::function<void()> infer_task_category_inplace;
 };
 
 RuntimeTickBridge BuildRuntimeTickBridge(const RuntimeTickBridgeFactoryDeps &deps);

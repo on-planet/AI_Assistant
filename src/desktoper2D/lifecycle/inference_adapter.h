@@ -21,7 +21,7 @@ public:
 
     virtual void Shutdown() noexcept = 0;
 
-    virtual void SubmitInput(const PerceptionInput &in) = 0;
+    virtual void SubmitInput(PerceptionInput in) = 0;
     virtual bool TryConsumeLatestOutput(BehaviorOutput &out, std::uint64_t *out_seq = nullptr) = 0;
 
     virtual void TickHotReload(float dt_sec) = 0;
@@ -47,7 +47,7 @@ public:
 
     void Shutdown() noexcept override;
 
-    void SubmitInput(const PerceptionInput &in) override;
+    void SubmitInput(PerceptionInput in) override;
     bool TryConsumeLatestOutput(BehaviorOutput &out, std::uint64_t *out_seq = nullptr) override;
 
     void TickHotReload(float dt_sec) override;

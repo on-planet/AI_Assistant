@@ -24,7 +24,7 @@ void RenderRuntimeMappingPanel(AppRuntime &runtime) {
 
     ImGui::BeginChild("mapping_config_child", ImVec2(-1.0f, 0.0f), ImGuiChildFlags_Borders);
     ImGui::SeparatorText("Param Card (Editable)");
-    ImGui::Checkbox("Enable Face->Param Mapping", &runtime.feature_face_param_mapping_enabled);
+    ImGui::Checkbox("Enable Face->Param Mapping", &runtime.feature_flags.face_param_mapping_enabled);
     ImGui::SliderFloat("Map Min Confidence", &runtime.face_map_min_confidence, 0.0f, 1.0f, "%.2f");
     ImGui::SliderFloat("Map Pose Deadzone (deg)", &runtime.face_map_head_pose_deadzone_deg, 0.0f, 15.0f, "%.1f");
     ImGui::SliderFloat("Map Yaw Max (deg)", &runtime.face_map_yaw_max_deg, 5.0f, 45.0f, "%.1f");

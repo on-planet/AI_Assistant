@@ -6,18 +6,11 @@
 namespace desktoper2D {
 
 void SetClickThrough(AppRuntime &runtime, bool enabled) {
-    runtime.click_through = enabled;
-
-    if (runtime.entry_click_through) {
-        SDL_SetTrayEntryChecked(runtime.entry_click_through, enabled);
-    }
-
-    desktoper2D::ApplyWindowShape(runtime.window, runtime.window_w, runtime.window_h, runtime.interactive_rect, enabled);
+    desktoper2D::SetClickThrough(runtime.window_state, enabled);
 }
 
 void ToggleWindowVisibility(AppRuntime &runtime) {
-    desktoper2D::ToggleWindowVisibility(runtime.window, &runtime.window_visible);
-    desktoper2D::UpdateWindowVisibilityLabel(runtime.entry_show_hide, runtime.window_visible);
+    desktoper2D::ToggleWindowVisibility(runtime.window_state);
 }
 
 ParamControllerContext BuildParamControllerContext(AppRuntime &runtime) {

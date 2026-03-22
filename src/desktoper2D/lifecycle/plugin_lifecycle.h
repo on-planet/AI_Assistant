@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -387,12 +389,15 @@ struct PluginWorkerImpl {
     std::atomic<bool> running{false};
     std::thread worker;
     std::mutex mtx;
+    std::condition_variable cv;
     PluginManager *manager = nullptr;
     PluginWorkerConfig cfg{};
-    PerceptionInput latest_in{};
+    std::deque<PerceptionInput> input_queue;
     BehaviorOutput latest_out{};
     std::uint64_t out_seq = 0;
     std::uint64_t consumed_seq = 0;
+    bool next_run_scheduled = false;
+    std::chrono::steady_clock::time_point next_run_tp{};
 
     std::uint64_t total_update_count = 0;
     std::uint64_t success_count = 0;
@@ -504,7 +509,7 @@ public:
     bool Start(PluginManager *manager, PluginWorkerConfig cfg, std::string *out_error);
     void Stop() noexcept;
 
-    void SubmitInput(const PerceptionInput &in);
+    void SubmitInput(PerceptionInput in);
     bool TryConsumeLatestOutput(BehaviorOutput &out, std::uint64_t *out_seq = nullptr);
     PluginWorkerStats GetStats() const;
 
@@ -524,7 +529,7 @@ public:
     virtual PluginStatus Init(const PluginRuntimeConfig &runtime_cfg,
                               const PluginHostCallbacks &host,
                               std::string *out_error) = 0;
-    virtual PluginStatus Update(const PerceptionInput &in,
+    virtual PluginStatus Update(PerceptionInput in,
                                 BehaviorOutput *out,
                                 std::string *out_error) = 0;
     virtual void Shutdown() noexcept = 0;
@@ -545,7 +550,7 @@ public:
     PluginStatus Init(const PluginRuntimeConfig &runtime_cfg,
                       const PluginHostCallbacks &host,
                       std::string *out_error) override;
-    PluginStatus Update(const PerceptionInput &in,
+    PluginStatus Update(PerceptionInput in,
                         BehaviorOutput *out,
                         std::string *out_error) override;
     void Shutdown() noexcept override;
@@ -576,7 +581,7 @@ public:
               std::string *out_error);
     void Shutdown() noexcept;
 
-    void SubmitInput(const PerceptionInput &in);
+    void SubmitInput(PerceptionInput in);
     bool TryConsumeLatestBehaviorOutput(BehaviorOutput &out, std::uint64_t *out_seq = nullptr);
     PluginWorkerStats GetStats() const;
     [[nodiscard]] const PluginDescriptor &Descriptor() const;

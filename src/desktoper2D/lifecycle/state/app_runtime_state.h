@@ -3,6 +3,7 @@
 #include "desktoper2D/lifecycle/state/runtime_audio_state.h"
 #include "desktoper2D/lifecycle/state/runtime_window_state.h"
 
+#include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
@@ -10,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -53,6 +55,14 @@ struct PluginConfigEntry {
     bool enabled = true;
 };
 
+struct PluginConfigCacheEntry {
+    PluginConfigEntry entry;
+    std::filesystem::file_time_type last_write_time{};
+    bool last_write_time_valid = false;
+    bool parse_ok = false;
+    std::string parse_error;
+};
+
 struct AsrProviderEntry {
     std::string name;
     std::string endpoint;
@@ -65,6 +75,18 @@ struct OcrModelEntry {
     std::string det_path;
     std::string rec_path;
     std::string keys_path;
+};
+
+struct DefaultPluginCatalogEntry {
+    std::string name;
+    std::string kind;
+    std::string onnx;
+    std::string labels;
+    std::string keys;
+    std::string det;
+    std::string rec;
+    std::string model;
+    std::string source;
 };
 
 enum class UnifiedPluginKind {
@@ -176,6 +198,17 @@ enum class UiCommandType {
     ResetErrorCounters,
     ExportRuntimeSnapshot,
     TriggerSingleStepSampling,
+    RefreshPluginConfigs,
+    SwitchPluginByName,
+    DeletePluginConfig,
+    RefreshAsrProviders,
+    SwitchAsrProviderByName,
+    RefreshOcrModels,
+    SwitchOcrModelByName,
+    RefreshUnifiedPlugins,
+    ApplyOverrideModels,
+    ReplaceUnifiedPluginAssets,
+    CreateUserPlugin,
     CloseProgram,
 };
 
@@ -183,6 +216,11 @@ struct UiCommand {
     UiCommandType type = UiCommandType::SwitchWorkspaceMode;
     int int_value = 0;
     bool bool_value = false;
+    std::string text_value;
+    std::string text_value_2;
+    std::string text_value_3;
+    std::string text_value_4;
+    std::vector<std::string> text_list_value;
 };
 
 enum class RuntimeEventType {
@@ -213,10 +251,247 @@ enum class EditorProp {
 };
 
 struct RuntimeCommandBus {
-    std::vector<UiCommand> ui_command_queue;
+    std::deque<UiCommand> ui_command_queue;
     std::size_t ui_command_queue_capacity = 512;
     std::deque<RuntimeEvent> runtime_event_queue;
     std::size_t runtime_event_queue_capacity = 1024;
+};
+
+struct TaskDecisionState {
+    TaskCategoryConfig config{};
+    TaskCategoryScheduleState schedule{};
+    TaskCategoryInferenceState inference_state{};
+    TaskCategoryInferenceResult last_result{};
+    std::uint64_t context_signature = 0;
+    std::uint64_t ocr_signature = 0;
+    std::uint64_t scene_signature = 0;
+    std::uint64_t asr_signature = 0;
+    TaskPrimaryCategory primary = TaskPrimaryCategory::Unknown;
+    TaskSecondaryCategory secondary = TaskSecondaryCategory::Unknown;
+    RuntimeErrorInfo error_info{};
+};
+
+struct RuntimeWindowLayoutState {
+    float pos_x = 0.0f;
+    float pos_y = 0.0f;
+    float size_w = 0.0f;
+    float size_h = 0.0f;
+    bool collapsed = false;
+    bool initialized = false;
+};
+
+struct WorkspacePanelState {
+    bool show_workspace_window = true;
+    bool show_overview_window = true;
+    bool show_editor_window = true;
+    bool show_timeline_window = true;
+    bool show_perception_window = true;
+    bool show_ocr_window = true;
+    bool show_mapping_window = true;
+    bool show_asr_chat_window = true;
+    bool show_plugin_worker_window = true;
+    bool show_chat_window = true;
+    bool show_error_window = true;
+    bool show_inspector_window = true;
+    bool show_reminder_window = true;
+    bool show_plugin_quick_control_window = true;
+    bool show_plugin_detail_window = false;
+    std::string manual_docking_ini;
+    WorkspaceLayoutMode layout_mode = WorkspaceLayoutMode::Preset;
+    WorkspaceMode last_applied_mode = WorkspaceMode::Debug;
+    bool preset_apply_requested = false;
+    bool manual_layout_reset_requested = false;
+    bool manual_layout_pending_load = false;
+    bool manual_layout_save_suppressed = false;
+    int manual_layout_stable_frames = 0;
+};
+
+struct WorkspaceRuntimeState {
+    RuntimeWindowLayoutState runtime_debug_window_layout{};
+    RuntimeWindowLayoutState inspector_window_layout{};
+    RuntimeWindowLayoutState reminder_window_layout{};
+    WorkspacePanelState panels{};
+    WorkspaceMode mode = WorkspaceMode::Debug;
+    bool dock_rebuild_requested = false;
+};
+
+struct PluginRuntimeState {
+    std::unique_ptr<IInferenceAdapter> inference_adapter;
+    bool ready = false;
+    PluginParamBlendMode param_blend_mode = PluginParamBlendMode::Override;
+    BehaviorFusionConfig behavior_fusion_config{};
+
+    std::vector<PluginConfigEntry> config_entries;
+    std::unordered_map<std::string, PluginConfigCacheEntry> config_entry_cache;
+    std::unordered_map<std::string, bool> enabled_states;
+    int selected_entry_index = -1;
+    bool config_refresh_requested = false;
+    std::string config_scan_error;
+    char name_input[128] = "";
+    char edit_model_id_input[128] = "";
+    char edit_onnx_input[260] = "";
+    char edit_extra_onnx_input[512] = "";
+    std::string edit_config_path;
+    std::string switch_status;
+    std::string switch_error;
+    std::string delete_status;
+    std::string delete_error;
+
+    bool detail_edit_loaded = false;
+    std::string detail_edit_source;
+    char detail_edit_model_id_input[128] = "";
+    char detail_edit_onnx_input[260] = "";
+    char detail_edit_extra_onnx_input[512] = "";
+    char detail_edit_labels_input[260] = "";
+    char detail_edit_det_input[260] = "";
+    char detail_edit_rec_input[260] = "";
+    char detail_edit_keys_input[260] = "";
+    char detail_edit_model_input[260] = "";
+
+    std::vector<UnifiedPluginEntry> unified_entries;
+    int unified_selected_index = -1;
+    bool unified_refresh_requested = false;
+    std::string unified_scan_error;
+    std::vector<DefaultPluginCatalogEntry> default_plugin_catalog_entries;
+    bool default_plugin_catalog_refresh_requested = false;
+    std::string default_plugin_catalog_error;
+    char unified_name_input[128] = "";
+    char unified_new_name_input[128] = "";
+    bool show_unified_create_modal = false;
+    std::string unified_switch_status;
+    std::string unified_switch_error;
+    std::string unified_create_status;
+    std::string unified_create_error;
+    std::string unified_delete_status;
+    std::string unified_delete_error;
+
+    std::vector<AsrProviderEntry> asr_provider_entries;
+    int asr_selected_entry_index = -1;
+    char asr_provider_input[128] = "";
+    std::string asr_switch_status;
+    std::string asr_switch_error;
+    std::string asr_current_provider_name;
+
+    char override_asr_model_input[260] = "";
+    char override_scene_model_input[260] = "";
+    char override_scene_labels_input[260] = "";
+    char override_facemesh_model_input[260] = "";
+    char override_facemesh_labels_input[260] = "";
+    char override_ocr_det_input[260] = "";
+    char override_ocr_rec_input[260] = "";
+    char override_ocr_keys_input[260] = "";
+    char override_behavior_onnx_input[260] = "";
+    char override_behavior_extra_onnx_input[260] = "";
+
+    std::string override_asr_model_path;
+    std::string override_scene_model_path;
+    std::string override_scene_labels_path;
+    std::string override_facemesh_model_path;
+    std::string override_facemesh_labels_path;
+    std::string override_ocr_det_path;
+    std::string override_ocr_rec_path;
+    std::string override_ocr_keys_path;
+    std::string override_behavior_onnx_path;
+    std::string override_behavior_extra_onnx_csv;
+    std::string override_apply_status;
+    std::string override_apply_error;
+
+    std::vector<OcrModelEntry> ocr_model_entries;
+    int ocr_selected_entry_index = -1;
+    char ocr_model_input[128] = "";
+    std::string ocr_switch_status;
+    std::string ocr_switch_error;
+
+    std::unordered_map<std::string, std::deque<PluginLogEntry>> logs;
+
+    PluginDetailKind detail_kind = PluginDetailKind::None;
+    std::string detail_title;
+    std::string detail_source;
+    std::vector<std::string> detail_assets;
+    std::string detail_backend;
+    std::string detail_status;
+    std::string detail_last_error;
+
+    std::uint64_t total_update_count = 0;
+    std::uint64_t timeout_count = 0;
+    std::uint64_t exception_count = 0;
+    std::uint64_t internal_error_count = 0;
+    std::uint64_t disable_count = 0;
+    std::uint64_t recover_count = 0;
+    double timeout_rate = 0.0;
+    double last_latency_ms = 0.0;
+    double avg_latency_ms = 0.0;
+    double latency_p50_ms = 0.0;
+    double latency_p95_ms = 0.0;
+    double success_rate = 0.0;
+    int current_update_hz = 60;
+    bool auto_disabled = false;
+    std::string last_error;
+    std::string route_selected = "unknown";
+    double route_scene_score = 0.0;
+    double route_task_score = 0.0;
+    double route_presence_score = 0.0;
+    double route_total_score = 0.0;
+    std::vector<std::string> route_rejected_summary;
+
+    RuntimeErrorInfo error_info{};
+};
+
+struct RuntimeObservabilityState {
+    bool log_enabled = true;
+    float log_interval_sec = 3.0f;
+    float log_accum_sec = 0.0f;
+
+    std::vector<double> scene_latency_window_ms;
+    std::vector<double> ocr_latency_window_ms;
+    std::vector<double> face_latency_window_ms;
+    std::vector<double> latency_p95_scratch_ms;
+    std::size_t scene_latency_ring_head = 0;
+    std::size_t scene_latency_ring_size = 0;
+    std::size_t ocr_latency_ring_head = 0;
+    std::size_t ocr_latency_ring_size = 0;
+    std::size_t face_latency_ring_head = 0;
+    std::size_t face_latency_ring_size = 0;
+    double scene_p95_latency_ms = 0.0;
+    double ocr_p95_latency_ms = 0.0;
+    double face_p95_latency_ms = 0.0;
+    std::size_t runtime_metrics_window_size = 120;
+
+    std::vector<RuntimeMetricsSample> runtime_metrics_series;
+    std::size_t runtime_metrics_series_head = 0;
+    std::size_t runtime_metrics_series_size = 0;
+    std::size_t runtime_metrics_series_capacity = 2048;
+    std::uint64_t runtime_metrics_seq = 0;
+};
+
+struct AsrAsyncRequest {
+    std::uint64_t seq = 0;
+    std::uint64_t provider_generation = 0;
+    AsrAudioChunk chunk;
+    AsrRecognitionOptions options;
+};
+
+struct AsrAsyncResultPacket {
+    std::uint64_t seq = 0;
+    std::uint64_t provider_generation = 0;
+    bool ok = false;
+    AsrRecognitionResult result;
+    std::string error;
+    double audio_sec = 0.0;
+};
+
+struct AsrAsyncRuntimeState {
+    std::thread worker;
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::deque<AsrAsyncRequest> request_queue;
+    std::deque<AsrAsyncResultPacket> completed_queue;
+    bool stop_requested = false;
+    bool worker_busy = false;
+    std::uint64_t next_request_seq = 0;
+    std::size_t max_request_queue_size = 4;
+    std::size_t max_completed_queue_size = 8;
+    std::int64_t dropped_request_count = 0;
 };
 
 struct AppRuntime {
@@ -256,7 +531,7 @@ struct AppRuntime {
     float drag_start_pivot_x = 0.0f;
     float drag_start_pivot_y = 0.0f;
 
-    // 编辑器画布视图（pan/zoom），不直接修改模型变换数据。
+    // 缂傚倹鐗炵欢顐﹀闯閵娧勬毎閻㈩垰鍟抽～瀣炊閹惧懐绀刾an/zoom闁挎稑顧€缁辨繃绋夊鍥ㄧ函闁规亽鍎伴幈銊╁绩鐟欏媭渚€宕圭€ｎ亜缍侀柟骞垮灪閺嗙喖骞戦琛″亾?
     float editor_view_pan_x = 0.0f;
     float editor_view_pan_y = 0.0f;
     float editor_view_zoom = 1.0f;
@@ -281,12 +556,12 @@ struct AppRuntime {
     bool property_panel_enabled = true;
     int selected_editor_prop = 0;
 
-    // 资源树 + Inspector 联动
+    // 閻犙冨缁噣寮?+ Inspector 闁艰鲸鏌ㄦ慨?
     char resource_tree_filter[128] = "";
     bool resource_tree_auto_expand_matches = true;
     int selected_deformer_type = 0; // 0=Warp, 1=Rotation
 
-    // 拾取策略
+    // 闁归攱鍎宠ぐ鍥╃驳閺嶎偅娈?
     bool pick_lock_filter_enabled = true;
     bool pick_scope_filter_enabled = false;
     int pick_scope_mode = 0; // 0=All,1=Selected,2=Children
@@ -295,95 +570,14 @@ struct AppRuntime {
     bool pick_cycle_enabled = false;
     int pick_cycle_offset = 0;
 
-    struct WindowLayoutState {
-        float pos_x = 0.0f;
-        float pos_y = 0.0f;
-        float size_w = 0.0f;
-        float size_h = 0.0f;
-        bool collapsed = false;
-        bool initialized = false;
-    };
+    WorkspaceRuntimeState workspace_ui{};
 
-     struct WorkspaceState {
-         bool show_workspace_window = true;
-         bool show_overview_window = true;
-         bool show_editor_window = true;
-         bool show_timeline_window = true;
-         bool show_perception_window = true;
-         bool show_ocr_window = true;
-         bool show_mapping_window = true;
-         bool show_asr_chat_window = true;
-         bool show_plugin_worker_window = true;
-         bool show_chat_window = true;
-         bool show_error_window = true;
-         bool show_inspector_window = true;
-         bool show_reminder_window = true;
-         bool show_plugin_quick_control_window = true;
-         bool show_plugin_detail_window = false;
-         std::string manual_docking_ini;
-         WorkspaceLayoutMode layout_mode = WorkspaceLayoutMode::Preset;
-         WorkspaceMode last_applied_mode = WorkspaceMode::Debug;
-         bool preset_apply_requested = false;
-         bool manual_layout_reset_requested = false;
-         bool manual_layout_pending_load = false;
-         bool manual_layout_save_suppressed = false;
-         int manual_layout_stable_frames = 0;
-     };
- WindowLayoutState runtime_debug_window_layout{};
-
-    SDL_Window *&window = window_state.window;
-    SDL_Renderer *&renderer = window_state.renderer;
-    SDL_Tray *&tray = window_state.tray;
-    SDL_TrayEntry *&entry_click_through = window_state.entry_click_through;
-    SDL_TrayEntry *&entry_show_hide = window_state.entry_show_hide;
-    SDL_Texture *&demo_texture = window_state.demo_texture;
-    int &demo_texture_w = window_state.demo_texture_w;
-    int &demo_texture_h = window_state.demo_texture_h;
-    bool &click_through = window_state.click_through;
-    bool &window_visible = window_state.window_visible;
-    int &window_w = window_state.window_w;
-    int &window_h = window_state.window_h;
-    SDL_Rect &interactive_rect = window_state.interactive_rect;
-
-    SDL_AudioDeviceID &mic_device_id = audio_state.mic_device_id;
-    SDL_AudioSpec &mic_obtained_spec = audio_state.mic_obtained_spec;
-    std::mutex &mic_mutex = audio_state.mic_mutex;
-    std::deque<float> &mic_pcm_queue = audio_state.mic_pcm_queue;
-    WindowLayoutState inspector_window_layout{};
-    WindowLayoutState reminder_window_layout{};
-    WorkspaceState workspace{};
-
-    // 兼容层：逐步迁移到 workspace.* 后可删除以下别名字段。
-    bool &show_workspace_window = workspace.show_workspace_window;
-    bool &show_overview_window = workspace.show_overview_window;
-    bool &show_editor_window = workspace.show_editor_window;
-    bool &show_timeline_window = workspace.show_timeline_window;
-    bool &show_perception_window = workspace.show_perception_window;
-    bool &show_ocr_window = workspace.show_ocr_window;
-    bool &show_mapping_window = workspace.show_mapping_window;
-    bool &show_asr_chat_window = workspace.show_asr_chat_window;
-    bool &show_plugin_worker_window = workspace.show_plugin_worker_window;
-    bool &show_chat_window = workspace.show_chat_window;
-    bool &show_error_window = workspace.show_error_window;
-    bool &show_inspector_window = workspace.show_inspector_window;
-    bool &show_reminder_window = workspace.show_reminder_window;
-    bool &show_plugin_quick_control_window = workspace.show_plugin_quick_control_window;
-    bool &show_plugin_detail_window = workspace.show_plugin_detail_window;
- std::string &workspace_manual_docking_ini = workspace.manual_docking_ini;
-    WorkspaceLayoutMode &workspace_layout_mode = workspace.layout_mode;
-    WorkspaceMode &last_applied_workspace_mode = workspace.last_applied_mode;
-    bool &workspace_preset_apply_requested = workspace.preset_apply_requested;
-    bool &workspace_manual_layout_reset_requested = workspace.manual_layout_reset_requested;
-    bool &workspace_manual_layout_pending_load = workspace.manual_layout_pending_load;
-    bool &workspace_manual_layout_save_suppressed = workspace.manual_layout_save_suppressed;
-    int &workspace_manual_layout_stable_frames = workspace.manual_layout_stable_frames;
-
-    // 参数面板增强：分组、搜索与批量绑定（UI 状态）
+    // 闁告瑥鍊归弳鐔兼閵忊剝绶插褏鍋涘閬嶆晬濮橆剙鐎荤紓浣稿閳ь兛鐒﹂幃宕囨椤厾鐟㈤柟闈涚秺閸ｈ櫣绱掗幋婵堟毎闁挎稑婀禝 闁绘鍩栭埀顑跨筏缁?
     int param_group_mode = 0; // 0=prefix, 1=semantic
     int selected_param_group_index = 0;
     char param_search[128] = "";
-    int batch_bind_prop_type = 0; // 对应 BindingType 枚举值
-    int batch_bind_template_index = 0; // 0=Custom, >=1 表示模板序号
+    int batch_bind_prop_type = 0; // 閻庣數鎳撶花?BindingType 闁哄鐭俊鍥磹?
+    int batch_bind_template_index = 0; // 0=Custom, >=1 閻炴稏鍔庨妵姘熼埄鍐╃凡閹兼潙绻愯ぐ?
     float batch_bind_in_min = -1.0f;
     float batch_bind_in_max = 1.0f;
     float batch_bind_out_min = -1.0f;
@@ -393,19 +587,20 @@ struct AppRuntime {
     bool editor_param_group_table_expanded = true;
     bool editor_param_batch_bind_expanded = true;
 
-    // 时间轴 v1
+    // 闁哄啫鐖煎Λ鎸庢姜?v1
     bool timeline_enabled = false;
     int timeline_selected_channel_index = 0;
     float timeline_cursor_sec = 0.0f;
     float timeline_duration_sec = 3.0f;
     bool timeline_snap_enabled = true;
-    int timeline_snap_mode = 0; // 0=整数帧, 1=0.1s, 2=播放头
+    int timeline_snap_mode = 0; // 0=闁轰礁鐡ㄩ弳鐔烘暜? 1=0.1s, 2=闁圭虎鍘介弬浣瑰緞?
     float timeline_snap_fps = 30.0f;
     std::vector<int> timeline_selected_keyframe_indices;
     std::vector<std::uint64_t> timeline_selected_keyframe_ids;
     std::vector<TimelineKeyframe> timeline_keyframe_clipboard;
     std::vector<EditCommand> undo_stack;
     std::vector<EditCommand> redo_stack;
+    EditorControllerState editor_controller_state{};
 
     GizmoHandle gizmo_hover_handle = GizmoHandle::None;
     GizmoHandle gizmo_active_handle = GizmoHandle::None;
@@ -437,7 +632,7 @@ struct AppRuntime {
     std::string editor_autosave_path;
     std::string editor_autosave_last_error;
 
-    // 工程级会话文件（project.json）路径
+    // 鐎规悶鍎抽埢鑲╃棯瑜岀槐鎵嫚濠靛洦鐎ù鐘侯啇缁辨獤roject.json闁挎稑顦抽惌鎯ь嚗?
     std::string current_project_path = "assets/project.json";
     bool editor_project_dirty = false;
 
@@ -449,99 +644,13 @@ struct AppRuntime {
     int debug_fps_accum_frames = 0;
 
     bool gui_enabled = true;
-    WorkspaceMode workspace_mode = WorkspaceMode::Debug;
-    bool workspace_dock_rebuild_requested = false;
 
     InteractionControllerState interaction_state{};
-
-    std::unique_ptr<IInferenceAdapter> inference_adapter;
-    bool plugin_ready = false;
-    PluginParamBlendMode plugin_param_blend_mode = PluginParamBlendMode::Override;
-    BehaviorFusionConfig behavior_fusion_config{};
-
-    std::vector<PluginConfigEntry> plugin_config_entries;
-    std::unordered_map<std::string, bool> plugin_enabled_states;
-    int plugin_selected_entry_index = -1;
-    bool plugin_config_refresh_requested = false;
-    std::string plugin_config_scan_error;
-    char plugin_name_input[128] = "";
-    char plugin_edit_model_id_input[128] = "";
-    char plugin_edit_onnx_input[260] = "";
-    char plugin_edit_extra_onnx_input[512] = "";
-    std::string plugin_edit_config_path;
-    std::string plugin_switch_status;
-    std::string plugin_switch_error;
-    std::string plugin_delete_status;
-    std::string plugin_delete_error;
-
-    bool plugin_detail_edit_loaded = false;
-    std::string plugin_detail_edit_source;
-    char plugin_detail_edit_model_id_input[128] = "";
-    char plugin_detail_edit_onnx_input[260] = "";
-    char plugin_detail_edit_extra_onnx_input[512] = "";
-    char plugin_detail_edit_labels_input[260] = "";
-    char plugin_detail_edit_det_input[260] = "";
-    char plugin_detail_edit_rec_input[260] = "";
-    char plugin_detail_edit_keys_input[260] = "";
-    char plugin_detail_edit_model_input[260] = "";
-
-    std::vector<UnifiedPluginEntry> unified_plugin_entries;
-    int unified_plugin_selected_index = -1;
-    bool unified_plugin_refresh_requested = false;
-    std::string unified_plugin_scan_error;
-    char unified_plugin_name_input[128] = "";
-    char unified_plugin_new_name_input[128] = "";
-    bool show_unified_plugin_create_modal = false;
-    std::string unified_plugin_switch_status;
-    std::string unified_plugin_switch_error;
-    std::string unified_plugin_create_status;
-    std::string unified_plugin_create_error;
-    std::string unified_plugin_delete_status;
-    std::string unified_plugin_delete_error;
-
-    std::vector<AsrProviderEntry> asr_provider_entries;
-    int asr_selected_entry_index = -1;
-    char asr_provider_input[128] = "";
-    std::string asr_switch_status;
-    std::string asr_switch_error;
-    std::string asr_current_provider_name;
-
-    char override_asr_model_input[260] = "";
-    char override_scene_model_input[260] = "";
-    char override_scene_labels_input[260] = "";
-    char override_facemesh_model_input[260] = "";
-    char override_facemesh_labels_input[260] = "";
-    char override_ocr_det_input[260] = "";
-    char override_ocr_rec_input[260] = "";
-    char override_ocr_keys_input[260] = "";
-    char override_behavior_onnx_input[260] = "";
-    char override_behavior_extra_onnx_input[260] = "";
-
-    std::string override_asr_model_path;
-    std::string override_scene_model_path;
-    std::string override_scene_labels_path;
-    std::string override_facemesh_model_path;
-    std::string override_facemesh_labels_path;
-    std::string override_ocr_det_path;
-    std::string override_ocr_rec_path;
-    std::string override_ocr_keys_path;
-    std::string override_behavior_onnx_path;
-    std::string override_behavior_extra_onnx_csv;
-    std::string override_apply_status;
-    std::string override_apply_error;
-
-    std::vector<OcrModelEntry> ocr_model_entries;
-    int ocr_selected_entry_index = -1;
-    char ocr_model_input[128] = "";
-    std::string ocr_switch_status;
-    std::string ocr_switch_error;
-
-    std::unordered_map<std::string, std::deque<PluginLogEntry>> plugin_logs;
 
     ReminderService reminder_service;
     bool reminder_ready = false;
     float reminder_poll_accum_sec = 0.0f;
-    char reminder_title_input[128] = "喝水";
+    char reminder_title_input[128] = "";
     int reminder_after_min = 10;
     char reminder_search[128] = "";
     int reminder_filter_mode = 0; // 0=all,1=upcoming,2=overdue
@@ -554,38 +663,6 @@ struct AppRuntime {
     PerceptionPipelineState perception_state;
 
     RuntimeFeatureFlags feature_flags{};
-    bool &feature_scene_classifier_enabled = feature_flags.scene_classifier_enabled;
-    bool &feature_ocr_enabled = feature_flags.ocr_enabled;
-    bool &feature_face_emotion_enabled = feature_flags.face_emotion_enabled;
-    bool &feature_face_param_mapping_enabled = feature_flags.face_param_mapping_enabled;
-    bool &feature_asr_enabled = feature_flags.asr_enabled;
-    bool &feature_plugin_enabled = feature_flags.plugin_enabled;
-    bool &feature_chat_enabled = feature_flags.chat_enabled;
-
-    bool runtime_observability_log_enabled = true;
-    float runtime_observability_log_interval_sec = 3.0f;
-    float runtime_observability_log_accum_sec = 0.0f;
-
-    std::vector<double> scene_latency_window_ms;
-    std::vector<double> ocr_latency_window_ms;
-    std::vector<double> face_latency_window_ms;
-    std::size_t scene_latency_ring_head = 0;
-    std::size_t scene_latency_ring_size = 0;
-    std::size_t ocr_latency_ring_head = 0;
-    std::size_t ocr_latency_ring_size = 0;
-    std::size_t face_latency_ring_head = 0;
-    std::size_t face_latency_ring_size = 0;
-    double scene_p95_latency_ms = 0.0;
-    double ocr_p95_latency_ms = 0.0;
-    double face_p95_latency_ms = 0.0;
-    std::size_t runtime_metrics_window_size = 120;
-
-    std::vector<RuntimeMetricsSample> runtime_metrics_series;
-    std::size_t runtime_metrics_series_head = 0;
-    std::size_t runtime_metrics_series_size = 0;
-    std::size_t runtime_metrics_series_capacity = 2048;
-    std::uint64_t runtime_metrics_seq = 0;
-
     float face_map_min_confidence = 0.45f;
     float face_map_head_pose_deadzone_deg = 2.0f;
     float face_map_yaw_max_deg = 25.0f;
@@ -594,7 +671,7 @@ struct AppRuntime {
     float face_map_param_weight = 0.65f;
     float face_map_smooth_alpha = 0.35f;
 
-    // 传感器异常时的 fallback 姿态模板（归一化参数空间）
+    // 濞磋偐濮甸崝鍛村闯閵娿儳纾介悽顖氭啞濡炲倿鎯?fallback 濠殿喗瀵ч埀顑跨劍鑶╅柡澶婂皡缁辨瑨銇愰幒宥囶伇闁告牗鐗曞顒勫极閹殿喒鏁勯梻鍌濇彧缁?
     bool face_map_sensor_fallback_enabled = true;
     float face_map_sensor_fallback_head_yaw = 0.0f;
     float face_map_sensor_fallback_head_pitch = -0.08f;
@@ -612,11 +689,13 @@ struct AppRuntime {
     float face_map_out_eye_open = 0.0f;
 
     std::unique_ptr<IAsrProvider> asr_provider;
+    std::mutex asr_provider_mutex;
+    std::uint64_t asr_provider_generation = 0;
     bool asr_ready = false;
     float asr_poll_accum_sec = 0.0f;
     std::string asr_last_error;
     AsrRecognitionResult asr_last_result;
-    // ASR 会话流缓存（短期上下文）
+    // ASR 濞村吋淇洪惁钘壝规担铏瑰閻庢稒锕槐娆撴儗椤撶喐鍩傚☉鎾筹梗缁楀懘寮崶椋庣
     AsrSessionState asr_session_state{};
 
     std::unique_ptr<IChatProvider> chat_provider;
@@ -626,20 +705,14 @@ struct AppRuntime {
     std::string chat_last_switch_reason;
     char chat_input[512] = "Hello, introduce yourself";
     std::string chat_last_answer;
- 
-    PluginDetailKind plugin_detail_kind = PluginDetailKind::None;
-    std::string plugin_detail_title;
-    std::string plugin_detail_source;
-    std::vector<std::string> plugin_detail_assets;
-    std::string plugin_detail_backend;
-    std::string plugin_detail_status;
-    std::string plugin_detail_last_error;
 
-    EnergyVadSegmenter asr_vad;
+    EnergyVadSegmenter asr_vad{VadConfig{}};
     std::vector<float> asr_audio_buffer;
+    std::size_t asr_audio_buffer_capacity = 320;
     int asr_frame_samples = 320; // 20ms @ 16k
+    AsrAsyncRuntimeState asr_async_state{};
 
-    // ASR 监控指标
+    // ASR 闁烩晜鍨剁敮鍫曞箰閸ャ劎鍨?
     std::int64_t asr_total_segments = 0;
     std::int64_t asr_timeout_segments = 0;
     std::int64_t asr_cloud_attempts = 0;
@@ -654,45 +727,15 @@ struct AppRuntime {
     double asr_wer_proxy = 0.0;
     std::string asr_last_switch_reason;
 
-    std::uint64_t plugin_total_update_count = 0;
-    std::uint64_t plugin_timeout_count = 0;
-    std::uint64_t plugin_exception_count = 0;
-    std::uint64_t plugin_internal_error_count = 0;
-    std::uint64_t plugin_disable_count = 0;
-    std::uint64_t plugin_recover_count = 0;
-    double plugin_timeout_rate = 0.0;
-    double plugin_last_latency_ms = 0.0;
-    double plugin_avg_latency_ms = 0.0;
-    double plugin_latency_p50_ms = 0.0;
-    double plugin_latency_p95_ms = 0.0;
-    double plugin_success_rate = 0.0;
-    int plugin_current_update_hz = 60;
-    bool plugin_auto_disabled = false;
-    std::string plugin_last_error;
-    std::string plugin_route_selected = "unknown";
-    double plugin_route_scene_score = 0.0;
-    double plugin_route_task_score = 0.0;
-    double plugin_route_presence_score = 0.0;
-    double plugin_route_total_score = 0.0;
-    std::vector<std::string> plugin_route_rejected_summary;
+    PluginRuntimeState plugin{};
 
-    RuntimeErrorInfo plugin_error_info{};
+    RuntimeObservabilityState observability{};
+
     RuntimeErrorInfo asr_error_info{};
-    RuntimeErrorInfo decision_error_info{};
     RuntimeErrorInfo chat_error_info{};
     RuntimeErrorInfo reminder_error_info{};
 
-    TaskPrimaryCategory task_primary = TaskPrimaryCategory::Unknown;
-    TaskSecondaryCategory task_secondary = TaskSecondaryCategory::Unknown;
-    TaskCategoryConfig task_category_config{};
+    TaskDecisionState task_decision{};
 };
-
-using RuntimeToViewFn = std::function<void(const AppRuntime &, float world_x, float world_y, float *out_view_x, float *out_view_y)>;
-using ViewToRuntimeFn = std::function<void(const AppRuntime &, float view_x, float view_y, float *out_world_x, float *out_world_y)>;
-
-extern AppRuntime g_runtime;
-extern EditorControllerState g_editor_state;
-extern RuntimeToViewFn g_runtime_to_view;
-extern ViewToRuntimeFn g_view_to_runtime;
 
 }  // namespace desktoper2D

@@ -78,9 +78,9 @@ void PluginInferenceAdapter::Shutdown() noexcept {
     ready_ = false;
 }
 
-void PluginInferenceAdapter::SubmitInput(const PerceptionInput &in) {
+void PluginInferenceAdapter::SubmitInput(PerceptionInput in) {
     if (!ready_ || !manager_) return;
-    manager_->SubmitInput(in);
+    manager_->SubmitInput(std::move(in));
 }
 
 bool PluginInferenceAdapter::TryConsumeLatestOutput(BehaviorOutput &out, std::uint64_t *out_seq) {

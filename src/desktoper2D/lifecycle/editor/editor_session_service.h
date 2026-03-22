@@ -12,7 +12,6 @@ void RedoLastEdit(AppRuntime &runtime);
 
 bool SaveEditorProjectJsonToDisk(AppRuntime &runtime, const std::string &project_path, std::string *out_error = nullptr);
 bool LoadEditorProjectJsonFromDisk(AppRuntime &runtime,
-                                   SDL_Renderer *renderer,
                                    const std::string &project_path,
                                    std::string *out_error = nullptr);
 

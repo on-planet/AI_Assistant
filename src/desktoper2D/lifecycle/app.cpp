@@ -8,48 +8,37 @@ namespace desktoper2D {
 
 namespace {
 
-bool DefaultInit(AppRunContext &ctx) {
+AppLifecycleContext BuildLifecycleContext(AppRunContext &ctx) {
     AppLifecycleContext lifecycle_ctx{};
     lifecycle_ctx.argc = ctx.argc;
     lifecycle_ctx.argv = ctx.argv;
     lifecycle_ctx.exit_code = ctx.exit_code;
+    lifecycle_ctx.runtime = ctx.runtime;
+    return lifecycle_ctx;
+}
 
-    lifecycle_ctx.runtime = &g_runtime;
+bool DefaultInit(AppRunContext &ctx) {
+    AppLifecycleContext lifecycle_ctx = BuildLifecycleContext(ctx);
     const bool ok = AppLifecycleInit(lifecycle_ctx);
     ctx.exit_code = lifecycle_ctx.exit_code;
     return ok;
 }
 
 bool DefaultBootstrap(AppRunContext &ctx) {
-    AppLifecycleContext lifecycle_ctx{};
-    lifecycle_ctx.argc = ctx.argc;
-    lifecycle_ctx.argv = ctx.argv;
-    lifecycle_ctx.exit_code = ctx.exit_code;
-
-    lifecycle_ctx.runtime = &g_runtime;
+    AppLifecycleContext lifecycle_ctx = BuildLifecycleContext(ctx);
     const bool ok = AppLifecycleBootstrap(lifecycle_ctx);
     ctx.exit_code = lifecycle_ctx.exit_code;
     return ok;
 }
 
 void DefaultRun(AppRunContext &ctx) {
-    AppLifecycleContext lifecycle_ctx{};
-    lifecycle_ctx.argc = ctx.argc;
-    lifecycle_ctx.argv = ctx.argv;
-    lifecycle_ctx.exit_code = ctx.exit_code;
-
-    lifecycle_ctx.runtime = &g_runtime;
+    AppLifecycleContext lifecycle_ctx = BuildLifecycleContext(ctx);
     AppLifecycleRun(lifecycle_ctx);
     ctx.exit_code = lifecycle_ctx.exit_code;
 }
 
 void DefaultTeardown(AppRunContext &ctx) {
-    AppLifecycleContext lifecycle_ctx{};
-    lifecycle_ctx.argc = ctx.argc;
-    lifecycle_ctx.argv = ctx.argv;
-    lifecycle_ctx.exit_code = ctx.exit_code;
-
-    lifecycle_ctx.runtime = &g_runtime;
+    AppLifecycleContext lifecycle_ctx = BuildLifecycleContext(ctx);
     AppLifecycleTeardown(lifecycle_ctx);
     ctx.exit_code = lifecycle_ctx.exit_code;
 }
@@ -67,9 +56,11 @@ const AppLifecycleOps &GetDefaultLifecycleOps() {
 }
 
 int RunOverlayApp(int argc, char *argv[], const AppLifecycleOps &ops) {
+    AppRuntime runtime{};
     AppRunContext ctx{};
     ctx.argc = argc;
     ctx.argv = argv;
+    ctx.runtime = &runtime;
 
     InitProcessLogger();
     LogInfo("application startup");

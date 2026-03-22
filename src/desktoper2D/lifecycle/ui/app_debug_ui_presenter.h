@@ -2,6 +2,7 @@
 
 #include <array>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "desktoper2D/core/json.h"
@@ -52,5 +53,6 @@ JsonValue BuildRuntimeSnapshotJson(const AppRuntime &runtime);
 OverviewReadModel BuildOverviewReadModel(const AppRuntime &runtime);
 WorkspaceReadModel BuildWorkspaceReadModel(const AppRuntime &runtime);
 OpsReadModel BuildOpsReadModel(const AppRuntime &runtime, const std::string &runtime_ops_status);
+const DefaultPluginCatalogEntry *FindDefaultPluginCatalogEntry(const AppRuntime &runtime, std::string_view name);
 
 }  // namespace desktoper2D

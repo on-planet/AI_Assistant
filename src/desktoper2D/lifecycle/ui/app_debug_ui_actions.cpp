@@ -11,64 +11,6 @@ namespace desktoper2D {
 
 namespace {
 
-std::vector<EditorBatchBindTemplateItem> BuildBatchBindTemplatesForActions() {
-    std::vector<EditorBatchBindTemplateItem> items;
-    items.push_back(EditorBatchBindTemplateItem{.label = "Move X (-1..1 -> -80..80)",
-                                                .bind_prop_type = BindingType::PosX,
-                                                .bind_in_min = -1.0f,
-                                                .bind_in_max = 1.0f,
-                                                .bind_out_min = -80.0f,
-                                                .bind_out_max = 80.0f});
-    items.push_back(EditorBatchBindTemplateItem{.label = "Move Y (-1..1 -> -80..80)",
-                                                .bind_prop_type = BindingType::PosY,
-                                                .bind_in_min = -1.0f,
-                                                .bind_in_max = 1.0f,
-                                                .bind_out_min = -80.0f,
-                                                .bind_out_max = 80.0f});
-    items.push_back(EditorBatchBindTemplateItem{.label = "Rotate Small (-1..1 -> -15..15)",
-                                                .bind_prop_type = BindingType::RotDeg,
-                                                .bind_in_min = -1.0f,
-                                                .bind_in_max = 1.0f,
-                                                .bind_out_min = -15.0f,
-                                                .bind_out_max = 15.0f});
-    items.push_back(EditorBatchBindTemplateItem{.label = "Rotate Wide (-1..1 -> -45..45)",
-                                                .bind_prop_type = BindingType::RotDeg,
-                                                .bind_in_min = -1.0f,
-                                                .bind_in_max = 1.0f,
-                                                .bind_out_min = -45.0f,
-                                                .bind_out_max = 45.0f});
-    items.push_back(EditorBatchBindTemplateItem{.label = "Opacity (0..1 -> 0..1)",
-                                                .bind_prop_type = BindingType::Opacity,
-                                                .bind_in_min = 0.0f,
-                                                .bind_in_max = 1.0f,
-                                                .bind_out_min = 0.0f,
-                                                .bind_out_max = 1.0f});
-    items.push_back(EditorBatchBindTemplateItem{.label = "Scale (0..1 -> 0.9..1.1)",
-                                                .bind_prop_type = BindingType::ScaleX,
-                                                .bind_in_min = 0.0f,
-                                                .bind_in_max = 1.0f,
-                                                .bind_out_min = 0.9f,
-                                                .bind_out_max = 1.1f});
-    return items;
-}
-
-std::pair<float, float> BatchBindOutRangeForActions(BindingType type) {
-    switch (type) {
-        case BindingType::PosX:
-        case BindingType::PosY:
-            return {-500.0f, 500.0f};
-        case BindingType::RotDeg:
-            return {-180.0f, 180.0f};
-        case BindingType::ScaleX:
-        case BindingType::ScaleY:
-            return {0.0f, 3.0f};
-        case BindingType::Opacity:
-            return {0.0f, 1.0f};
-        default:
-            return {-180.0f, 180.0f};
-    }
-}
-
 std::string ValidateBatchBindForActions(const AppRuntime &runtime,
                                        const std::vector<int> &param_indices,
                                        BindingType type,
@@ -76,28 +18,42 @@ std::string ValidateBatchBindForActions(const AppRuntime &runtime,
                                        float in_max,
                                        float out_min,
                                        float out_max) {
-    if (in_min > in_max) {
-        return "batch bind failed: input min > max";
-    }
-    if (out_min > out_max) {
-        return "batch bind failed: output min > max";
-    }
+    std::vector<EditorParamRowState> param_rows;
+    param_rows.reserve(param_indices.size());
     for (int param_idx : param_indices) {
         if (param_idx < 0 || param_idx >= static_cast<int>(runtime.model.parameters.size())) {
             continue;
         }
         const auto &spec = runtime.model.parameters[static_cast<std::size_t>(param_idx)].param.spec();
-        const float spec_min = std::min(spec.min_value, spec.max_value);
-        const float spec_max = std::max(spec.min_value, spec.max_value);
-        if (in_min < spec_min || in_max > spec_max) {
-            return "batch bind failed: input range exceeds param spec";
-        }
+        param_rows.push_back(EditorParamRowState{
+            .param_index = param_idx,
+            .min_value = spec.min_value,
+            .max_value = spec.max_value,
+        });
     }
-    const auto out_range = BatchBindOutRangeForActions(type);
-    if (out_min < out_range.first || out_max > out_range.second) {
+
+    const EditorBatchBindValidation validation = ValidateBatchBind(param_rows,
+                                                                   type,
+                                                                   in_min,
+                                                                   in_max,
+                                                                   out_min,
+                                                                   out_max);
+    if (validation.valid) {
+        return std::string();
+    }
+    if (!validation.in_min_max_ok) {
+        return "batch bind failed: input min > max";
+    }
+    if (!validation.out_min_max_ok) {
+        return "batch bind failed: output min > max";
+    }
+    if (!validation.in_range_ok) {
+        return "batch bind failed: input range exceeds param spec";
+    }
+    if (!validation.out_range_ok) {
         return "batch bind failed: output range exceeds safe range";
     }
-    return std::string();
+    return validation.message;
 }
 
 }  // namespace
@@ -583,19 +539,19 @@ void ApplyEditorPanelActionImpl(AppRuntime &runtime, const EditorPanelAction &ac
             runtime.model.enable_simple_mask = action.bool_value;
             break;
         case EditorPanelActionType::SetFeatureSceneClassifierEnabled:
-            runtime.feature_scene_classifier_enabled = action.bool_value;
+            runtime.feature_flags.scene_classifier_enabled = action.bool_value;
             break;
         case EditorPanelActionType::SetFeatureOcrEnabled:
-            runtime.feature_ocr_enabled = action.bool_value;
+            runtime.feature_flags.ocr_enabled = action.bool_value;
             break;
         case EditorPanelActionType::SetFeatureFaceEmotionEnabled:
-            runtime.feature_face_emotion_enabled = action.bool_value;
+            runtime.feature_flags.face_emotion_enabled = action.bool_value;
             break;
         case EditorPanelActionType::SetFeatureAsrEnabled:
-            runtime.feature_asr_enabled = action.bool_value;
+            runtime.feature_flags.asr_enabled = action.bool_value;
             break;
         case EditorPanelActionType::SetFeaturePluginEnabled:
-            runtime.feature_plugin_enabled = action.bool_value;
+            runtime.feature_flags.plugin_enabled = action.bool_value;
             break;
         case EditorPanelActionType::SetPickLockFilterEnabled:
             runtime.pick_lock_filter_enabled = action.bool_value;
@@ -772,7 +728,7 @@ void ApplyEditorPanelActionImpl(AppRuntime &runtime, const EditorPanelAction &ac
             break;
         case EditorPanelActionType::SetBatchBindTemplateIndex: {
             runtime.batch_bind_template_index = std::max(0, action.int_value);
-            const auto templates = BuildBatchBindTemplatesForActions();
+            const auto templates = BuildEditorBatchBindTemplates();
             if (runtime.batch_bind_template_index > 0 &&
                 runtime.batch_bind_template_index <= static_cast<int>(templates.size())) {
                 const auto &tmpl = templates[static_cast<std::size_t>(runtime.batch_bind_template_index - 1)];

@@ -172,12 +172,10 @@ public:
 
         const std::size_t row_bytes = static_cast<std::size_t>(out.width) * 4;
         const std::size_t total_bytes = row_bytes * static_cast<std::size_t>(out.height);
-        if (out.bgra.size() != total_bytes) {
-            out.bgra.resize(total_bytes);
-        }
+        out.EnsureBgraSize(total_bytes);
 
         const auto *src = static_cast<const std::uint8_t *>(mapped.pData);
-        auto *dst = out.bgra.data();
+        auto *dst = out.MutableData();
         if (mapped.RowPitch == row_bytes) {
             std::memcpy(dst, src, total_bytes);
         } else {
@@ -380,12 +378,10 @@ public:
 
         const std::size_t row_bytes = static_cast<std::size_t>(out.width) * 4;
         const std::size_t total_bytes = row_bytes * static_cast<std::size_t>(out.height);
-        if (out.bgra.size() != total_bytes) {
-            out.bgra.resize(total_bytes);
-        }
+        out.EnsureBgraSize(total_bytes);
 
         const auto *src = static_cast<const std::uint8_t *>(mapped.pData);
-        auto *dst = out.bgra.data();
+        auto *dst = out.MutableData();
         if (mapped.RowPitch == row_bytes) {
             std::memcpy(dst, src, total_bytes);
         } else {

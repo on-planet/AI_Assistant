@@ -1,10 +1,10 @@
 #pragma once
 
+#include "desktoper2D/lifecycle/state/runtime_state_slices.h"
+
 namespace desktoper2D {
 
-struct AppRuntime;
-
-// Systems 层：集中放业务系统更新入口（可逐步迁移）
-void TickAppSystems(AppRuntime &runtime, float dt);
+void TickAppSystems(PerceptionStateSlice perception, PluginStateSlice plugin, OpsStateSlice ops, float dt);
+void ShutdownAppSystems(OpsStateSlice ops) noexcept;
 
 }  // namespace desktoper2D

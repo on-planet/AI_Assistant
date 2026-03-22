@@ -18,10 +18,10 @@ void HandleAppRuntimeEvent(AppRuntime &runtime, const SDL_Event &event, const Ap
     }
 
     if (event.type == SDL_EVENT_WINDOW_RESIZED) {
-        runtime.window_w = event.window.data1;
-        runtime.window_h = event.window.data2;
-        runtime.interactive_rect = desktoper2D::ComputeInteractiveRect(runtime.window_w, runtime.window_h);
-        desktoper2D::ApplyWindowShape(runtime.window, runtime.window_w, runtime.window_h, runtime.interactive_rect, runtime.click_through);
+        runtime.window_state.window_w = event.window.data1;
+        runtime.window_state.window_h = event.window.data2;
+        desktoper2D::RefreshInteractiveRect(runtime.window_state);
+        desktoper2D::ApplyWindowShape(runtime.window_state);
         return;
     }
 

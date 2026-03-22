@@ -28,7 +28,7 @@ ModelReloadServiceContext BuildModelReloadServiceContext(AppRuntime &runtime) {
     reload_ctx.hot_reload_poll_accum_sec = &runtime.hot_reload_poll_accum_sec;
     reload_ctx.model_loaded = &runtime.model_loaded;
     reload_ctx.model = &runtime.model;
-    reload_ctx.renderer = runtime.renderer;
+    reload_ctx.renderer = runtime.window_state.renderer;
     reload_ctx.model_time = &runtime.model_time;
     reload_ctx.selected_part_index = &runtime.selected_part_index;
     reload_ctx.model_last_write_time = &runtime.model_last_write_time;
@@ -60,8 +60,8 @@ BehaviorApplyContext BuildBehaviorApplyContext(AppRuntime &runtime) {
     BehaviorApplyContext apply_ctx{};
     apply_ctx.model_loaded = runtime.model_loaded;
     apply_ctx.model = &runtime.model;
-    apply_ctx.plugin_param_blend_mode = runtime.plugin_param_blend_mode;
-    apply_ctx.window = runtime.window;
+    apply_ctx.plugin_param_blend_mode = runtime.plugin.param_blend_mode;
+    apply_ctx.window = runtime.window_state.window;
     apply_ctx.show_debug_stats = &runtime.show_debug_stats;
     apply_ctx.manual_param_mode = &runtime.manual_param_mode;
     apply_ctx.set_click_through = [](bool enabled, void *userdata) {
@@ -90,8 +90,8 @@ EditorInputBindingBridge BuildEditorInputBindingBridge(AppRuntime &runtime) {
                 desktoper2D::EnsureSelectedPartIndexValid(runtime);
                 desktoper2D::SetEditorStatus(runtime, "edit mode ON", 1.5f);
             } else {
-                EndDragging(runtime, g_editor_state);
-                EndGizmoDrag(runtime, g_editor_state);
+                EndDragging(runtime, runtime.editor_controller_state);
+                EndGizmoDrag(runtime, runtime.editor_controller_state);
                 runtime.gizmo_hover_handle = GizmoHandle::None;
                 desktoper2D::SetEditorStatus(runtime, "edit mode OFF", 1.5f);
             }
@@ -130,21 +130,21 @@ EditorInputBindingBridge BuildEditorInputBindingBridge(AppRuntime &runtime) {
                 my);
         },
         .begin_drag_part = [&runtime](float mx, float my) {
-            BeginDragPart(runtime, g_editor_state, mx, my);
+            BeginDragPart(runtime, runtime.editor_controller_state, mx, my);
         },
         .begin_drag_pivot = [&runtime](float mx, float my) {
-            BeginDragPivot(runtime, g_editor_state, mx, my);
+            BeginDragPivot(runtime, runtime.editor_controller_state, mx, my);
         },
-        .end_dragging = [&runtime]() { EndDragging(runtime, g_editor_state); },
+        .end_dragging = [&runtime]() { EndDragging(runtime, runtime.editor_controller_state); },
         .begin_gizmo_drag = [&runtime](const ModelPart &part, GizmoHandle handle, float mx, float my) {
-            BeginGizmoDrag(runtime, g_editor_state, part, handle, mx, my);
+            BeginGizmoDrag(runtime, runtime.editor_controller_state, part, handle, mx, my);
         },
-        .end_gizmo_drag = [&runtime]() { EndGizmoDrag(runtime, g_editor_state); },
+        .end_gizmo_drag = [&runtime]() { EndGizmoDrag(runtime, runtime.editor_controller_state); },
         .handle_gizmo_drag_motion = [&runtime](float mx, float my) {
-            HandleGizmoDragMotion(runtime, g_editor_state, mx, my);
+            HandleGizmoDragMotion(runtime, runtime.editor_controller_state, mx, my);
         },
         .handle_editor_drag_motion = [&runtime](float mx, float my) {
-            HandleEditorDragMotion(runtime, g_editor_state, mx, my);
+            HandleEditorDragMotion(runtime, runtime.editor_controller_state, mx, my);
         },
     };
     return desktoper2D::BuildEditorInputBindingBridge(deps);
@@ -161,8 +161,8 @@ AppEventHandlerBridge BuildAppEventHandlerBridge(AppRuntime &runtime) {
                 desktoper2D::EnsureSelectedPartIndexValid(runtime);
                 desktoper2D::SetEditorStatus(runtime, "edit mode ON", 1.5f);
             } else {
-                EndDragging(runtime, g_editor_state);
-                EndGizmoDrag(runtime, g_editor_state);
+                EndDragging(runtime, runtime.editor_controller_state);
+                EndGizmoDrag(runtime, runtime.editor_controller_state);
                 runtime.gizmo_hover_handle = GizmoHandle::None;
                 desktoper2D::SetEditorStatus(runtime, "edit mode OFF", 1.5f);
             }
@@ -207,15 +207,6 @@ RuntimeTickBridge BuildRuntimeTickBridge(AppRuntime &runtime) {
         .build_model_reload_context = [&runtime]() { return BuildModelReloadServiceContext(runtime); },
         .build_behavior_apply_context = [&runtime]() { return BuildBehaviorApplyContext(runtime); },
         .task_secondary_category_name = [](TaskSecondaryCategory c) { return TaskSecondaryCategoryName(c); },
-        .infer_task_category_inplace = [&runtime]() {
-            InferTaskCategory(runtime.perception_state.system_context_snapshot,
-                              runtime.perception_state.ocr_result,
-                              runtime.perception_state.scene_result,
-                              runtime.task_category_config,
-                              &runtime.asr_session_state.session_text,
-                              runtime.task_primary,
-                              runtime.task_secondary);
-        },
     };
     return desktoper2D::BuildRuntimeTickBridge(deps);
 }
@@ -247,8 +238,8 @@ RuntimeRenderBridge BuildRuntimeRenderBridge(AppRuntime &runtime) {
                                                  runtime.selected_part_index = idx;
                                              });
         },
-        .task_primary_category_name = [&runtime]() { return TaskPrimaryCategoryName(runtime.task_primary); },
-        .task_secondary_category_name = [&runtime]() { return TaskSecondaryCategoryName(runtime.task_secondary); },
+        .task_primary_category_name = [&runtime]() { return TaskPrimaryCategoryName(runtime.task_decision.primary); },
+        .task_secondary_category_name = [&runtime]() { return TaskSecondaryCategoryName(runtime.task_decision.secondary); },
     };
     return desktoper2D::BuildRuntimeRenderBridge(deps);
 }

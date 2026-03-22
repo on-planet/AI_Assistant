@@ -94,9 +94,7 @@ TimelinePanelState BuildTimelinePanelState(const AppRuntime &runtime) {
     return state;
 }
 
-namespace {
-
-std::vector<EditorBatchBindTemplateItem> BuildBatchBindTemplates() {
+std::vector<EditorBatchBindTemplateItem> BuildEditorBatchBindTemplates() {
     std::vector<EditorBatchBindTemplateItem> items;
     items.push_back(EditorBatchBindTemplateItem{.label = "Move X (-1..1 -> -80..80)",
                                                 .bind_prop_type = BindingType::PosX,
@@ -186,6 +184,8 @@ EditorBatchBindValidation ValidateBatchBind(const std::vector<EditorParamRowStat
     }
     return v;
 }
+
+namespace {
 
 const char *EditCommandTypeLabel(EditCommand::Type type) {
     switch (type) {
@@ -336,11 +336,11 @@ EditorPanelState BuildEditorPanelState(const AppRuntime &runtime) {
     state.view.head_pat_hovering = runtime.interaction_state.head_pat_hovering;
     state.view.head_pat_react_ttl = runtime.interaction_state.head_pat_react_ttl;
     state.view.head_pat_progress = std::clamp(runtime.interaction_state.head_pat_react_ttl / 0.35f, 0.0f, 1.0f);
-    state.view.feature_scene_classifier_enabled = runtime.feature_scene_classifier_enabled;
-    state.view.feature_ocr_enabled = runtime.feature_ocr_enabled;
-    state.view.feature_face_emotion_enabled = runtime.feature_face_emotion_enabled;
-    state.view.feature_asr_enabled = runtime.feature_asr_enabled;
-    state.view.feature_plugin_enabled = runtime.feature_plugin_enabled;
+    state.view.feature_scene_classifier_enabled = runtime.feature_flags.scene_classifier_enabled;
+    state.view.feature_ocr_enabled = runtime.feature_flags.ocr_enabled;
+    state.view.feature_face_emotion_enabled = runtime.feature_flags.face_emotion_enabled;
+    state.view.feature_asr_enabled = runtime.feature_flags.asr_enabled;
+    state.view.feature_plugin_enabled = runtime.feature_flags.plugin_enabled;
     state.view.pick_lock_filter_enabled = runtime.pick_lock_filter_enabled;
     state.view.pick_scope_filter_enabled = runtime.pick_scope_filter_enabled;
     state.view.pick_scope_mode = runtime.pick_scope_mode;
@@ -488,7 +488,7 @@ EditorPanelState BuildEditorPanelState(const AppRuntime &runtime) {
     state.view.batch_bind.bind_in_max = runtime.batch_bind_in_max;
     state.view.batch_bind.bind_out_min = runtime.batch_bind_out_min;
     state.view.batch_bind.bind_out_max = runtime.batch_bind_out_max;
-    state.view.batch_bind.templates = BuildBatchBindTemplates();
+    state.view.batch_bind.templates = BuildEditorBatchBindTemplates();
     state.view.batch_bind.validation = ValidateBatchBind(state.view.selected_group_param_rows,
                                                         static_cast<BindingType>(state.view.batch_bind.bind_prop_type),
                                                         state.view.batch_bind.bind_in_min,
@@ -576,8 +576,8 @@ PerceptionPanelState BuildPerceptionPanelState(const AppRuntime &runtime) {
     state.scene_ready = runtime.perception_state.scene_classifier_ready;
     state.ocr_ready = runtime.perception_state.ocr_ready;
     state.facemesh_ready = runtime.perception_state.camera_facemesh_ready;
-    state.feature_ocr_enabled = runtime.feature_ocr_enabled;
-    state.feature_face_emotion_enabled = runtime.feature_face_emotion_enabled;
+    state.feature_ocr_enabled = runtime.feature_flags.ocr_enabled;
+    state.feature_face_emotion_enabled = runtime.feature_flags.face_emotion_enabled;
     state.face_detected = runtime.perception_state.face_emotion_result.face_detected;
     state.has_face_keypoints = !runtime.perception_state.face_emotion_result.keypoints.empty();
     state.has_ocr_lines = !runtime.perception_state.ocr_result.lines.empty();
@@ -657,8 +657,8 @@ AsrChatPanelState BuildAsrChatPanelState(const AppRuntime &runtime) {
     state.chat_ready = runtime.chat_ready;
     state.feature_chat_enabled = runtime.feature_flags.chat_enabled;
     state.prefer_cloud_chat = runtime.prefer_cloud_chat;
-    state.observability_log_enabled = runtime.runtime_observability_log_enabled;
-    state.observability_log_interval_sec = runtime.runtime_observability_log_interval_sec;
+    state.observability_log_enabled = runtime.observability.log_enabled;
+    state.observability_log_interval_sec = runtime.observability.log_interval_sec;
     state.asr_text = runtime.asr_last_result.text;
     state.asr_switch_reason = runtime.asr_last_switch_reason;
     state.asr_last_error = runtime.asr_last_error;
@@ -668,31 +668,31 @@ AsrChatPanelState BuildAsrChatPanelState(const AppRuntime &runtime) {
     state.chat_last_error = runtime.chat_last_error;
     state.recent_error = !runtime.chat_last_error.empty() ? runtime.chat_last_error :
                          !runtime.asr_last_error.empty() ? runtime.asr_last_error :
-                         runtime.plugin_last_error;
+                         runtime.plugin.last_error;
     state.asr_rtf = runtime.asr_rtf;
     state.asr_wer_proxy = runtime.asr_wer_proxy;
     state.asr_timeout_rate = runtime.asr_timeout_rate;
     state.asr_cloud_call_ratio = runtime.asr_cloud_call_ratio;
     state.asr_cloud_success_ratio = runtime.asr_cloud_success_ratio;
-    state.plugin_update_hz = runtime.plugin_current_update_hz;
-    state.plugin_total_updates = runtime.plugin_total_update_count;
-    state.plugin_timeout_count = runtime.plugin_timeout_count;
-    state.plugin_exception_count = runtime.plugin_exception_count;
-    state.plugin_internal_error_count = runtime.plugin_internal_error_count;
-    state.plugin_disable_count = runtime.plugin_disable_count;
-    state.plugin_recover_count = runtime.plugin_recover_count;
-    state.plugin_timeout_rate = runtime.plugin_timeout_rate;
-    state.plugin_auto_disabled = runtime.plugin_auto_disabled;
-    state.plugin_last_error = runtime.plugin_last_error;
-    state.has_plugin_last_error = !runtime.plugin_last_error.empty();
-    state.plugin_route_selected = runtime.plugin_route_selected;
-    state.plugin_route_scene_score = runtime.plugin_route_scene_score;
-    state.plugin_route_task_score = runtime.plugin_route_task_score;
-    state.plugin_route_presence_score = runtime.plugin_route_presence_score;
-    state.plugin_route_total_score = runtime.plugin_route_total_score;
-    state.plugin_route_rejected_summary = runtime.plugin_route_rejected_summary;
-    state.has_route_rejected_summary = !runtime.plugin_route_rejected_summary.empty();
-    state.can_send_chat = runtime.feature_chat_enabled && runtime.chat_ready && runtime.chat_provider != nullptr;
+    state.plugin_update_hz = runtime.plugin.current_update_hz;
+    state.plugin_total_updates = runtime.plugin.total_update_count;
+    state.plugin_timeout_count = runtime.plugin.timeout_count;
+    state.plugin_exception_count = runtime.plugin.exception_count;
+    state.plugin_internal_error_count = runtime.plugin.internal_error_count;
+    state.plugin_disable_count = runtime.plugin.disable_count;
+    state.plugin_recover_count = runtime.plugin.recover_count;
+    state.plugin_timeout_rate = runtime.plugin.timeout_rate;
+    state.plugin_auto_disabled = runtime.plugin.auto_disabled;
+    state.plugin_last_error = runtime.plugin.last_error;
+    state.has_plugin_last_error = !runtime.plugin.last_error.empty();
+    state.plugin_route_selected = runtime.plugin.route_selected;
+    state.plugin_route_scene_score = runtime.plugin.route_scene_score;
+    state.plugin_route_task_score = runtime.plugin.route_task_score;
+    state.plugin_route_presence_score = runtime.plugin.route_presence_score;
+    state.plugin_route_total_score = runtime.plugin.route_total_score;
+    state.plugin_route_rejected_summary = runtime.plugin.route_rejected_summary;
+    state.has_route_rejected_summary = !runtime.plugin.route_rejected_summary.empty();
+    state.can_send_chat = runtime.feature_flags.chat_enabled && runtime.chat_ready && runtime.chat_provider != nullptr;
     return state;
 }
 
@@ -713,13 +713,13 @@ void ApplyPerceptionPanelAction(AppRuntime &runtime, const PerceptionPanelAction
 void ApplyAsrChatPanelAction(AppRuntime &runtime, const AsrChatPanelAction &action) {
     switch (action.type) {
         case AsrChatPanelActionType::SetObservabilityLogEnabled:
-            runtime.runtime_observability_log_enabled = action.bool_value;
+            runtime.observability.log_enabled = action.bool_value;
             break;
         case AsrChatPanelActionType::SetObservabilityLogIntervalSec:
-            runtime.runtime_observability_log_interval_sec = action.float_value;
+            runtime.observability.log_interval_sec = action.float_value;
             break;
         case AsrChatPanelActionType::SetChatEnabled:
-            runtime.feature_chat_enabled = action.bool_value;
+            runtime.feature_flags.chat_enabled = action.bool_value;
             break;
         case AsrChatPanelActionType::SetPreferCloudChat:
             runtime.prefer_cloud_chat = action.bool_value;

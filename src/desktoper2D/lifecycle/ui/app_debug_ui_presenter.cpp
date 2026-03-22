@@ -1,5 +1,7 @@
 #include "desktoper2D/lifecycle/ui/app_debug_ui_presenter.h"
 
+#include <algorithm>
+
 namespace desktoper2D {
 
 namespace {
@@ -40,7 +42,7 @@ RuntimeErrorDomain PickRecentErrorDomain(const AppRuntime &runtime) {
     const std::array<const RuntimeErrorInfo *, 9> infos = {
         &runtime.chat_error_info,
         &runtime.asr_error_info,
-        &runtime.plugin_error_info,
+        &runtime.plugin.error_info,
         &runtime.perception_state.facemesh_error_info,
         &runtime.perception_state.ocr_error_info,
         &runtime.perception_state.scene_error_info,
@@ -60,7 +62,7 @@ std::string PickRecentErrorText(const AppRuntime &runtime) {
     const std::array<const std::string *, 9> texts = {
         &runtime.chat_last_error,
         &runtime.asr_last_error,
-        &runtime.plugin_last_error,
+        &runtime.plugin.last_error,
         &runtime.perception_state.camera_facemesh_last_error,
         &runtime.perception_state.ocr_last_error,
         &runtime.perception_state.scene_classifier_last_error,
@@ -120,24 +122,24 @@ std::vector<RuntimeErrorRow> BuildRuntimeErrorRows(const AppRuntime &runtime) {
         {"Chat",
          &runtime.chat_error_info,
          ClassifyModuleState(runtime.chat_error_info,
-                             runtime.feature_chat_enabled ? runtime.chat_ready : true,
+                             runtime.feature_flags.chat_enabled ? runtime.chat_ready : true,
                              false,
                              false),
          0},
         {"ASR",
          &runtime.asr_error_info,
          ClassifyModuleState(runtime.asr_error_info,
-                             runtime.feature_asr_enabled ? runtime.asr_ready : true,
+                             runtime.feature_flags.asr_enabled ? runtime.asr_ready : true,
                              false,
                              false),
          1},
         {"Plugin.Worker",
-         &runtime.plugin_error_info,
-         ClassifyModuleState(runtime.plugin_error_info,
-                             runtime.plugin_ready,
-                             runtime.plugin_auto_disabled || runtime.plugin_timeout_rate > 0.10,
-                             (!runtime.plugin_auto_disabled && runtime.plugin_recover_count > 0 &&
-                              runtime.plugin_error_info.code != RuntimeErrorCode::Ok)),
+         &runtime.plugin.error_info,
+         ClassifyModuleState(runtime.plugin.error_info,
+                             runtime.plugin.ready,
+                             runtime.plugin.auto_disabled || runtime.plugin.timeout_rate > 0.10,
+                             (!runtime.plugin.auto_disabled && runtime.plugin.recover_count > 0 &&
+                              runtime.plugin.error_info.code != RuntimeErrorCode::Ok)),
          2},
         {"Perception.FaceMesh",
          &runtime.perception_state.facemesh_error_info,
@@ -211,7 +213,7 @@ JsonValue BuildRuntimeSnapshotJson(const AppRuntime &runtime) {
     err_counts.emplace("ocr", JsonValue::makeNumber(static_cast<double>(runtime.perception_state.ocr_error_info.count)));
     err_counts.emplace("facemesh", JsonValue::makeNumber(static_cast<double>(runtime.perception_state.facemesh_error_info.count)));
     err_counts.emplace("system_context", JsonValue::makeNumber(static_cast<double>(runtime.perception_state.system_context_error_info.count)));
-    err_counts.emplace("plugin", JsonValue::makeNumber(static_cast<double>(runtime.plugin_error_info.count)));
+    err_counts.emplace("plugin", JsonValue::makeNumber(static_cast<double>(runtime.plugin.error_info.count)));
     err_counts.emplace("asr", JsonValue::makeNumber(static_cast<double>(runtime.asr_error_info.count)));
     err_counts.emplace("chat", JsonValue::makeNumber(static_cast<double>(runtime.chat_error_info.count)));
     err_counts.emplace("reminder", JsonValue::makeNumber(static_cast<double>(runtime.reminder_error_info.count)));
@@ -223,7 +225,7 @@ JsonValue BuildRuntimeSnapshotJson(const AppRuntime &runtime) {
     degraded_counts.emplace("ocr", JsonValue::makeNumber(static_cast<double>(runtime.perception_state.ocr_error_info.degraded_count)));
     degraded_counts.emplace("facemesh", JsonValue::makeNumber(static_cast<double>(runtime.perception_state.facemesh_error_info.degraded_count)));
     degraded_counts.emplace("system_context", JsonValue::makeNumber(static_cast<double>(runtime.perception_state.system_context_error_info.degraded_count)));
-    degraded_counts.emplace("plugin", JsonValue::makeNumber(static_cast<double>(runtime.plugin_error_info.degraded_count)));
+    degraded_counts.emplace("plugin", JsonValue::makeNumber(static_cast<double>(runtime.plugin.error_info.degraded_count)));
     degraded_counts.emplace("asr", JsonValue::makeNumber(static_cast<double>(runtime.asr_error_info.degraded_count)));
     degraded_counts.emplace("chat", JsonValue::makeNumber(static_cast<double>(runtime.chat_error_info.degraded_count)));
     degraded_counts.emplace("reminder", JsonValue::makeNumber(static_cast<double>(runtime.reminder_error_info.degraded_count)));
@@ -238,25 +240,25 @@ OverviewReadModel BuildOverviewReadModel(const AppRuntime &runtime) {
     m.fps = runtime.debug_fps;
     m.model_parts = static_cast<int>(runtime.model.parts.size());
     m.model_loaded = runtime.model_loaded;
-    m.plugin_degraded = runtime.plugin_auto_disabled || runtime.plugin_timeout_rate > 0.10 || !runtime.plugin_last_error.empty();
-    m.plugin_timeout_rate = runtime.plugin_timeout_rate;
-    m.asr_available = runtime.feature_asr_enabled && runtime.asr_ready;
-    m.chat_available = runtime.feature_chat_enabled && runtime.chat_ready;
+    m.plugin_degraded = runtime.plugin.auto_disabled || runtime.plugin.timeout_rate > 0.10 || !runtime.plugin.last_error.empty();
+    m.plugin_timeout_rate = runtime.plugin.timeout_rate;
+    m.asr_available = runtime.feature_flags.asr_enabled && runtime.asr_ready;
+    m.chat_available = runtime.feature_flags.chat_enabled && runtime.chat_ready;
     m.recent_error_domain = PickRecentErrorDomain(runtime);
     m.recent_error_text = PickRecentErrorText(runtime);
-    m.task_primary = TaskPrimaryCategoryNamePresenter(runtime.task_primary);
-    m.task_secondary = TaskSecondaryCategoryNamePresenter(runtime.task_secondary);
+    m.task_primary = TaskPrimaryCategoryNamePresenter(runtime.task_decision.primary);
+    m.task_secondary = TaskSecondaryCategoryNamePresenter(runtime.task_decision.secondary);
     return m;
 }
 
 WorkspaceReadModel BuildWorkspaceReadModel(const AppRuntime &runtime) {
     WorkspaceReadModel m{};
-    m.workspace_mode = runtime.workspace_mode;
-    m.layout_mode = runtime.workspace_layout_mode;
-    m.workspace_label = WorkspaceModeLabel(runtime.workspace_mode);
-    m.layout_label = runtime.workspace_layout_mode == WorkspaceLayoutMode::Manual ? "Manual" : "Preset";
-    m.dock_rebuild_requested = runtime.workspace_dock_rebuild_requested;
-    m.preset_apply_requested = runtime.workspace_preset_apply_requested;
+    m.workspace_mode = runtime.workspace_ui.mode;
+    m.layout_mode = runtime.workspace_ui.panels.layout_mode;
+    m.workspace_label = WorkspaceModeLabel(runtime.workspace_ui.mode);
+    m.layout_label = runtime.workspace_ui.panels.layout_mode == WorkspaceLayoutMode::Manual ? "Manual" : "Preset";
+    m.dock_rebuild_requested = runtime.workspace_ui.dock_rebuild_requested;
+    m.preset_apply_requested = runtime.workspace_ui.panels.preset_apply_requested;
     return m;
 }
 
@@ -265,6 +267,13 @@ OpsReadModel BuildOpsReadModel(const AppRuntime &runtime, const std::string &run
     m.running = runtime.running;
     m.runtime_ops_status = runtime_ops_status;
     return m;
+}
+
+const DefaultPluginCatalogEntry *FindDefaultPluginCatalogEntry(const AppRuntime &runtime, std::string_view name) {
+    const auto it = std::find_if(runtime.plugin.default_plugin_catalog_entries.begin(),
+                                 runtime.plugin.default_plugin_catalog_entries.end(),
+                                 [&](const DefaultPluginCatalogEntry &entry) { return entry.name == name; });
+    return it == runtime.plugin.default_plugin_catalog_entries.end() ? nullptr : &(*it);
 }
 
 }  // namespace desktoper2D

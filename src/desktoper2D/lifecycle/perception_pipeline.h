@@ -1,16 +1,12 @@
 #pragma once
 
-#include <atomic>
 #include <cstdint>
-#include <condition_variable>
+#include <deque>
 #include <memory>
-#include <mutex>
-#include <thread>
 #include <string>
 #include <tuple>
 #include <vector>
 
-#include "desktoper2D/capture/screen_capture.h"
 #include "desktoper2D/lifecycle/camera_facemesh_service.h"
 #include "desktoper2D/lifecycle/ocr_service.h"
 #include "desktoper2D/lifecycle/scene_classifier.h"
@@ -27,14 +23,35 @@ struct OcrBlackboardData {
     std::vector<std::string> domain_tags;
 };
 
+struct AsrBlackboardData {
+    std::deque<std::string> utterances;
+    std::string session_text;
+};
+
 struct FaceEmotionBlackboardData {
     bool face_detected = false;
     std::string emotion_label;
     float emotion_score = 0.0f;
 };
 
+struct TaskDecisionSignatureState {
+    std::uint64_t system_context_signature = 0;
+    std::uint64_t ocr_signature = 0;
+    std::uint64_t scene_signature = 0;
+    std::uint64_t asr_signature = 0;
+    std::uint64_t input_signature = 0;
+    OcrResult cached_ocr_input;
+    bool ocr_uses_blackboard = false;
+    bool system_context_dirty = true;
+    bool ocr_dirty = true;
+    bool scene_dirty = true;
+    bool asr_dirty = true;
+    bool input_dirty = true;
+};
+
 struct PerceptionBlackboard {
     OcrBlackboardData ocr;
+    AsrBlackboardData asr;
     FaceEmotionBlackboardData face_emotion;
 };
 
@@ -104,111 +121,44 @@ struct PerceptionPipelineState {
     RuntimeErrorInfo facemesh_error_info{};
 
     PerceptionBlackboard blackboard;
+    TaskDecisionSignatureState decision_signature{};
 };
 
 class PerceptionPipeline {
 public:
+    PerceptionPipeline();
+    ~PerceptionPipeline();
+
     bool Init(PerceptionPipelineState &state,
               const std::vector<std::pair<std::string, std::string>> &scene_model_candidates,
               const std::vector<std::tuple<std::string, std::string, std::string>> &ocr_candidates,
               const std::vector<std::pair<std::string, std::string>> &facemesh_candidates,
               std::string *out_error);
     void Shutdown(PerceptionPipelineState &state) noexcept;
+    bool ReloadSceneClassifier(PerceptionPipelineState &state,
+                               const std::vector<std::pair<std::string, std::string>> &scene_model_candidates,
+                               std::string *out_error);
+    bool ReloadOcrService(PerceptionPipelineState &state,
+                          const std::vector<std::tuple<std::string, std::string, std::string>> &ocr_candidates,
+                          std::string *out_error);
+    bool ReloadFacemeshService(PerceptionPipelineState &state,
+                               const std::vector<std::pair<std::string, std::string>> &facemesh_candidates,
+                               std::string *out_error);
 
     void Tick(float dt, PerceptionPipelineState &state);
 
 private:
-    ScreenCapture screen_capture_;
-    SceneClassifier scene_classifier_;
-    OcrService ocr_service_;
-    SystemContextService system_context_service_;
-    CameraFacemeshService camera_facemesh_service_;
-    OcrPostprocessService ocr_postprocess_service_;
+    struct CaptureSupervisor;
+    struct SceneSupervisor;
+    struct OcrSupervisor;
+    struct ContextSupervisor;
+    struct FacemeshSupervisor;
 
-    struct AsyncOcrPacket {
-        bool ready = false;
-        bool ok = false;
-        std::uint64_t seq = 0;
-        OcrResult result;
-        std::string error;
-        int elapsed_ms = 0;
-        OcrPerfBreakdown perf{};
-    };
-
-    struct AsyncScenePacket {
-        bool ready = false;
-        bool ok = false;
-        std::uint64_t seq = 0;
-        SceneClassificationResult result;
-        std::string error;
-        int elapsed_ms = 0;
-    };
-
-    struct SceneTaskRequest {
-        bool pending = false;
-        std::uint64_t seq = 0;
-        ScreenCaptureFrame frame;
-    };
-
-    std::thread scene_worker_;
-    // TODO: consider bundling running flags + packets into a single thread-safe struct
-    // to avoid future data races when more shared state is added.
-    std::atomic<bool> scene_running_{false};
-    std::mutex scene_mutex_;
-    AsyncScenePacket scene_packet_;
-    std::mutex scene_task_mutex_;
-    std::condition_variable scene_task_cv_;
-    SceneTaskRequest scene_task_;
-
-    struct AsyncFacePacket {
-        bool ready = false;
-        bool ok = false;
-        std::uint64_t seq = 0;
-        FaceEmotionResult result;
-        std::string error;
-        int elapsed_ms = 0;
-    };
-
-    struct FaceTaskRequest {
-        bool pending = false;
-        std::uint64_t seq = 0;
-    };
-
-    std::thread face_worker_;
-    std::atomic<bool> face_running_{false};
-    std::mutex face_mutex_;
-    AsyncFacePacket face_packet_;
-    std::mutex face_task_mutex_;
-    std::condition_variable face_task_cv_;
-    FaceTaskRequest face_task_;
-
-    struct OcrTaskRequest {
-        bool pending = false;
-        std::uint64_t seq = 0;
-        ScreenCaptureFrame frame;
-        OcrSystemContext context;
-    };
-
-    std::thread ocr_worker_;
-    std::atomic<bool> ocr_running_{false};
-    std::mutex ocr_mutex_;
-    AsyncOcrPacket ocr_packet_;
-    std::mutex ocr_task_mutex_;
-    std::condition_variable ocr_task_cv_;
-    OcrTaskRequest ocr_task_;
-
-    std::atomic<std::uint64_t> scene_submit_seq_{0};
-    std::atomic<std::uint64_t> ocr_submit_seq_{0};
-    std::atomic<std::uint64_t> face_submit_seq_{0};
-
-    std::uint64_t scene_applied_seq_ = 0;
-    std::uint64_t ocr_applied_seq_ = 0;
-    std::uint64_t face_applied_seq_ = 0;
-
-    std::atomic<bool> workers_stop_{false};
-
-    void StartWorkers();
-    void StopWorkers() noexcept;
+    std::unique_ptr<CaptureSupervisor> capture_supervisor_;
+    std::unique_ptr<SceneSupervisor> scene_supervisor_;
+    std::unique_ptr<OcrSupervisor> ocr_supervisor_;
+    std::unique_ptr<ContextSupervisor> context_supervisor_;
+    std::unique_ptr<FacemeshSupervisor> facemesh_supervisor_;
 };
 
 }  // namespace desktoper2D

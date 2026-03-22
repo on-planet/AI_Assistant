@@ -30,10 +30,10 @@ PluginStatus OcrPluginModule::Init(const PluginRuntimeConfig &, const PluginHost
     return PluginStatus::Ok;
 }
 
-PluginStatus OcrPluginModule::Update(const PerceptionInput &in,
+PluginStatus OcrPluginModule::Update(PerceptionInput in,
                                      BehaviorOutput *,
                                      std::string *) {
-    last_input_ = in;
+    last_input_ = std::move(in);
     pipeline_.Tick(0.0f, state_);
     stats_.total_update_count += 1;
     stats_.success_count += 1;

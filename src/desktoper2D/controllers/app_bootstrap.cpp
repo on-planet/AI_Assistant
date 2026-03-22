@@ -238,8 +238,28 @@ AppRuntimeConfig LoadRuntimeConfigImpl() {
     }
 
     if (const JsonValue *task_category = root.get("taskCategory"); task_category && task_category->isObject()) {
+        const auto load_task_float = [](const JsonValue *obj, const char *key, float &out) {
+            if (!obj || !obj->isObject()) return;
+            out = static_cast<float>(obj->getNumber(key).value_or(out));
+        };
+        const auto load_task_int = [](const JsonValue *obj, const char *key, int &out) {
+            if (!obj || !obj->isObject()) return;
+            if (const auto value = obj->getNumber(key)) {
+                out = static_cast<int>(*value);
+            }
+        };
+        const auto load_task_size = [](const JsonValue *obj, const char *key, std::size_t &out) {
+            if (!obj || !obj->isObject()) return;
+            if (const auto value = obj->getNumber(key)) {
+                out = static_cast<std::size_t>(std::max(0.0, *value));
+            }
+        };
+
         if (const JsonValue *game_primary_keywords = task_category->get("gamePrimaryKeywords")) {
             LoadTaskCategoryKeywords(game_primary_keywords, cfg.task_category.game_primary_keywords);
+        }
+        if (const JsonValue *work_primary_keywords = task_category->get("workPrimaryKeywords")) {
+            LoadTaskCategoryKeywords(work_primary_keywords, cfg.task_category.work_primary_keywords);
         }
 
         if (const JsonValue *default_work = task_category->get("defaultWorkSecondary");
@@ -305,6 +325,68 @@ AppRuntimeConfig LoadRuntimeConfigImpl() {
             cfg.task_category.calibration.context_temperature = static_cast<float>(
                 calibration->getNumber("contextTemperature").value_or(cfg.task_category.calibration.context_temperature));
         }
+
+        if (const JsonValue *primary = task_category->get("primary"); primary && primary->isObject()) {
+            load_task_float(primary, "singleSourceSemanticWeight", cfg.task_category.primary.single_source_semantic_weight);
+            load_task_float(primary, "singleSourceStructuredWeight", cfg.task_category.primary.single_source_structured_weight);
+            load_task_float(primary, "semanticWeight", cfg.task_category.primary.semantic_weight);
+            load_task_float(primary, "structuredWeight", cfg.task_category.primary.structured_weight);
+            load_task_float(primary, "explicitWeight", cfg.task_category.primary.explicit_weight);
+            load_task_float(primary, "ocrStructWeight", cfg.task_category.primary.ocr_struct_weight);
+            load_task_float(primary, "explicitGameNegationBias", cfg.task_category.primary.explicit_game_negation_bias);
+            load_task_float(primary, "explicitGameConditionalBias", cfg.task_category.primary.explicit_game_conditional_bias);
+            load_task_float(primary, "explicitGameMultiIntentBias", cfg.task_category.primary.explicit_game_multi_intent_bias);
+            load_task_float(primary, "explicitWorkNegationBias", cfg.task_category.primary.explicit_work_negation_bias);
+            load_task_float(primary, "explicitWorkConditionalBias", cfg.task_category.primary.explicit_work_conditional_bias);
+            load_task_float(primary, "explicitWorkMultiIntentBias", cfg.task_category.primary.explicit_work_multi_intent_bias);
+            load_task_float(primary, "gameOcrUiWeight", cfg.task_category.primary.game_ocr_ui_weight);
+            load_task_float(primary, "workOcrCodeWeight", cfg.task_category.primary.work_ocr_code_weight);
+            load_task_float(primary, "workOcrOfficeWeight", cfg.task_category.primary.work_ocr_office_weight);
+            load_task_float(primary, "workOcrChatWeight", cfg.task_category.primary.work_ocr_chat_weight);
+            load_task_float(primary, "confidenceConsistencyBias", cfg.task_category.primary.confidence_consistency_bias);
+            load_task_float(primary, "confidenceConsistencyWeight", cfg.task_category.primary.confidence_consistency_weight);
+            load_task_float(primary, "confidenceTemperature", cfg.task_category.primary.confidence_temperature);
+            load_task_float(primary, "confidencePlattA", cfg.task_category.primary.confidence_platt_a);
+            load_task_float(primary, "confidencePlattB", cfg.task_category.primary.confidence_platt_b);
+        }
+
+        if (const JsonValue *decision = task_category->get("decision"); decision && decision->isObject()) {
+            load_task_size(decision, "asrAssistMaxChars", cfg.task_category.decision.asr_assist_max_chars);
+            load_task_float(decision, "primaryConsistencyThreshold", cfg.task_category.decision.primary_consistency_threshold);
+            load_task_float(decision, "primaryRejectThreshold", cfg.task_category.decision.primary_reject_threshold);
+            load_task_float(decision, "secondaryRejectThreshold", cfg.task_category.decision.secondary_reject_threshold);
+            load_task_float(decision, "minReliableSourceWeight", cfg.task_category.decision.min_reliable_source_weight);
+            load_task_float(decision, "weakSourcePrimaryRejectThreshold", cfg.task_category.decision.weak_source_primary_reject_threshold);
+            load_task_float(decision, "weakSourceSecondaryRejectThreshold", cfg.task_category.decision.weak_source_secondary_reject_threshold);
+            load_task_float(decision, "decisionAlpha", cfg.task_category.decision.decision_alpha);
+            load_task_int(decision, "rejectHoldFrames", cfg.task_category.decision.reject_hold_frames);
+            load_task_int(decision, "secondaryRejectHoldFrames", cfg.task_category.decision.secondary_reject_hold_frames);
+            load_task_float(decision, "primaryRejectEmaMargin", cfg.task_category.decision.primary_reject_ema_margin);
+            load_task_float(decision, "secondaryRejectEmaMargin", cfg.task_category.decision.secondary_reject_ema_margin);
+            load_task_float(decision, "primaryPreemptThreshold", cfg.task_category.decision.primary_preempt_threshold);
+            load_task_float(decision, "primaryPreemptMargin", cfg.task_category.decision.primary_preempt_margin);
+            load_task_float(decision, "secondaryPreemptThreshold", cfg.task_category.decision.secondary_preempt_threshold);
+            load_task_float(decision, "secondaryPreemptMargin", cfg.task_category.decision.secondary_preempt_margin);
+            load_task_float(decision, "jointPrimaryConfidenceTemperature", cfg.task_category.decision.joint_primary_confidence_temperature);
+            load_task_float(decision, "jointPrimaryConfidencePlattA", cfg.task_category.decision.joint_primary_confidence_platt_a);
+            load_task_float(decision, "jointPrimaryConfidencePlattB", cfg.task_category.decision.joint_primary_confidence_platt_b);
+            load_task_float(decision, "jointSecondaryConfidenceTemperature", cfg.task_category.decision.joint_secondary_confidence_temperature);
+            load_task_float(decision, "jointSecondaryConfidencePlattA", cfg.task_category.decision.joint_secondary_confidence_platt_a);
+            load_task_float(decision, "jointSecondaryConfidencePlattB", cfg.task_category.decision.joint_secondary_confidence_platt_b);
+        }
+
+        if (const JsonValue *temporal = task_category->get("temporal"); temporal && temporal->isObject()) {
+            load_task_float(temporal, "emaAlpha", cfg.task_category.temporal.ema_alpha);
+            load_task_float(temporal, "switchMargin", cfg.task_category.temporal.switch_margin);
+            load_task_int(temporal, "minHoldFrames", cfg.task_category.temporal.min_hold_frames);
+            load_task_float(temporal, "unknownPrimaryKeepThreshold", cfg.task_category.temporal.unknown_primary_keep_threshold);
+            load_task_float(temporal, "unknownSecondaryKeepThreshold", cfg.task_category.temporal.unknown_secondary_keep_threshold);
+        }
+
+        if (const JsonValue *memory = task_category->get("memory"); memory && memory->isObject()) {
+            load_task_float(memory, "primaryBoostMax", cfg.task_category.memory.primary_boost_max);
+            load_task_float(memory, "secondaryBoostMax", cfg.task_category.memory.secondary_boost_max);
+        }
     }
 
     TryApplyPluginBehaviorFusionConfig(cfg.behavior_fusion);
@@ -326,6 +408,78 @@ AppRuntimeConfig LoadRuntimeConfigImpl() {
         std::clamp(cfg.task_category.calibration.ocr_platt_a, -10.0f, 10.0f);
     cfg.task_category.calibration.ocr_platt_b =
         std::clamp(cfg.task_category.calibration.ocr_platt_b, -10.0f, 10.0f);
+    cfg.task_category.primary.single_source_semantic_weight =
+        std::clamp(cfg.task_category.primary.single_source_semantic_weight, 0.0f, 1.0f);
+    cfg.task_category.primary.single_source_structured_weight =
+        std::clamp(cfg.task_category.primary.single_source_structured_weight, 0.0f, 1.0f);
+    cfg.task_category.primary.semantic_weight = std::clamp(cfg.task_category.primary.semantic_weight, 0.0f, 1.0f);
+    cfg.task_category.primary.structured_weight = std::clamp(cfg.task_category.primary.structured_weight, 0.0f, 1.0f);
+    cfg.task_category.primary.explicit_weight = std::clamp(cfg.task_category.primary.explicit_weight, 0.0f, 1.0f);
+    cfg.task_category.primary.ocr_struct_weight = std::clamp(cfg.task_category.primary.ocr_struct_weight, 0.0f, 1.0f);
+    cfg.task_category.primary.game_ocr_ui_weight = std::clamp(cfg.task_category.primary.game_ocr_ui_weight, 0.0f, 2.0f);
+    cfg.task_category.primary.work_ocr_code_weight = std::clamp(cfg.task_category.primary.work_ocr_code_weight, 0.0f, 2.0f);
+    cfg.task_category.primary.work_ocr_office_weight = std::clamp(cfg.task_category.primary.work_ocr_office_weight, 0.0f, 2.0f);
+    cfg.task_category.primary.work_ocr_chat_weight = std::clamp(cfg.task_category.primary.work_ocr_chat_weight, 0.0f, 2.0f);
+    cfg.task_category.primary.confidence_consistency_bias =
+        std::clamp(cfg.task_category.primary.confidence_consistency_bias, 0.0f, 2.0f);
+    cfg.task_category.primary.confidence_consistency_weight =
+        std::clamp(cfg.task_category.primary.confidence_consistency_weight, 0.0f, 1.0f);
+    cfg.task_category.primary.confidence_temperature =
+        std::clamp(cfg.task_category.primary.confidence_temperature, 0.05f, 10.0f);
+    cfg.task_category.primary.confidence_platt_a =
+        std::clamp(cfg.task_category.primary.confidence_platt_a, -10.0f, 10.0f);
+    cfg.task_category.primary.confidence_platt_b =
+        std::clamp(cfg.task_category.primary.confidence_platt_b, -10.0f, 10.0f);
+    cfg.task_category.decision.primary_consistency_threshold =
+        std::clamp(cfg.task_category.decision.primary_consistency_threshold, 0.0f, 1.0f);
+    cfg.task_category.decision.primary_reject_threshold =
+        std::clamp(cfg.task_category.decision.primary_reject_threshold, 0.0f, 1.0f);
+    cfg.task_category.decision.secondary_reject_threshold =
+        std::clamp(cfg.task_category.decision.secondary_reject_threshold, 0.0f, 1.0f);
+    cfg.task_category.decision.min_reliable_source_weight =
+        std::clamp(cfg.task_category.decision.min_reliable_source_weight, 0.0f, 1.0f);
+    cfg.task_category.decision.weak_source_primary_reject_threshold =
+        std::clamp(cfg.task_category.decision.weak_source_primary_reject_threshold, 0.0f, 1.0f);
+    cfg.task_category.decision.weak_source_secondary_reject_threshold =
+        std::clamp(cfg.task_category.decision.weak_source_secondary_reject_threshold, 0.0f, 1.0f);
+    cfg.task_category.decision.decision_alpha =
+        std::clamp(cfg.task_category.decision.decision_alpha, 0.0f, 1.0f);
+    cfg.task_category.decision.reject_hold_frames = std::max(0, cfg.task_category.decision.reject_hold_frames);
+    cfg.task_category.decision.secondary_reject_hold_frames =
+        std::max(0, cfg.task_category.decision.secondary_reject_hold_frames);
+    cfg.task_category.decision.primary_reject_ema_margin =
+        std::clamp(cfg.task_category.decision.primary_reject_ema_margin, 0.0f, 1.0f);
+    cfg.task_category.decision.secondary_reject_ema_margin =
+        std::clamp(cfg.task_category.decision.secondary_reject_ema_margin, 0.0f, 1.0f);
+    cfg.task_category.decision.primary_preempt_threshold =
+        std::clamp(cfg.task_category.decision.primary_preempt_threshold, 0.0f, 1.0f);
+    cfg.task_category.decision.primary_preempt_margin =
+        std::clamp(cfg.task_category.decision.primary_preempt_margin, 0.0f, 1.0f);
+    cfg.task_category.decision.secondary_preempt_threshold =
+        std::clamp(cfg.task_category.decision.secondary_preempt_threshold, 0.0f, 1.0f);
+    cfg.task_category.decision.secondary_preempt_margin =
+        std::clamp(cfg.task_category.decision.secondary_preempt_margin, 0.0f, 1.0f);
+    cfg.task_category.decision.joint_primary_confidence_temperature =
+        std::clamp(cfg.task_category.decision.joint_primary_confidence_temperature, 0.05f, 10.0f);
+    cfg.task_category.decision.joint_primary_confidence_platt_a =
+        std::clamp(cfg.task_category.decision.joint_primary_confidence_platt_a, -10.0f, 10.0f);
+    cfg.task_category.decision.joint_primary_confidence_platt_b =
+        std::clamp(cfg.task_category.decision.joint_primary_confidence_platt_b, -10.0f, 10.0f);
+    cfg.task_category.decision.joint_secondary_confidence_temperature =
+        std::clamp(cfg.task_category.decision.joint_secondary_confidence_temperature, 0.05f, 10.0f);
+    cfg.task_category.decision.joint_secondary_confidence_platt_a =
+        std::clamp(cfg.task_category.decision.joint_secondary_confidence_platt_a, -10.0f, 10.0f);
+    cfg.task_category.decision.joint_secondary_confidence_platt_b =
+        std::clamp(cfg.task_category.decision.joint_secondary_confidence_platt_b, -10.0f, 10.0f);
+    cfg.task_category.temporal.ema_alpha = std::clamp(cfg.task_category.temporal.ema_alpha, 0.0f, 1.0f);
+    cfg.task_category.temporal.switch_margin = std::clamp(cfg.task_category.temporal.switch_margin, 0.0f, 1.0f);
+    cfg.task_category.temporal.min_hold_frames = std::max(0, cfg.task_category.temporal.min_hold_frames);
+    cfg.task_category.temporal.unknown_primary_keep_threshold =
+        std::clamp(cfg.task_category.temporal.unknown_primary_keep_threshold, 0.0f, 1.0f);
+    cfg.task_category.temporal.unknown_secondary_keep_threshold =
+        std::clamp(cfg.task_category.temporal.unknown_secondary_keep_threshold, 0.0f, 1.0f);
+    cfg.task_category.memory.primary_boost_max = std::clamp(cfg.task_category.memory.primary_boost_max, 0.0f, 1.0f);
+    cfg.task_category.memory.secondary_boost_max = std::clamp(cfg.task_category.memory.secondary_boost_max, 0.0f, 1.0f);
 
     if (cfg.default_model_candidates.empty()) {
         cfg.default_model_candidates = BuildSafeRuntimeConfig().default_model_candidates;
@@ -340,7 +494,7 @@ AppRuntimeConfig LoadRuntimeConfig() {
     return LoadRuntimeConfigImpl();
 }
 
-AppBootstrapResult BootstrapModelAndResources(SDL_Renderer *renderer) {
+AppBootstrapResult BootstrapModelAndResources(const RuntimeWindowState &window_state) {
     AppBootstrapResult result{};
     result.runtime_config = LoadRuntimeConfig();
 
@@ -349,7 +503,7 @@ AppBootstrapResult BootstrapModelAndResources(SDL_Renderer *renderer) {
     std::string model_attempt_errors;
     for (const std::string &candidate : result.runtime_config.default_model_candidates) {
         model_err.clear();
-        result.model_loaded = LoadModelRuntime(renderer, candidate.c_str(), &model, &model_err);
+        result.model_loaded = LoadModelRuntime(window_state.renderer, candidate.c_str(), &model, &model_err);
         if (result.model_loaded) {
             result.model_load_log = std::string("Model loaded: ") + candidate;
             break;
@@ -368,7 +522,7 @@ AppBootstrapResult BootstrapModelAndResources(SDL_Renderer *renderer) {
         result.model = std::move(model);
     }
 
-    result.demo_texture = LoadPngTexture(renderer,
+    result.demo_texture = LoadPngTexture(window_state.renderer,
                                          "test.png",
                                          &result.demo_texture_w,
                                          &result.demo_texture_h,

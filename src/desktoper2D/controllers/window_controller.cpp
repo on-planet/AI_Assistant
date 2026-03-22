@@ -40,6 +40,75 @@ SDL_Rect ComputeInteractiveRect(int w, int h) {
     return rect;
 }
 
+bool CreateWindowAndRenderer(RuntimeWindowState &window_state, const char *title, int width, int height) {
+    window_state.window = SDL_CreateWindow(title, width, height, SDL_WINDOW_RESIZABLE);
+    if (!window_state.window) {
+        return false;
+    }
+
+    window_state.renderer = SDL_CreateRenderer(window_state.window, nullptr);
+    if (!window_state.renderer) {
+        SDL_DestroyWindow(window_state.window);
+        window_state.window = nullptr;
+        return false;
+    }
+
+    return true;
+}
+
+void DestroyWindowAndRenderer(RuntimeWindowState &window_state) {
+    if (window_state.renderer) {
+        SDL_DestroyRenderer(window_state.renderer);
+        window_state.renderer = nullptr;
+    }
+    if (window_state.window) {
+        SDL_DestroyWindow(window_state.window);
+        window_state.window = nullptr;
+    }
+    window_state.window_w = 0;
+    window_state.window_h = 0;
+    window_state.interactive_rect = {};
+}
+
+void SyncWindowSize(RuntimeWindowState &window_state) {
+    if (!window_state.window) {
+        window_state.window_w = 0;
+        window_state.window_h = 0;
+        window_state.interactive_rect = {};
+        return;
+    }
+
+    SDL_GetWindowSize(window_state.window, &window_state.window_w, &window_state.window_h);
+}
+
+void RefreshInteractiveRect(RuntimeWindowState &window_state) {
+    window_state.interactive_rect = ComputeInteractiveRect(window_state.window_w, window_state.window_h);
+}
+
+void SetWindowOpacity(const RuntimeWindowState &window_state, float opacity) {
+    if (window_state.window) {
+        SDL_SetWindowOpacity(window_state.window, opacity);
+    }
+}
+
+void SetWindowHitTestCallback(const RuntimeWindowState &window_state, SDL_HitTest callback, void *callback_data) {
+    if (window_state.window) {
+        SDL_SetWindowHitTest(window_state.window, callback, callback_data);
+    }
+}
+
+void ApplyWindowVisibility(const RuntimeWindowState &window_state) {
+    if (!window_state.window) {
+        return;
+    }
+
+    if (window_state.window_visible) {
+        SDL_ShowWindow(window_state.window);
+    } else {
+        SDL_HideWindow(window_state.window);
+    }
+}
+
 bool ApplyWindowShape(SDL_Window *window, int w, int h, const SDL_Rect &interactive, bool click_through) {
     if (w <= 0 || h <= 0) {
         return false;
@@ -72,6 +141,22 @@ bool ApplyWindowShape(SDL_Window *window, int w, int h, const SDL_Rect &interact
     return ok;
 }
 
+bool ApplyWindowShape(const RuntimeWindowState &window_state) {
+    return ApplyWindowShape(window_state.window,
+                            window_state.window_w,
+                            window_state.window_h,
+                            window_state.interactive_rect,
+                            window_state.click_through);
+}
+
+void SetClickThrough(RuntimeWindowState &window_state, bool enabled) {
+    window_state.click_through = enabled;
+    if (window_state.entry_click_through) {
+        SDL_SetTrayEntryChecked(window_state.entry_click_through, enabled);
+    }
+    ApplyWindowShape(window_state);
+}
+
 SDL_Surface *CreateTrayIconSurface() {
     const int size = 24;
     SDL_Surface *surface = SDL_CreateSurface(size, size, SDL_PIXELFORMAT_RGBA32);
@@ -91,6 +176,21 @@ SDL_Surface *CreateTrayIconSurface() {
     return surface;
 }
 
+void SetDemoTexture(RuntimeWindowState &window_state, SDL_Texture *texture, int width, int height) {
+    window_state.demo_texture = texture;
+    window_state.demo_texture_w = width;
+    window_state.demo_texture_h = height;
+}
+
+void DestroyDemoTexture(RuntimeWindowState &window_state) {
+    if (window_state.demo_texture) {
+        SDL_DestroyTexture(window_state.demo_texture);
+        window_state.demo_texture = nullptr;
+    }
+    window_state.demo_texture_w = 0;
+    window_state.demo_texture_h = 0;
+}
+
 void UpdateWindowVisibilityLabel(SDL_TrayEntry *entry_show_hide, bool window_visible) {
     if (!entry_show_hide) {
         return;
@@ -98,6 +198,10 @@ void UpdateWindowVisibilityLabel(SDL_TrayEntry *entry_show_hide, bool window_vis
 
     const char *label = window_visible ? "Hide Window" : "Show Window";
     SDL_SetTrayEntryLabel(entry_show_hide, label);
+}
+
+void UpdateWindowVisibilityLabel(const RuntimeWindowState &window_state) {
+    UpdateWindowVisibilityLabel(window_state.entry_show_hide, window_state.window_visible);
 }
 
 void ToggleWindowVisibility(SDL_Window *window, bool *window_visible) {
@@ -112,6 +216,11 @@ void ToggleWindowVisibility(SDL_Window *window, bool *window_visible) {
     } else {
         SDL_HideWindow(window);
     }
+}
+
+void ToggleWindowVisibility(RuntimeWindowState &window_state) {
+    ToggleWindowVisibility(window_state.window, &window_state.window_visible);
+    UpdateWindowVisibilityLabel(window_state);
 }
 
 SDL_HitTestResult WindowHitTest(bool click_through,
@@ -149,6 +258,16 @@ SDL_HitTestResult WindowHitTest(bool click_through,
     // 客户区统一交给模型/ImGui，避免窗口抢占拖拽优先级。
     (void)edit_mode;
     return SDL_HITTEST_NORMAL;
+}
+
+SDL_HitTestResult WindowHitTest(const RuntimeWindowState &window_state, bool edit_mode, const SDL_Point *area) {
+    return WindowHitTest(window_state.click_through, edit_mode, window_state.interactive_rect, area);
+}
+
+void PresentWindowFrame(const RuntimeWindowState &window_state) {
+    if (window_state.renderer) {
+        SDL_RenderPresent(window_state.renderer);
+    }
 }
 
 }  // namespace desktoper2D

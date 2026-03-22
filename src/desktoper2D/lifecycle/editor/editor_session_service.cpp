@@ -183,26 +183,27 @@ bool SaveEditorProjectJsonToDisk(AppRuntime &runtime, const std::string &project
     editor.emplace("viewPanX", JsonValue::makeNumber(runtime.editor_view_pan_x));
     editor.emplace("viewPanY", JsonValue::makeNumber(runtime.editor_view_pan_y));
     editor.emplace("viewZoom", JsonValue::makeNumber(runtime.editor_view_zoom));
-    editor.emplace("workspaceMode", JsonValue::makeNumber(static_cast<double>(runtime.workspace_mode == WorkspaceMode::Animation ? 0 :
-                                                                              (runtime.workspace_mode == WorkspaceMode::Debug ? 1 :
-                                                                              (runtime.workspace_mode == WorkspaceMode::Perception ? 2 : 3)))));
-    editor.emplace("workspaceLayoutMode", JsonValue::makeNumber(static_cast<double>(runtime.workspace_layout_mode == WorkspaceLayoutMode::Preset ? 0 : 1)));
+    editor.emplace("workspaceMode", JsonValue::makeNumber(static_cast<double>(runtime.workspace_ui.mode == WorkspaceMode::Animation ? 0 :
+                                                                              (runtime.workspace_ui.mode == WorkspaceMode::Debug ? 1 :
+                                                                              (runtime.workspace_ui.mode == WorkspaceMode::Perception ? 2 : 3)))));
+    editor.emplace("workspaceLayoutMode",
+                   JsonValue::makeNumber(static_cast<double>(runtime.workspace_ui.panels.layout_mode == WorkspaceLayoutMode::Preset ? 0 : 1)));
     JsonObject workspace_windows;
-    workspace_windows.emplace("workspace", JsonValue::makeBool(runtime.show_workspace_window));
-    workspace_windows.emplace("overview", JsonValue::makeBool(runtime.show_overview_window));
-    workspace_windows.emplace("editor", JsonValue::makeBool(runtime.show_editor_window));
-    workspace_windows.emplace("timeline", JsonValue::makeBool(runtime.show_timeline_window));
-    workspace_windows.emplace("perception", JsonValue::makeBool(runtime.show_perception_window));
-    workspace_windows.emplace("mapping", JsonValue::makeBool(runtime.show_mapping_window));
-    workspace_windows.emplace("asr", JsonValue::makeBool(runtime.show_asr_chat_window));
-    workspace_windows.emplace("pluginWorker", JsonValue::makeBool(runtime.show_plugin_worker_window));
-    workspace_windows.emplace("chat", JsonValue::makeBool(runtime.show_chat_window));
-    workspace_windows.emplace("errors", JsonValue::makeBool(runtime.show_error_window));
-    workspace_windows.emplace("inspector", JsonValue::makeBool(runtime.show_inspector_window));
-    workspace_windows.emplace("reminder", JsonValue::makeBool(runtime.show_reminder_window));
+    workspace_windows.emplace("workspace", JsonValue::makeBool(runtime.workspace_ui.panels.show_workspace_window));
+    workspace_windows.emplace("overview", JsonValue::makeBool(runtime.workspace_ui.panels.show_overview_window));
+    workspace_windows.emplace("editor", JsonValue::makeBool(runtime.workspace_ui.panels.show_editor_window));
+    workspace_windows.emplace("timeline", JsonValue::makeBool(runtime.workspace_ui.panels.show_timeline_window));
+    workspace_windows.emplace("perception", JsonValue::makeBool(runtime.workspace_ui.panels.show_perception_window));
+    workspace_windows.emplace("mapping", JsonValue::makeBool(runtime.workspace_ui.panels.show_mapping_window));
+    workspace_windows.emplace("asr", JsonValue::makeBool(runtime.workspace_ui.panels.show_asr_chat_window));
+    workspace_windows.emplace("pluginWorker", JsonValue::makeBool(runtime.workspace_ui.panels.show_plugin_worker_window));
+    workspace_windows.emplace("chat", JsonValue::makeBool(runtime.workspace_ui.panels.show_chat_window));
+    workspace_windows.emplace("errors", JsonValue::makeBool(runtime.workspace_ui.panels.show_error_window));
+    workspace_windows.emplace("inspector", JsonValue::makeBool(runtime.workspace_ui.panels.show_inspector_window));
+    workspace_windows.emplace("reminder", JsonValue::makeBool(runtime.workspace_ui.panels.show_reminder_window));
     editor.emplace("workspaceWindows", JsonValue::makeObject(std::move(workspace_windows)));
 
-    auto save_window_layout = [](const AppRuntime::WindowLayoutState &layout) {
+    auto save_window_layout = [](const RuntimeWindowLayoutState &layout) {
         JsonObject obj;
         obj.emplace("posX", JsonValue::makeNumber(layout.pos_x));
         obj.emplace("posY", JsonValue::makeNumber(layout.pos_y));
@@ -213,9 +214,9 @@ bool SaveEditorProjectJsonToDisk(AppRuntime &runtime, const std::string &project
         return JsonValue::makeObject(std::move(obj));
     };
 
-    editor.emplace("runtimeDebugWindow", save_window_layout(runtime.runtime_debug_window_layout));
-    editor.emplace("inspectorWindow", save_window_layout(runtime.inspector_window_layout));
-    editor.emplace("reminderWindow", save_window_layout(runtime.reminder_window_layout));
+    editor.emplace("runtimeDebugWindow", save_window_layout(runtime.workspace_ui.runtime_debug_window_layout));
+    editor.emplace("inspectorWindow", save_window_layout(runtime.workspace_ui.inspector_window_layout));
+    editor.emplace("reminderWindow", save_window_layout(runtime.workspace_ui.reminder_window_layout));
     root.emplace("editor", JsonValue::makeObject(std::move(editor)));
 
     JsonObject feature;
@@ -245,10 +246,7 @@ bool SaveEditorProjectJsonToDisk(AppRuntime &runtime, const std::string &project
     return true;
 }
 
-bool LoadEditorProjectJsonFromDisk(AppRuntime &runtime,
-                                   SDL_Renderer *renderer,
-                                   const std::string &project_path,
-                                   std::string *out_error) {
+bool LoadEditorProjectJsonFromDisk(AppRuntime &runtime, const std::string &project_path, std::string *out_error) {
     if (out_error) out_error->clear();
 
     SDL_IOStream *io = SDL_IOFromFile(project_path.c_str(), "rb");
@@ -300,7 +298,7 @@ bool LoadEditorProjectJsonFromDisk(AppRuntime &runtime,
 
     ModelRuntime loaded;
     std::string model_err;
-    if (!LoadModelRuntime(renderer, model_path.c_str(), &loaded, &model_err)) {
+    if (!LoadModelRuntime(runtime.window_state.renderer, model_path.c_str(), &loaded, &model_err)) {
         if (out_error) *out_error = "load model from project failed: " + model_err;
         return false;
     }
@@ -316,22 +314,25 @@ bool LoadEditorProjectJsonFromDisk(AppRuntime &runtime,
         runtime.manual_param_mode = editor->getBool("manualParamMode").value_or(runtime.manual_param_mode);
         runtime.edit_mode = editor->getBool("editMode").value_or(runtime.edit_mode);
         const int workspace_layout_mode = static_cast<int>(editor->getNumber("workspaceLayoutMode").value_or(0.0));
-        runtime.workspace_layout_mode = workspace_layout_mode == 1 ? WorkspaceLayoutMode::Manual : WorkspaceLayoutMode::Preset;
-        runtime.workspace_preset_apply_requested = runtime.workspace_layout_mode == WorkspaceLayoutMode::Preset;
-        runtime.workspace_dock_rebuild_requested = runtime.workspace_layout_mode == WorkspaceLayoutMode::Preset;
-        runtime.workspace_manual_layout_reset_requested = false;
-        runtime.workspace_manual_layout_pending_load = runtime.workspace_layout_mode == WorkspaceLayoutMode::Manual &&
-                                                       !runtime.workspace_manual_docking_ini.empty();
+        runtime.workspace_ui.panels.layout_mode = workspace_layout_mode == 1 ? WorkspaceLayoutMode::Manual : WorkspaceLayoutMode::Preset;
+        runtime.workspace_ui.panels.preset_apply_requested =
+            runtime.workspace_ui.panels.layout_mode == WorkspaceLayoutMode::Preset;
+        runtime.workspace_ui.dock_rebuild_requested =
+            runtime.workspace_ui.panels.layout_mode == WorkspaceLayoutMode::Preset;
+        runtime.workspace_ui.panels.manual_layout_reset_requested = false;
+        runtime.workspace_ui.panels.manual_layout_pending_load =
+            runtime.workspace_ui.panels.layout_mode == WorkspaceLayoutMode::Manual &&
+            !runtime.workspace_ui.panels.manual_docking_ini.empty();
         runtime.editor_view_pan_x = static_cast<float>(editor->getNumber("viewPanX").value_or(runtime.editor_view_pan_x));
         runtime.editor_view_pan_y = static_cast<float>(editor->getNumber("viewPanY").value_or(runtime.editor_view_pan_y));
         runtime.editor_view_zoom = static_cast<float>(editor->getNumber("viewZoom").value_or(runtime.editor_view_zoom));
         const int workspace_mode = static_cast<int>(editor->getNumber("workspaceMode").value_or(1.0));
-        runtime.workspace_mode = workspace_mode == 0 ? WorkspaceMode::Animation :
-                                 (workspace_mode == 1 ? WorkspaceMode::Debug :
-                                 (workspace_mode == 2 ? WorkspaceMode::Perception : WorkspaceMode::Authoring));
-        runtime.last_applied_workspace_mode = static_cast<WorkspaceMode>(-1);
+        runtime.workspace_ui.mode = workspace_mode == 0 ? WorkspaceMode::Animation :
+                                    (workspace_mode == 1 ? WorkspaceMode::Debug :
+                                    (workspace_mode == 2 ? WorkspaceMode::Perception : WorkspaceMode::Authoring));
+        runtime.workspace_ui.panels.last_applied_mode = static_cast<WorkspaceMode>(-1);
 
-        auto load_window_layout = [](const JsonValue *value, AppRuntime::WindowLayoutState &layout) {
+        auto load_window_layout = [](const JsonValue *value, RuntimeWindowLayoutState &layout) {
             if (!value || !value->isObject()) {
                 return;
             }
@@ -349,22 +350,34 @@ bool LoadEditorProjectJsonFromDisk(AppRuntime &runtime,
             return value->getBool(key).value_or(current);
         };
 
-        load_window_layout(editor->get("runtimeDebugWindow"), runtime.runtime_debug_window_layout);
-        load_window_layout(editor->get("inspectorWindow"), runtime.inspector_window_layout);
-        load_window_layout(editor->get("reminderWindow"), runtime.reminder_window_layout);
+        load_window_layout(editor->get("runtimeDebugWindow"), runtime.workspace_ui.runtime_debug_window_layout);
+        load_window_layout(editor->get("inspectorWindow"), runtime.workspace_ui.inspector_window_layout);
+        load_window_layout(editor->get("reminderWindow"), runtime.workspace_ui.reminder_window_layout);
         const JsonValue *workspace_windows = editor->get("workspaceWindows");
-        runtime.show_workspace_window = load_window_visible(workspace_windows, "workspace", runtime.show_workspace_window);
-        runtime.show_overview_window = load_window_visible(workspace_windows, "overview", runtime.show_overview_window);
-        runtime.show_editor_window = load_window_visible(workspace_windows, "editor", runtime.show_editor_window);
-        runtime.show_timeline_window = load_window_visible(workspace_windows, "timeline", runtime.show_timeline_window);
-        runtime.show_perception_window = load_window_visible(workspace_windows, "perception", runtime.show_perception_window);
-        runtime.show_mapping_window = load_window_visible(workspace_windows, "mapping", runtime.show_mapping_window);
-        runtime.show_asr_chat_window = load_window_visible(workspace_windows, "asr", runtime.show_asr_chat_window);
-        runtime.show_plugin_worker_window = load_window_visible(workspace_windows, "pluginWorker", runtime.show_plugin_worker_window);
-        runtime.show_chat_window = load_window_visible(workspace_windows, "chat", runtime.show_chat_window);
-        runtime.show_error_window = load_window_visible(workspace_windows, "errors", runtime.show_error_window);
-        runtime.show_inspector_window = load_window_visible(workspace_windows, "inspector", runtime.show_inspector_window);
-        runtime.show_reminder_window = load_window_visible(workspace_windows, "reminder", runtime.show_reminder_window);
+        runtime.workspace_ui.panels.show_workspace_window =
+            load_window_visible(workspace_windows, "workspace", runtime.workspace_ui.panels.show_workspace_window);
+        runtime.workspace_ui.panels.show_overview_window =
+            load_window_visible(workspace_windows, "overview", runtime.workspace_ui.panels.show_overview_window);
+        runtime.workspace_ui.panels.show_editor_window =
+            load_window_visible(workspace_windows, "editor", runtime.workspace_ui.panels.show_editor_window);
+        runtime.workspace_ui.panels.show_timeline_window =
+            load_window_visible(workspace_windows, "timeline", runtime.workspace_ui.panels.show_timeline_window);
+        runtime.workspace_ui.panels.show_perception_window =
+            load_window_visible(workspace_windows, "perception", runtime.workspace_ui.panels.show_perception_window);
+        runtime.workspace_ui.panels.show_mapping_window =
+            load_window_visible(workspace_windows, "mapping", runtime.workspace_ui.panels.show_mapping_window);
+        runtime.workspace_ui.panels.show_asr_chat_window =
+            load_window_visible(workspace_windows, "asr", runtime.workspace_ui.panels.show_asr_chat_window);
+        runtime.workspace_ui.panels.show_plugin_worker_window =
+            load_window_visible(workspace_windows, "pluginWorker", runtime.workspace_ui.panels.show_plugin_worker_window);
+        runtime.workspace_ui.panels.show_chat_window =
+            load_window_visible(workspace_windows, "chat", runtime.workspace_ui.panels.show_chat_window);
+        runtime.workspace_ui.panels.show_error_window =
+            load_window_visible(workspace_windows, "errors", runtime.workspace_ui.panels.show_error_window);
+        runtime.workspace_ui.panels.show_inspector_window =
+            load_window_visible(workspace_windows, "inspector", runtime.workspace_ui.panels.show_inspector_window);
+        runtime.workspace_ui.panels.show_reminder_window =
+            load_window_visible(workspace_windows, "reminder", runtime.workspace_ui.panels.show_reminder_window);
     }
 
     if (const JsonValue *feature = root.get("feature"); feature && feature->isObject()) {
@@ -411,7 +424,7 @@ bool LoadEditorAutosaveProject(AppRuntime &runtime, std::string *out_error) {
     const std::string original_path = runtime.current_project_path;
     std::string err;
 
-    if (!LoadEditorProjectJsonFromDisk(runtime, runtime.renderer, autosave_path, &err)) {
+    if (!LoadEditorProjectJsonFromDisk(runtime, autosave_path, &err)) {
         if (out_error) *out_error = err;
         runtime.editor_autosave_last_error = err;
         return false;
@@ -528,7 +541,7 @@ void SaveEditorProjectAsToDisk(AppRuntime &runtime) {
 void LoadEditorProjectFromDisk(AppRuntime &runtime) {
     const std::string path = runtime.current_project_path.empty() ? "assets/project.json" : runtime.current_project_path;
     std::string err;
-    if (LoadEditorProjectJsonFromDisk(runtime, runtime.renderer, path, &err)) {
+    if (LoadEditorProjectJsonFromDisk(runtime, path, &err)) {
         runtime.editor_project_dirty = false;
         RefreshEditorAutosaveState(runtime);
         runtime.editor_status = "loaded project: " + path;

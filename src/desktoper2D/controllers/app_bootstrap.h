@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include "desktoper2D/core/model.h"
+#include "desktoper2D/lifecycle/state/runtime_window_state.h"
 #include "desktoper2D/lifecycle/state/task_category_types.h"
 
 #include <string>
@@ -72,7 +73,7 @@ struct AppBootstrapResult {
 };
 
 AppRuntimeConfig LoadRuntimeConfig();
-AppBootstrapResult BootstrapModelAndResources(SDL_Renderer *renderer);
+AppBootstrapResult BootstrapModelAndResources(const RuntimeWindowState &window_state);
 
 }  // namespace desktoper2D
 

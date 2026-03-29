@@ -404,6 +404,7 @@ bool AppLifecycleBootstrapImpl(AppLifecycleContext &ctx) {
             runtime.asr_last_error.clear();
             ClearRuntimeError(runtime.asr_error_info);
         }
+        runtime.RuntimeAsrChatState::panel_state_version += 1;
     }
 
     {
@@ -429,6 +430,7 @@ bool AppLifecycleBootstrapImpl(AppLifecycleContext &ctx) {
             runtime.chat_last_error.clear();
             ClearRuntimeError(runtime.chat_error_info);
         }
+        runtime.RuntimeAsrChatState::panel_state_version += 1;
     }
 
     SetDemoTexture(runtime.window_state,
@@ -502,12 +504,14 @@ void AppLifecycleTeardownImpl(AppLifecycleContext &ctx) {
     }
     runtime.asr_provider_generation = 0;
     runtime.asr_ready = false;
+    runtime.RuntimeAsrChatState::panel_state_version += 1;
 
     if (runtime.chat_provider) {
         runtime.chat_provider->Shutdown();
         runtime.chat_provider.reset();
     }
     runtime.chat_ready = false;
+    runtime.RuntimeAsrChatState::panel_state_version += 1;
 
     if (runtime.window_state.tray) {
         SDL_DestroyTray(runtime.window_state.tray);

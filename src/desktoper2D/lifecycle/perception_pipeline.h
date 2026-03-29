@@ -65,6 +65,10 @@ struct PerceptionPipelineState {
     bool screen_capture_ready = false;
     float screen_capture_poll_accum_sec = 0.0f;
     float screen_capture_poll_interval_sec = 3.0f;
+    float system_context_poll_accum_sec = 0.0f;
+    float system_context_poll_interval_sec = 3.0f;
+    float camera_facemesh_poll_accum_sec = 0.0f;
+    float camera_facemesh_poll_interval_sec = 0.1f;
     std::string screen_capture_last_error;
     std::int64_t screen_capture_success_count = 0;
     std::int64_t screen_capture_fail_count = 0;
@@ -122,6 +126,7 @@ struct PerceptionPipelineState {
 
     PerceptionBlackboard blackboard;
     TaskDecisionSignatureState decision_signature{};
+    std::uint64_t panel_state_version = 0;
 };
 
 class PerceptionPipeline {

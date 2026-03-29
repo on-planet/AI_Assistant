@@ -79,6 +79,7 @@ PluginWorkerConfig BuildPluginWorkerConfig(const PluginArtifactSpec::WorkerTunin
     cfg.recover_after_consecutive_successes = tuning.recover_after_consecutive_successes;
     cfg.avg_latency_budget_ms = tuning.avg_latency_budget_ms;
     cfg.latency_budget_window_size = tuning.latency_budget_window_size;
+    cfg.max_input_queue_size = tuning.max_input_queue_size;
     cfg.disable_after_consecutive_failures = tuning.disable_after_consecutive_failures;
     cfg.auto_recover_after_ms = tuning.auto_recover_after_ms;
     return cfg;
@@ -129,6 +130,7 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
     impl_->cfg.recover_after_consecutive_successes = std::max(1, impl_->cfg.recover_after_consecutive_successes);
     impl_->cfg.avg_latency_budget_ms = std::max(0.1, impl_->cfg.avg_latency_budget_ms);
     impl_->cfg.latency_budget_window_size = std::max<std::size_t>(4, impl_->cfg.latency_budget_window_size);
+    impl_->cfg.max_input_queue_size = std::max<std::size_t>(1, impl_->cfg.max_input_queue_size);
     if (impl_->cfg.degrade_hz_steps.empty()) {
         impl_->cfg.degrade_hz_steps = {impl_->cfg.update_hz, 60, 30, 15, 10};
     }
@@ -159,7 +161,12 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
     impl_->internal_error_count = 0;
     impl_->disable_count = 0;
     impl_->recover_count = 0;
+    impl_->dropped_input_count = 0;
     impl_->last_latency_ms = 0.0;
+    impl_->latency_p50_ms = 0.0;
+    impl_->latency_p95_ms = 0.0;
+    impl_->success_rate = 0.0;
+    impl_->timeout_rate = 0.0;
     impl_->ResetLatencyRing();
     impl_->last_error.clear();
     const PluginDescriptor &desc = manager->Descriptor();
@@ -170,6 +177,8 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
     impl_->running.store(true);
 
     impl_->worker = std::thread([this]() {
+        BehaviorOutput out{};
+        std::string err;
         while (impl_->running.load()) {
             PerceptionInput in{};
             auto t0 = std::chrono::steady_clock::time_point{};
@@ -219,12 +228,16 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
                 break;
             }
 
-            BehaviorOutput out{};
-            std::string err;
+            out.ClearPreservingCapacity();
+            err.clear();
             PluginStatus st = PluginStatus::InternalError;
             bool caught_exception = false;
             try {
                 st = impl_->manager->Update(in, out, &err);
+                if (st == PluginStatus::InternalError &&
+                    err.find("exception") != std::string::npos) {
+                    caught_exception = true;
+                }
             } catch (const std::exception &e) {
                 err = std::string("PluginWorker Update exception: ") + e.what();
                 st = PluginStatus::InternalError;
@@ -308,6 +321,7 @@ bool PluginWorker::Start(PluginManager *manager, PluginWorkerConfig cfg, std::st
                         impl_->last_error = "plugin auto disabled due to consecutive failures";
                     }
                 }
+                impl_->RefreshStatsSnapshot();
 
                 const int next_hz = std::max(1, impl_->current_update_hz);
                 if (impl_->input_queue.empty()) {
@@ -337,6 +351,10 @@ void PluginWorker::SubmitInput(PerceptionInput in) {
     if (!impl_) return;
     {
         std::lock_guard<std::mutex> lock(impl_->mtx);
+        while (impl_->input_queue.size() >= impl_->cfg.max_input_queue_size) {
+            impl_->input_queue.pop_front();
+            ++impl_->dropped_input_count;
+        }
         impl_->input_queue.push_back(std::move(in));
     }
     impl_->cv.notify_one();
@@ -375,22 +393,13 @@ PluginWorkerStats PluginWorker::GetStats() const {
     s.batch = impl_->batch;
     s.last_latency_ms = impl_->last_latency_ms;
     s.avg_latency_ms = impl_->ComputeAverageLatencyMs();
-    const std::vector<double> latency_samples = impl_->SnapshotLatency();
-    if (!latency_samples.empty()) {
-        std::vector<double> sorted = latency_samples;
-        std::sort(sorted.begin(), sorted.end());
-        const std::size_t last = sorted.size() - 1;
-        const std::size_t p50_idx = static_cast<std::size_t>(std::floor(0.50 * static_cast<double>(last)));
-        const std::size_t p95_idx = static_cast<std::size_t>(std::floor(0.95 * static_cast<double>(last)));
-        s.latency_p50_ms = sorted[std::min(p50_idx, last)];
-        s.latency_p95_ms = sorted[std::min(p95_idx, last)];
-    }
-    s.success_rate = impl_->total_update_count > 0
-                         ? static_cast<double>(impl_->success_count) / static_cast<double>(impl_->total_update_count)
-                         : 0.0;
-    s.timeout_rate = impl_->total_update_count > 0
-                         ? static_cast<double>(impl_->timeout_count) / static_cast<double>(impl_->total_update_count)
-                         : 0.0;
+    s.latency_p50_ms = impl_->latency_p50_ms;
+    s.latency_p95_ms = impl_->latency_p95_ms;
+    s.success_rate = impl_->success_rate;
+    s.timeout_rate = impl_->timeout_rate;
+    s.dropped_input_count = impl_->dropped_input_count;
+    s.pending_input_count = impl_->input_queue.size();
+    s.max_input_queue_size = impl_->cfg.max_input_queue_size;
     s.last_error = impl_->last_error;
     return s;
 }

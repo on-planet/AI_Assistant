@@ -1,8 +1,9 @@
-#include "desktoper2D/lifecycle/ui/app_debug_ui_panel_state.h"
+﻿#include "desktoper2D/lifecycle/ui/app_debug_ui_panel_state.h"
 
 #include <algorithm>
 #include <iomanip>
 #include <sstream>
+#include <unordered_map>
 
 #include "app_debug_ui_internal.h"
 #include "desktoper2D/lifecycle/editor/editor_session_service.h"
@@ -176,11 +177,11 @@ EditorBatchBindValidation ValidateBatchBind(const std::vector<EditorParamRowStat
     v.valid = v.in_min_max_ok && v.out_min_max_ok && v.in_range_ok && v.out_range_ok;
     if (!v.valid) {
         std::string msg;
-        if (!v.in_min_max_ok) msg += "输入范围最小值大于最大值。";
-        if (!v.out_min_max_ok) msg += (msg.empty() ? "" : " ") + std::string("输出范围最小值大于最大值。");
-        if (!v.in_range_ok) msg += (msg.empty() ? "" : " ") + std::string("输入范围超出参数规格范围。");
-        if (!v.out_range_ok) msg += (msg.empty() ? "" : " ") + std::string("输出范围超出属性安全范围。");
-        v.message = msg.empty() ? "绑定范围非法。" : msg;
+        if (!v.in_min_max_ok) msg += "Input min cannot be greater than input max.";
+        if (!v.out_min_max_ok) msg += (msg.empty() ? "" : " ") + std::string("Output min cannot be greater than output max.");
+        if (!v.in_range_ok) msg += (msg.empty() ? "" : " ") + std::string("Input range exceeds the selected parameter bounds.");
+        if (!v.out_range_ok) msg += (msg.empty() ? "" : " ") + std::string("Output range exceeds the safe property bounds.");
+        v.message = msg.empty() ? "Invalid bind range." : msg;
     }
     return v;
 }
@@ -315,77 +316,175 @@ std::string BuildEditCommandDetail(const EditCommand &cmd) {
 
 }  // namespace
 
-EditorPanelState BuildEditorPanelState(const AppRuntime &runtime) {
+namespace {
+
+struct EditorParamGroupCacheKey {
+    const ModelParameter *params_ptr = nullptr;
+    std::size_t param_count = 0;
+    int group_mode = 0;
+    std::string search;
+};
+
+bool operator==(const EditorParamGroupCacheKey &lhs, const EditorParamGroupCacheKey &rhs) {
+    return lhs.params_ptr == rhs.params_ptr &&
+           lhs.param_count == rhs.param_count &&
+           lhs.group_mode == rhs.group_mode &&
+           lhs.search == rhs.search;
+}
+
+struct EditorHistoryCacheKey {
+    const EditCommand *undo_ptr = nullptr;
+    std::size_t undo_size = 0;
+    const EditCommand *redo_ptr = nullptr;
+    std::size_t redo_size = 0;
+};
+
+bool operator==(const EditorHistoryCacheKey &lhs, const EditorHistoryCacheKey &rhs) {
+    return lhs.undo_ptr == rhs.undo_ptr &&
+           lhs.undo_size == rhs.undo_size &&
+           lhs.redo_ptr == rhs.redo_ptr &&
+           lhs.redo_size == rhs.redo_size;
+}
+
+struct PerceptionPanelCacheKey {
+    std::uint64_t version = 0;
+    bool feature_ocr_enabled = false;
+    bool feature_face_emotion_enabled = false;
+    int ocr_timeout_ms = 0;
+    int ocr_det_input_size = 0;
+    float capture_poll_interval_sec = 0.0f;
+};
+
+bool operator==(const PerceptionPanelCacheKey &lhs, const PerceptionPanelCacheKey &rhs) {
+    return lhs.version == rhs.version &&
+           lhs.feature_ocr_enabled == rhs.feature_ocr_enabled &&
+           lhs.feature_face_emotion_enabled == rhs.feature_face_emotion_enabled &&
+           lhs.ocr_timeout_ms == rhs.ocr_timeout_ms &&
+           lhs.ocr_det_input_size == rhs.ocr_det_input_size &&
+           lhs.capture_poll_interval_sec == rhs.capture_poll_interval_sec;
+}
+
+struct AsrChatPanelCacheKey {
+    std::uint64_t asr_version = 0;
+    std::uint64_t plugin_version = 0;
+    bool feature_asr_enabled = false;
+    bool feature_chat_enabled = false;
+    bool prefer_cloud_chat = true;
+    bool observability_log_enabled = false;
+    float observability_log_interval_sec = 0.0f;
+};
+
+bool operator==(const AsrChatPanelCacheKey &lhs, const AsrChatPanelCacheKey &rhs) {
+    return lhs.asr_version == rhs.asr_version &&
+           lhs.plugin_version == rhs.plugin_version &&
+           lhs.feature_asr_enabled == rhs.feature_asr_enabled &&
+           lhs.feature_chat_enabled == rhs.feature_chat_enabled &&
+           lhs.prefer_cloud_chat == rhs.prefer_cloud_chat &&
+           lhs.observability_log_enabled == rhs.observability_log_enabled &&
+           lhs.observability_log_interval_sec == rhs.observability_log_interval_sec;
+}
+
+struct EditorPanelCacheEntry {
     EditorPanelState state{};
-    state.view.model_loaded = runtime.model_loaded;
-    state.view.has_model_params = runtime.model_loaded && !runtime.model.parameters.empty();
-    state.view.show_debug_stats = runtime.show_debug_stats;
-    state.view.manual_param_mode = runtime.manual_param_mode;
-    state.view.edit_mode = runtime.edit_mode;
+    EditorParamGroupCacheKey param_group_key{};
+    bool has_param_group_key = false;
+    EditorHistoryCacheKey history_key{};
+    bool has_history_key = false;
+    std::vector<EditorBatchBindTemplateItem> batch_bind_templates;
+};
+
+struct PerceptionPanelCacheEntry {
+    PerceptionPanelState state{};
+    PerceptionPanelCacheKey key{};
+    bool initialized = false;
+};
+
+struct AsrChatPanelCacheEntry {
+    AsrChatPanelState state{};
+    AsrChatPanelCacheKey key{};
+    bool initialized = false;
+};
+
+EditorPanelCacheEntry &GetEditorPanelCache(const AppRuntime &runtime) {
+    static std::unordered_map<const AppRuntime *, EditorPanelCacheEntry> cache;
+    return cache[&runtime];
+}
+
+PerceptionPanelCacheEntry &GetPerceptionPanelCache(const AppRuntime &runtime) {
+    static std::unordered_map<const AppRuntime *, PerceptionPanelCacheEntry> cache;
+    return cache[&runtime];
+}
+
+AsrChatPanelCacheEntry &GetAsrChatPanelCache(const AppRuntime &runtime) {
+    static std::unordered_map<const AppRuntime *, AsrChatPanelCacheEntry> cache;
+    return cache[&runtime];
+}
+
+void PopulateEditorBaseState(EditorPanelReadonlyState &view, const AppRuntime &runtime) {
+    view.model_loaded = runtime.model_loaded;
+    view.has_model_params = runtime.model_loaded && !runtime.model.parameters.empty();
+    view.show_debug_stats = runtime.show_debug_stats;
+    view.manual_param_mode = runtime.manual_param_mode;
+    view.edit_mode = runtime.edit_mode;
     if (runtime.edit_mode && runtime.manual_param_mode) {
-        state.view.edit_runtime_hint = "编辑态 + 手动参数：将覆盖运行态/动画通道参数";
+        view.edit_runtime_hint = "Edit mode and manual parameter mode are both active.";
     } else if (runtime.manual_param_mode && !runtime.edit_mode) {
-        state.view.edit_runtime_hint = "手动参数开启：运行态参数将被手动输入覆盖";
+        view.edit_runtime_hint = "Manual parameter mode is active; runtime automation is paused.";
     } else if (runtime.edit_mode && !runtime.manual_param_mode) {
-        state.view.edit_runtime_hint = "编辑态：建议开启手动参数后再微调参数";
+        view.edit_runtime_hint = "Edit mode is active while runtime automation remains enabled.";
     } else {
-        state.view.edit_runtime_hint = "运行态：参数由动画/行为驱动";
+        view.edit_runtime_hint = "Runtime is driving the model; switch modes to edit manually.";
     }
-    state.view.hair_spring_enabled = runtime.model.enable_hair_spring;
-    state.view.simple_mask_enabled = runtime.model.enable_simple_mask;
-    state.view.head_pat_hovering = runtime.interaction_state.head_pat_hovering;
-    state.view.head_pat_react_ttl = runtime.interaction_state.head_pat_react_ttl;
-    state.view.head_pat_progress = std::clamp(runtime.interaction_state.head_pat_react_ttl / 0.35f, 0.0f, 1.0f);
-    state.view.feature_scene_classifier_enabled = runtime.feature_flags.scene_classifier_enabled;
-    state.view.feature_ocr_enabled = runtime.feature_flags.ocr_enabled;
-    state.view.feature_face_emotion_enabled = runtime.feature_flags.face_emotion_enabled;
-    state.view.feature_asr_enabled = runtime.feature_flags.asr_enabled;
-    state.view.feature_plugin_enabled = runtime.feature_flags.plugin_enabled;
-    state.view.pick_lock_filter_enabled = runtime.pick_lock_filter_enabled;
-    state.view.pick_scope_filter_enabled = runtime.pick_scope_filter_enabled;
-    state.view.pick_scope_mode = runtime.pick_scope_mode;
-    state.view.pick_name_filter_enabled = runtime.pick_name_filter_enabled;
-    state.view.pick_name_filter = runtime.pick_name_filter;
-    state.view.pick_cycle_enabled = runtime.pick_cycle_enabled;
-    state.view.pick_cycle_offset = runtime.pick_cycle_offset;
-    state.view.axis_constraint = runtime.axis_constraint;
-    state.view.snap_enabled = runtime.snap_enabled;
-    state.view.snap_grid = runtime.snap_grid;
-    state.view.drag_sensitivity = runtime.editor_drag_sensitivity;
-    state.view.gizmo_sensitivity = runtime.editor_gizmo_sensitivity;
-    state.view.autosave_enabled = runtime.editor_autosave_enabled;
-    state.view.autosave_interval_sec = runtime.editor_autosave_interval_sec;
-    state.view.autosave_remaining_sec = std::max(0.0f, runtime.editor_autosave_interval_sec - runtime.editor_autosave_accum_sec);
-    state.view.autosave_recovery_available = runtime.editor_autosave_recovery_available;
-    state.view.autosave_recovery_prompted = runtime.editor_autosave_recovery_prompted;
-    state.view.autosave_recovery_checked = runtime.editor_autosave_recovery_checked;
-    state.view.autosave_path = runtime.editor_autosave_path;
-    state.view.autosave_last_error = runtime.editor_autosave_last_error;
-    state.view.param_group_mode = runtime.param_group_mode;
-    state.view.param_search = runtime.param_search;
-    state.view.param_panel_expanded = runtime.editor_param_panel_expanded;
-    state.view.param_quick_expanded = runtime.editor_param_quick_expanded;
-    state.view.param_group_table_expanded = runtime.editor_param_group_table_expanded;
-    state.view.param_batch_bind_expanded = runtime.editor_param_batch_bind_expanded;
+    view.hair_spring_enabled = runtime.model.enable_hair_spring;
+    view.simple_mask_enabled = runtime.model.enable_simple_mask;
+    view.head_pat_hovering = runtime.interaction_state.head_pat_hovering;
+    view.head_pat_react_ttl = runtime.interaction_state.head_pat_react_ttl;
+    view.head_pat_progress = std::clamp(runtime.interaction_state.head_pat_react_ttl / 0.35f, 0.0f, 1.0f);
+    view.feature_scene_classifier_enabled = runtime.feature_flags.scene_classifier_enabled;
+    view.feature_ocr_enabled = runtime.feature_flags.ocr_enabled;
+    view.feature_face_emotion_enabled = runtime.feature_flags.face_emotion_enabled;
+    view.feature_asr_enabled = runtime.feature_flags.asr_enabled;
+    view.feature_plugin_enabled = runtime.feature_flags.plugin_enabled;
+    view.pick_lock_filter_enabled = runtime.pick_lock_filter_enabled;
+    view.pick_scope_filter_enabled = runtime.pick_scope_filter_enabled;
+    view.pick_scope_mode = runtime.pick_scope_mode;
+    view.pick_name_filter_enabled = runtime.pick_name_filter_enabled;
+    view.pick_name_filter = runtime.pick_name_filter;
+    view.pick_cycle_enabled = runtime.pick_cycle_enabled;
+    view.pick_cycle_offset = runtime.pick_cycle_offset;
+    view.axis_constraint = runtime.axis_constraint;
+    view.snap_enabled = runtime.snap_enabled;
+    view.snap_grid = runtime.snap_grid;
+    view.drag_sensitivity = runtime.editor_drag_sensitivity;
+    view.gizmo_sensitivity = runtime.editor_gizmo_sensitivity;
+    view.autosave_enabled = runtime.editor_autosave_enabled;
+    view.autosave_interval_sec = runtime.editor_autosave_interval_sec;
+    view.autosave_remaining_sec = std::max(0.0f, runtime.editor_autosave_interval_sec - runtime.editor_autosave_accum_sec);
+    view.autosave_recovery_available = runtime.editor_autosave_recovery_available;
+    view.autosave_recovery_prompted = runtime.editor_autosave_recovery_prompted;
+    view.autosave_recovery_checked = runtime.editor_autosave_recovery_checked;
+    view.autosave_path = runtime.editor_autosave_path;
+    view.autosave_last_error = runtime.editor_autosave_last_error;
+    view.param_group_mode = runtime.param_group_mode;
+    view.param_search = runtime.param_search;
+    view.param_panel_expanded = runtime.editor_param_panel_expanded;
+    view.param_quick_expanded = runtime.editor_param_quick_expanded;
+    view.param_group_table_expanded = runtime.editor_param_group_table_expanded;
+    view.param_batch_bind_expanded = runtime.editor_param_batch_bind_expanded;
+}
 
-    if (!state.view.has_model_params) {
-        return state;
-    }
-
-    state.view.param_search_hit_count = 0;
+void RebuildEditorParamGroups(EditorPanelCacheEntry &cache, const AppRuntime &runtime) {
+    auto &view = cache.state.view;
+    view.param_search_hit_count = 0;
     for (const auto &param : runtime.model.parameters) {
         if (ParamMatchesSearch(param.id, runtime.param_search)) {
-            state.view.param_search_hit_count += 1;
+            view.param_search_hit_count += 1;
         }
     }
 
     const std::vector<ParamGroup> groups = BuildParamGroups(runtime, runtime.param_group_mode, runtime.param_search);
-    state.view.has_param_groups = !groups.empty();
-    if (!state.view.has_param_groups) {
-        return state;
-    }
-
-    state.view.group_options.reserve(groups.size());
+    view.group_options.clear();
+    view.group_options.reserve(groups.size());
     for (const auto &group : groups) {
         EditorParamGroupOption option{};
         option.label = group.first + " (" + std::to_string(group.second.size()) + ")";
@@ -402,6 +501,7 @@ EditorPanelState BuildEditorPanelState(const AppRuntime &runtime) {
             }
             option.preview += runtime.model.parameters[static_cast<std::size_t>(idx)].id;
         }
+
         option.search_hit = false;
         if (runtime.param_search[0] != '\0') {
             for (int idx : group.second) {
@@ -414,19 +514,34 @@ EditorPanelState BuildEditorPanelState(const AppRuntime &runtime) {
                 }
             }
         }
-        state.view.group_options.push_back(std::move(option));
+        view.group_options.push_back(std::move(option));
+    }
+    view.has_param_groups = !view.group_options.empty();
+}
+
+void UpdateEditorSelectedGroupState(EditorPanelCacheEntry &cache, const AppRuntime &runtime) {
+    auto &view = cache.state.view;
+    view.selected_group_label.clear();
+    view.selected_group_preview.clear();
+    view.selected_group_param_indices.clear();
+    view.selected_group_param_rows.clear();
+    view.quick_param_items.clear();
+    view.selected_group_param_count = 0;
+
+    if (!view.has_param_groups) {
+        return;
     }
 
-    state.view.selected_param_group_index = std::clamp(runtime.selected_param_group_index,
-                                                       0,
-                                                       static_cast<int>(state.view.group_options.size()) - 1);
-    const auto &selected_group = state.view.group_options[static_cast<std::size_t>(state.view.selected_param_group_index)];
-    state.view.selected_group_label = selected_group.label;
-    state.view.selected_group_preview = selected_group.preview;
-    state.view.selected_group_param_indices = selected_group.param_indices;
-    state.view.selected_group_param_count = static_cast<int>(selected_group.param_indices.size());
+    view.selected_param_group_index = std::clamp(runtime.selected_param_group_index,
+                                                 0,
+                                                 static_cast<int>(view.group_options.size()) - 1);
+    const auto &selected_group = view.group_options[static_cast<std::size_t>(view.selected_param_group_index)];
+    view.selected_group_label = selected_group.label;
+    view.selected_group_preview = selected_group.preview;
+    view.selected_group_param_indices = selected_group.param_indices;
+    view.selected_group_param_count = static_cast<int>(selected_group.param_indices.size());
 
-    state.view.selected_group_param_rows.reserve(selected_group.param_indices.size());
+    view.selected_group_param_rows.reserve(selected_group.param_indices.size());
     for (int param_idx : selected_group.param_indices) {
         if (param_idx < 0 || param_idx >= static_cast<int>(runtime.model.parameters.size())) {
             continue;
@@ -434,7 +549,7 @@ EditorPanelState BuildEditorPanelState(const AppRuntime &runtime) {
         const auto &model_param = runtime.model.parameters[static_cast<std::size_t>(param_idx)];
         const auto &param = model_param.param;
         const auto &spec = param.spec();
-        state.view.selected_group_param_rows.push_back(EditorParamRowState{
+        view.selected_group_param_rows.push_back(EditorParamRowState{
             .param_index = param_idx,
             .param_id = model_param.id,
             .min_value = spec.min_value,
@@ -447,14 +562,13 @@ EditorPanelState BuildEditorPanelState(const AppRuntime &runtime) {
         });
     }
 
-    state.view.quick_param_items.clear();
-    state.view.quick_param_items.reserve(6);
+    view.quick_param_items.reserve(6);
     if (runtime.selected_param_index >= 0 &&
         runtime.selected_param_index < static_cast<int>(runtime.model.parameters.size())) {
         const auto &model_param = runtime.model.parameters[static_cast<std::size_t>(runtime.selected_param_index)];
         const auto &param = model_param.param;
         const auto &spec = param.spec();
-        state.view.quick_param_items.push_back(EditorQuickParamItem{
+        view.quick_param_items.push_back(EditorQuickParamItem{
             .param_index = runtime.selected_param_index,
             .label = model_param.id,
             .min_value = spec.min_value,
@@ -464,14 +578,14 @@ EditorPanelState BuildEditorPanelState(const AppRuntime &runtime) {
             .search_hit = ParamMatchesSearch(model_param.id, runtime.param_search),
         });
     }
-    for (const auto &row : state.view.selected_group_param_rows) {
-        if (static_cast<int>(state.view.quick_param_items.size()) >= 6) {
+    for (const auto &row : view.selected_group_param_rows) {
+        if (static_cast<int>(view.quick_param_items.size()) >= 6) {
             break;
         }
         if (row.param_index == runtime.selected_param_index) {
             continue;
         }
-        state.view.quick_param_items.push_back(EditorQuickParamItem{
+        view.quick_param_items.push_back(EditorQuickParamItem{
             .param_index = row.param_index,
             .label = row.param_id,
             .min_value = row.min_value,
@@ -481,32 +595,46 @@ EditorPanelState BuildEditorPanelState(const AppRuntime &runtime) {
             .search_hit = row.search_hit,
         });
     }
+}
 
-    state.view.batch_bind.bind_prop_type = std::clamp(runtime.batch_bind_prop_type, 0, 5);
-    state.view.batch_bind.bind_template_index = std::max(0, runtime.batch_bind_template_index);
-    state.view.batch_bind.bind_in_min = runtime.batch_bind_in_min;
-    state.view.batch_bind.bind_in_max = runtime.batch_bind_in_max;
-    state.view.batch_bind.bind_out_min = runtime.batch_bind_out_min;
-    state.view.batch_bind.bind_out_max = runtime.batch_bind_out_max;
-    state.view.batch_bind.templates = BuildEditorBatchBindTemplates();
-    state.view.batch_bind.validation = ValidateBatchBind(state.view.selected_group_param_rows,
-                                                        static_cast<BindingType>(state.view.batch_bind.bind_prop_type),
-                                                        state.view.batch_bind.bind_in_min,
-                                                        state.view.batch_bind.bind_in_max,
-                                                        state.view.batch_bind.bind_out_min,
-                                                        state.view.batch_bind.bind_out_max);
-    state.view.batch_bind.can_apply_to_selected_part = runtime.selected_part_index >= 0 &&
-                                                       runtime.selected_part_index < static_cast<int>(runtime.model.parts.size()) &&
-                                                       !selected_group.param_indices.empty();
-    state.view.batch_bind.can_apply_to_all_parts = !runtime.model.parts.empty() && !selected_group.param_indices.empty();
-    if (state.view.batch_bind.can_apply_to_selected_part) {
-        state.view.batch_bind.selected_part_label = runtime.model.parts[static_cast<std::size_t>(runtime.selected_part_index)].id;
+void UpdateEditorBatchBindState(EditorPanelCacheEntry &cache, const AppRuntime &runtime) {
+    auto &view = cache.state.view;
+    view.batch_bind.bind_prop_type = std::clamp(runtime.batch_bind_prop_type, 0, 5);
+    view.batch_bind.bind_template_index = std::max(0, runtime.batch_bind_template_index);
+    view.batch_bind.bind_in_min = runtime.batch_bind_in_min;
+    view.batch_bind.bind_in_max = runtime.batch_bind_in_max;
+    view.batch_bind.bind_out_min = runtime.batch_bind_out_min;
+    view.batch_bind.bind_out_max = runtime.batch_bind_out_max;
+    if (cache.batch_bind_templates.empty()) {
+        cache.batch_bind_templates = BuildEditorBatchBindTemplates();
+        view.batch_bind.templates = cache.batch_bind_templates;
+    } else if (view.batch_bind.templates.empty()) {
+        view.batch_bind.templates = cache.batch_bind_templates;
     }
+    view.batch_bind.validation = ValidateBatchBind(view.selected_group_param_rows,
+                                                   static_cast<BindingType>(view.batch_bind.bind_prop_type),
+                                                   view.batch_bind.bind_in_min,
+                                                   view.batch_bind.bind_in_max,
+                                                   view.batch_bind.bind_out_min,
+                                                   view.batch_bind.bind_out_max);
+    view.batch_bind.can_apply_to_selected_part = runtime.selected_part_index >= 0 &&
+                                                 runtime.selected_part_index < static_cast<int>(runtime.model.parts.size()) &&
+                                                 !view.selected_group_param_indices.empty();
+    view.batch_bind.can_apply_to_all_parts = !runtime.model.parts.empty() && !view.selected_group_param_indices.empty();
+    view.batch_bind.selected_part_label.clear();
+    if (view.batch_bind.can_apply_to_selected_part) {
+        view.batch_bind.selected_part_label = runtime.model.parts[static_cast<std::size_t>(runtime.selected_part_index)].id;
+    }
+}
+
+void RebuildEditorHistory(EditorPanelCacheEntry &cache, const AppRuntime &runtime) {
+    auto &view = cache.state.view;
+    view.history_entries.clear();
 
     const int undo_count = static_cast<int>(runtime.undo_stack.size());
     const int redo_count = static_cast<int>(runtime.redo_stack.size());
     int list_index = 0;
-    state.view.history_entries.reserve(runtime.undo_stack.size() + runtime.redo_stack.size());
+    view.history_entries.reserve(runtime.undo_stack.size() + runtime.redo_stack.size());
     for (int i = undo_count - 1; i >= 0; --i) {
         const auto &cmd = runtime.undo_stack[static_cast<std::size_t>(i)];
         EditorHistoryEntry entry{};
@@ -515,7 +643,7 @@ EditorPanelState BuildEditorPanelState(const AppRuntime &runtime) {
         entry.label = BuildEditCommandSummary(cmd);
         entry.detail = BuildEditCommandDetail(cmd);
         entry.applied = true;
-        state.view.history_entries.push_back(std::move(entry));
+        view.history_entries.push_back(std::move(entry));
     }
 
     for (int i = redo_count - 1; i >= 0; --i) {
@@ -526,20 +654,86 @@ EditorPanelState BuildEditorPanelState(const AppRuntime &runtime) {
         entry.label = BuildEditCommandSummary(cmd);
         entry.detail = BuildEditCommandDetail(cmd);
         entry.applied = false;
-        state.view.history_entries.push_back(std::move(entry));
+        view.history_entries.push_back(std::move(entry));
     }
-
-    if (!state.view.history_entries.empty()) {
-        const int max_index = static_cast<int>(state.view.history_entries.size()) - 1;
-        state.view.history_selected_index = std::clamp(runtime.editor_history_selected_index, 0, max_index);
-        state.view.history_detail = state.view.history_entries[static_cast<std::size_t>(state.view.history_selected_index)].detail;
-    } else {
-        state.view.history_selected_index = -1;
-        state.view.history_detail.clear();
-    }
-    return state;
 }
 
+void UpdateEditorHistorySelection(EditorPanelCacheEntry &cache, const AppRuntime &runtime) {
+    auto &view = cache.state.view;
+    if (!view.history_entries.empty()) {
+        const int max_index = static_cast<int>(view.history_entries.size()) - 1;
+        view.history_selected_index = std::clamp(runtime.editor_history_selected_index, 0, max_index);
+        view.history_detail = view.history_entries[static_cast<std::size_t>(view.history_selected_index)].detail;
+    } else {
+        view.history_selected_index = -1;
+        view.history_detail.clear();
+    }
+}
+
+}  // namespace
+
+const EditorPanelState &BuildEditorPanelState(const AppRuntime &runtime) {
+    EditorPanelCacheEntry &cache = GetEditorPanelCache(runtime);
+    EditorPanelReadonlyState &view = cache.state.view;
+    PopulateEditorBaseState(view, runtime);
+
+    if (!view.has_model_params) {
+        view.has_param_groups = false;
+        view.param_search_hit_count = 0;
+        view.group_options.clear();
+        view.selected_group_label.clear();
+        view.selected_group_preview.clear();
+        view.selected_group_param_indices.clear();
+        view.selected_group_param_rows.clear();
+        view.quick_param_items.clear();
+        view.batch_bind.selected_part_label.clear();
+        view.history_entries.clear();
+        view.history_selected_index = -1;
+        view.history_detail.clear();
+        return cache.state;
+    }
+
+    const EditorParamGroupCacheKey param_group_key{
+        .params_ptr = runtime.model.parameters.data(),
+        .param_count = runtime.model.parameters.size(),
+        .group_mode = runtime.param_group_mode,
+        .search = runtime.param_search,
+    };
+    if (!cache.has_param_group_key || !(cache.param_group_key == param_group_key)) {
+        cache.param_group_key = param_group_key;
+        cache.has_param_group_key = true;
+        RebuildEditorParamGroups(cache, runtime);
+    }
+
+    if (!view.has_param_groups) {
+        view.selected_group_label.clear();
+        view.selected_group_preview.clear();
+        view.selected_group_param_indices.clear();
+        view.selected_group_param_rows.clear();
+        view.quick_param_items.clear();
+        view.history_entries.clear();
+        view.history_selected_index = -1;
+        view.history_detail.clear();
+        return cache.state;
+    }
+
+    UpdateEditorSelectedGroupState(cache, runtime);
+    UpdateEditorBatchBindState(cache, runtime);
+
+    const EditorHistoryCacheKey history_key{
+        .undo_ptr = runtime.undo_stack.data(),
+        .undo_size = runtime.undo_stack.size(),
+        .redo_ptr = runtime.redo_stack.data(),
+        .redo_size = runtime.redo_stack.size(),
+    };
+    if (!cache.has_history_key || !(cache.history_key == history_key)) {
+        cache.history_key = history_key;
+        cache.has_history_key = true;
+        RebuildEditorHistory(cache, runtime);
+    }
+    UpdateEditorHistorySelection(cache, runtime);
+    return cache.state;
+}
 void RestoreTimelineSelectionFromHistory(AppRuntime &runtime, const std::vector<std::uint64_t> &selected_ids) {
     runtime.timeline_selected_keyframe_ids = selected_ids;
     runtime.timeline_selected_keyframe_indices.clear();
@@ -570,8 +764,24 @@ void ClearTimelineInteractionState() {
     interaction.box_select_end_y = 0.0f;
 }
 
-PerceptionPanelState BuildPerceptionPanelState(const AppRuntime &runtime) {
-    PerceptionPanelState state{};
+const PerceptionPanelState &BuildPerceptionPanelState(const AppRuntime &runtime) {
+    PerceptionPanelCacheEntry &cache = GetPerceptionPanelCache(runtime);
+    const PerceptionPanelCacheKey key{
+        .version = runtime.perception_state.panel_state_version,
+        .feature_ocr_enabled = runtime.feature_flags.ocr_enabled,
+        .feature_face_emotion_enabled = runtime.feature_flags.face_emotion_enabled,
+        .ocr_timeout_ms = runtime.perception_state.ocr_timeout_ms,
+        .ocr_det_input_size = runtime.perception_state.ocr_det_input_size,
+        .capture_poll_interval_sec = runtime.perception_state.screen_capture_poll_interval_sec,
+    };
+    if (cache.initialized && cache.key == key) {
+        return cache.state;
+    }
+
+    cache.key = key;
+    cache.initialized = true;
+    PerceptionPanelState &state = cache.state;
+    state = PerceptionPanelState{};
     state.capture_ready = runtime.perception_state.screen_capture_ready;
     state.scene_ready = runtime.perception_state.scene_classifier_ready;
     state.ocr_ready = runtime.perception_state.ocr_ready;
@@ -649,9 +859,25 @@ PerceptionPanelState BuildPerceptionPanelState(const AppRuntime &runtime) {
                          runtime.perception_state.screen_capture_last_error;
     return state;
 }
+const AsrChatPanelState &BuildAsrChatPanelState(const AppRuntime &runtime) {
+    AsrChatPanelCacheEntry &cache = GetAsrChatPanelCache(runtime);
+    const AsrChatPanelCacheKey key{
+        .asr_version = runtime.RuntimeAsrChatState::panel_state_version,
+        .plugin_version = runtime.plugin.panel_state_version,
+        .feature_asr_enabled = runtime.feature_flags.asr_enabled,
+        .feature_chat_enabled = runtime.feature_flags.chat_enabled,
+        .prefer_cloud_chat = runtime.prefer_cloud_chat,
+        .observability_log_enabled = runtime.observability.log_enabled,
+        .observability_log_interval_sec = runtime.observability.log_interval_sec,
+    };
+    if (cache.initialized && cache.key == key) {
+        return cache.state;
+    }
 
-AsrChatPanelState BuildAsrChatPanelState(const AppRuntime &runtime) {
-    AsrChatPanelState state{};
+    cache.key = key;
+    cache.initialized = true;
+    AsrChatPanelState &state = cache.state;
+    state = AsrChatPanelState{};
     state.asr_ready = runtime.asr_ready;
     state.feature_asr_enabled = runtime.feature_flags.asr_enabled;
     state.chat_ready = runtime.chat_ready;
@@ -708,6 +934,7 @@ void ApplyPerceptionPanelAction(AppRuntime &runtime, const PerceptionPanelAction
             runtime.perception_state.screen_capture_poll_interval_sec = action.float_value;
             break;
     }
+    runtime.perception_state.panel_state_version += 1;
 }
 
 void ApplyAsrChatPanelAction(AppRuntime &runtime, const AsrChatPanelAction &action) {
@@ -730,6 +957,14 @@ void ApplyAsrChatPanelAction(AppRuntime &runtime, const AsrChatPanelAction &acti
         case AsrChatPanelActionType::SendChat:
             break;
     }
+    if (action.type != AsrChatPanelActionType::SendChat) {
+        runtime.RuntimeAsrChatState::panel_state_version += 1;
+    }
 }
 
 }  // namespace desktoper2D
+
+
+
+
+

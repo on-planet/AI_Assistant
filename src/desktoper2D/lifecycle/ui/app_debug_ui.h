@@ -1,30 +1,56 @@
 #pragma once
 
+#include "desktoper2D/lifecycle/state/app_runtime_state.h"
+
 #include <string>
 #include <vector>
 
 namespace desktoper2D {
 
-struct AppRuntime;
+struct RuntimeUiView {
+    AppRuntime &runtime;
+    RuntimeCoreState &core;
+    RuntimeUiState &ui;
+    RuntimeEditorState &editor;
+    RuntimeServiceState &service;
+    RuntimePerceptionHostState &perception;
+    RuntimeAsrChatState &asr_chat;
+    RuntimePluginHostState &plugin;
+    RuntimeObservabilityStateHost &observability;
+};
 
-// UI 层：集中承载运行时调试与编辑面板渲染（可逐步迁移）
-void RenderWorkspaceToolbar(AppRuntime &runtime);
+inline RuntimeUiView BuildRuntimeUiView(AppRuntime &runtime) {
+    return RuntimeUiView{
+        .runtime = runtime,
+        .core = runtime,
+        .ui = runtime,
+        .editor = runtime,
+        .service = runtime,
+        .perception = runtime,
+        .asr_chat = runtime,
+        .plugin = runtime,
+        .observability = runtime,
+    };
+}
 
-void RenderRuntimeOverviewPanel(AppRuntime &runtime);
-void RenderRuntimeEditorPanel(AppRuntime &runtime);
-void RenderRuntimeEditorParamGroups(AppRuntime &runtime, const std::vector<int> &param_indices);
-void RenderRuntimeEditorBatchBind(AppRuntime &runtime, const std::string &group_label, const std::vector<int> &param_indices);
-void RenderRuntimeTimelinePanel(AppRuntime &runtime);
-void RenderRuntimePerceptionPanel(AppRuntime &runtime);
-void RenderRuntimeMappingPanel(AppRuntime &runtime);
-void RenderRuntimePerceptionPanel(AppRuntime &runtime);
-void RenderRuntimeOcrPanel(AppRuntime &runtime);
-void RenderRuntimeAsrPanel(AppRuntime &runtime);
-void RenderRuntimePluginWorkerPanel(AppRuntime &runtime);
-void RenderRuntimeChatPanel(AppRuntime &runtime);
-void RenderRuntimeErrorPanel(AppRuntime &runtime);
-void RenderRuntimePluginQuickControlPanel(AppRuntime &runtime);
-void RenderRuntimePluginDetailPanel(AppRuntime &runtime);
-void RenderRuntimeOpsPanel(AppRuntime &runtime);
+void RenderWorkspaceToolbar(RuntimeUiView view);
+
+void RenderRuntimeOverviewPanel(RuntimeUiView view);
+void RenderRuntimeEditorPanel(RuntimeUiView view);
+void RenderRuntimeEditorParamGroups(RuntimeUiView view, const std::vector<int> &param_indices);
+void RenderRuntimeEditorBatchBind(RuntimeUiView view,
+                                  const std::string &group_label,
+                                  const std::vector<int> &param_indices);
+void RenderRuntimeTimelinePanel(RuntimeUiView view);
+void RenderRuntimePerceptionPanel(RuntimeUiView view);
+void RenderRuntimeMappingPanel(RuntimeUiView view);
+void RenderRuntimeOcrPanel(RuntimeUiView view);
+void RenderRuntimeAsrPanel(RuntimeUiView view);
+void RenderRuntimePluginWorkerPanel(RuntimeUiView view);
+void RenderRuntimeChatPanel(RuntimeUiView view);
+void RenderRuntimeErrorPanel(RuntimeUiView view);
+void RenderRuntimePluginQuickControlPanel(RuntimeUiView view);
+void RenderRuntimePluginDetailPanel(RuntimeUiView view);
+void RenderRuntimeOpsPanel(RuntimeUiView view);
 
 }  // namespace desktoper2D

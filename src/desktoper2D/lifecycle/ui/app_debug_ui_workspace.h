@@ -5,6 +5,6 @@
 
 namespace desktoper2D {
 
-void RenderWorkspaceToolbar(AppRuntime &runtime);
+void RenderWorkspaceToolbar(RuntimeUiView view);
 
 }  // namespace desktoper2D

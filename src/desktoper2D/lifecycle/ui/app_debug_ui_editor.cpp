@@ -1,4 +1,4 @@
-#include "app_debug_ui_panel_state.h"
+﻿#include "app_debug_ui_panel_state.h"
 #include "desktoper2D/lifecycle/ui/app_debug_ui.h"
 
 #include <algorithm>
@@ -26,8 +26,9 @@ namespace desktoper2D {
 
     }  // namespace
 
-    void RenderRuntimeEditorPanel(AppRuntime &runtime) {
-        EditorPanelState panel_state = BuildEditorPanelState(runtime);
+    void RenderRuntimeEditorPanel(RuntimeUiView view) {
+        AppRuntime &runtime = view.runtime;
+        const EditorPanelState &panel_state = BuildEditorPanelState(runtime);
 
         ImGui::SeparatorText("Param Card (Editable)");
 
@@ -36,7 +37,7 @@ namespace desktoper2D {
             ApplyEditorPanelAction(runtime,
                                    EditorPanelAction{.type = EditorPanelActionType::SetShowDebugStats,
                                                      .bool_value = show_debug_stats});
-            panel_state = BuildEditorPanelState(runtime);
+            (void)BuildEditorPanelState(runtime);
         }
 
         bool manual_param_mode = panel_state.view.manual_param_mode;
@@ -44,7 +45,7 @@ namespace desktoper2D {
             ApplyEditorPanelAction(runtime,
                                    EditorPanelAction{.type = EditorPanelActionType::SetManualParamMode,
                                                      .bool_value = manual_param_mode});
-            panel_state = BuildEditorPanelState(runtime);
+            (void)BuildEditorPanelState(runtime);
         }
         if (!panel_state.view.edit_runtime_hint.empty()) {
             ImGui::TextColored(panel_state.view.edit_mode ? ImVec4(1.0f, 0.75f, 0.35f, 1.0f)
@@ -58,7 +59,7 @@ namespace desktoper2D {
             ApplyEditorPanelAction(runtime,
                                    EditorPanelAction{.type = EditorPanelActionType::SetHairSpringEnabled,
                                                      .bool_value = hair_spring_enabled});
-            panel_state = BuildEditorPanelState(runtime);
+            (void)BuildEditorPanelState(runtime);
         }
 
         bool simple_mask_enabled = panel_state.view.simple_mask_enabled;
@@ -66,7 +67,7 @@ namespace desktoper2D {
             ApplyEditorPanelAction(runtime,
                                    EditorPanelAction{.type = EditorPanelActionType::SetSimpleMaskEnabled,
                                                      .bool_value = simple_mask_enabled});
-            panel_state = BuildEditorPanelState(runtime);
+            (void)BuildEditorPanelState(runtime);
         }
 
         ImGui::SeparatorText("Head Pat Interaction");
@@ -80,14 +81,14 @@ namespace desktoper2D {
             ApplyEditorPanelAction(runtime,
                                    EditorPanelAction{.type = EditorPanelActionType::SetAutosaveEnabled,
                                                      .bool_value = autosave_enabled});
-            panel_state = BuildEditorPanelState(runtime);
+            (void)BuildEditorPanelState(runtime);
         }
         float autosave_interval = panel_state.view.autosave_interval_sec;
         if (ImGui::SliderFloat("Autosave Interval (sec)", &autosave_interval, 10.0f, 600.0f, "%.0f")) {
             ApplyEditorPanelAction(runtime,
                                    EditorPanelAction{.type = EditorPanelActionType::SetAutosaveIntervalSec,
                                                      .float_value = autosave_interval});
-            panel_state = BuildEditorPanelState(runtime);
+            (void)BuildEditorPanelState(runtime);
         }
         ImGui::Text("Next Autosave In: %.0f s", panel_state.view.autosave_remaining_sec);
         if (!panel_state.view.autosave_path.empty()) {
@@ -101,7 +102,7 @@ namespace desktoper2D {
             runtime.editor_autosave_recovery_prompted = true;
         }
         if (ImGui::BeginPopupModal("Autosave Recovery", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextWrapped("检测到未保存的自动保存文件，是否恢复编辑会话？");
+            ImGui::TextWrapped("妫€娴嬪埌鏈繚瀛樼殑鑷姩淇濆瓨鏂囦欢锛屾槸鍚︽仮澶嶇紪杈戜細璇濓紵");
             ImGui::Spacing();
             if (ImGui::Button("Recover Autosave")) {
                 ApplyEditorPanelAction(runtime, EditorPanelAction{.type = EditorPanelActionType::RecoverFromAutosave});
@@ -125,30 +126,30 @@ namespace desktoper2D {
             ApplyEditorPanelAction(runtime,
                                    EditorPanelAction{.type = EditorPanelActionType::SetFeatureSceneClassifierEnabled,
                                                      .bool_value = feature_scene_classifier_enabled});
-            panel_state = BuildEditorPanelState(runtime);
+            (void)BuildEditorPanelState(runtime);
         }
         bool feature_ocr_enabled = panel_state.view.feature_ocr_enabled;
         if (ImGui::Checkbox("Enable OCR", &feature_ocr_enabled)) {
             ApplyEditorPanelAction(runtime,
                                    EditorPanelAction{.type = EditorPanelActionType::SetFeatureOcrEnabled,
                                                      .bool_value = feature_ocr_enabled});
-            panel_state = BuildEditorPanelState(runtime);
+            (void)BuildEditorPanelState(runtime);
         }
         bool feature_face_emotion_enabled = panel_state.view.feature_face_emotion_enabled;
         if (ImGui::Checkbox("Enable Face Emotion", &feature_face_emotion_enabled)) {
             ApplyEditorPanelAction(runtime,
                                    EditorPanelAction{.type = EditorPanelActionType::SetFeatureFaceEmotionEnabled,
                                                      .bool_value = feature_face_emotion_enabled});
-            panel_state = BuildEditorPanelState(runtime);
+            (void)BuildEditorPanelState(runtime);
         }
         bool feature_asr_enabled = panel_state.view.feature_asr_enabled;
         if (ImGui::Checkbox("Enable ASR", &feature_asr_enabled)) {
             ApplyEditorPanelAction(runtime,
                                    EditorPanelAction{.type = EditorPanelActionType::SetFeatureAsrEnabled,
                                                      .bool_value = feature_asr_enabled});
-            panel_state = BuildEditorPanelState(runtime);
+            (void)BuildEditorPanelState(runtime);
         }
-        ImGui::TextDisabled("运行时 GUI 可通过 F1 或 FPS Overlay 快速开关；OCR 详细调参已收纳到“感知”页。");
+        ImGui::TextDisabled("Runtime GUI can still be toggled with F1 or the FPS overlay. OCR tuning lives in the perception panels.");
 
         ImGui::SeparatorText("Pick Strategy");
         bool pick_lock_filter_enabled = panel_state.view.pick_lock_filter_enabled;
@@ -156,14 +157,14 @@ namespace desktoper2D {
             ApplyEditorPanelAction(runtime,
                                    EditorPanelAction{.type = EditorPanelActionType::SetPickLockFilterEnabled,
                                                      .bool_value = pick_lock_filter_enabled});
-            panel_state = BuildEditorPanelState(runtime);
+            (void)BuildEditorPanelState(runtime);
         }
         bool pick_scope_filter_enabled = panel_state.view.pick_scope_filter_enabled;
         if (ImGui::Checkbox("Enable Scope Filter", &pick_scope_filter_enabled)) {
             ApplyEditorPanelAction(runtime,
                                    EditorPanelAction{.type = EditorPanelActionType::SetPickScopeFilterEnabled,
                                                      .bool_value = pick_scope_filter_enabled});
-            panel_state = BuildEditorPanelState(runtime);
+            (void)BuildEditorPanelState(runtime);
         }
         if (panel_state.view.pick_scope_filter_enabled) {
             const char *scope_modes[] = {"All", "Selected", "Children"};
@@ -172,7 +173,7 @@ namespace desktoper2D {
                 ApplyEditorPanelAction(runtime,
                                        EditorPanelAction{.type = EditorPanelActionType::SetPickScopeMode,
                                                          .int_value = pick_scope_mode});
-                panel_state = BuildEditorPanelState(runtime);
+                (void)BuildEditorPanelState(runtime);
             }
         }
         bool pick_name_filter_enabled = panel_state.view.pick_name_filter_enabled;
@@ -180,7 +181,7 @@ namespace desktoper2D {
             ApplyEditorPanelAction(runtime,
                                    EditorPanelAction{.type = EditorPanelActionType::SetPickNameFilterEnabled,
                                                      .bool_value = pick_name_filter_enabled});
-            panel_state = BuildEditorPanelState(runtime);
+            (void)BuildEditorPanelState(runtime);
         }
         if (panel_state.view.pick_name_filter_enabled) {
             char pick_name_filter[128] = "";
@@ -190,7 +191,7 @@ namespace desktoper2D {
                 ApplyEditorPanelAction(runtime,
                                        EditorPanelAction{.type = EditorPanelActionType::SetPickNameFilterText,
                                                          .text_value = pick_name_filter});
-                panel_state = BuildEditorPanelState(runtime);
+                (void)BuildEditorPanelState(runtime);
                                          }
         }
         bool pick_cycle_enabled = panel_state.view.pick_cycle_enabled;
@@ -198,17 +199,17 @@ namespace desktoper2D {
             ApplyEditorPanelAction(runtime,
                                    EditorPanelAction{.type = EditorPanelActionType::SetPickCycleEnabled,
                                                      .bool_value = pick_cycle_enabled});
-            panel_state = BuildEditorPanelState(runtime);
+            (void)BuildEditorPanelState(runtime);
         }
         ImGui::BeginDisabled(!panel_state.view.pick_cycle_enabled);
         if (ImGui::Button("Cycle Next")) {
             runtime.pick_cycle_offset += 1;
-            panel_state = BuildEditorPanelState(runtime);
+            (void)BuildEditorPanelState(runtime);
         }
         ImGui::SameLine();
         if (ImGui::Button("Reset Cycle")) {
             ApplyEditorPanelAction(runtime, EditorPanelAction{.type = EditorPanelActionType::ResetPickCycleOffset});
-            panel_state = BuildEditorPanelState(runtime);
+            (void)BuildEditorPanelState(runtime);
         }
         ImGui::EndDisabled();
         ImGui::TextDisabled("Cycle Offset: %d", panel_state.view.pick_cycle_offset);
@@ -216,13 +217,13 @@ namespace desktoper2D {
         ImGui::SeparatorText("Param Panel Enhanced (Group/Search/Batch Bind)");
         if (!panel_state.view.model_loaded) {
             RenderUnifiedEmptyState("editor_no_model_empty_state",
-                                    "无模型",
-                                    "当前尚未加载模型，参数分组、批量绑定与编辑能力暂不可用。",
+                                    "No model loaded",
+                                    "Load a model before using parameter grouping, batch bind, or editor controls.",
                                     ImVec4(0.70f, 0.78f, 1.0f, 1.0f));
         } else if (!panel_state.view.has_model_params) {
             RenderUnifiedEmptyState("editor_no_params_empty_state",
-                                    "无参数",
-                                    "当前模型没有可编辑参数，请先检查模型参数定义或导入结果。",
+                                    "No editable params",
+                                    "The loaded model does not expose editable parameters.",
                                     ImVec4(0.70f, 0.78f, 1.0f, 1.0f));
         } else {
             const bool panel_open = ImGui::CollapsingHeader(
@@ -232,7 +233,7 @@ namespace desktoper2D {
                 ApplyEditorPanelAction(runtime,
                                        EditorPanelAction{.type = EditorPanelActionType::ToggleParamPanelExpanded,
                                                          .bool_value = panel_open});
-                panel_state = BuildEditorPanelState(runtime);
+                (void)BuildEditorPanelState(runtime);
             }
 
             if (panel_open) {
@@ -242,7 +243,7 @@ namespace desktoper2D {
                     ApplyEditorPanelAction(runtime,
                                            EditorPanelAction{.type = EditorPanelActionType::SetParamGroupMode,
                                                              .int_value = param_group_mode});
-                    panel_state = BuildEditorPanelState(runtime);
+                    (void)BuildEditorPanelState(runtime);
                 }
 
                 char param_search[128] = "";
@@ -252,7 +253,7 @@ namespace desktoper2D {
                     ApplyEditorPanelAction(runtime,
                                            EditorPanelAction{.type = EditorPanelActionType::SetParamSearch,
                                                              .text_value = param_search});
-                    panel_state = BuildEditorPanelState(runtime);
+                    (void)BuildEditorPanelState(runtime);
                                              }
                 if (!panel_state.view.param_search.empty()) {
                     ImGui::Text("Search Hits: %d / %d",
@@ -267,7 +268,7 @@ namespace desktoper2D {
                     ApplyEditorPanelAction(runtime,
                                            EditorPanelAction{.type = EditorPanelActionType::ToggleParamQuickExpanded,
                                                              .bool_value = quick_open});
-                    panel_state = BuildEditorPanelState(runtime);
+                    (void)BuildEditorPanelState(runtime);
                 }
                 if (quick_open) {
                     if (panel_state.view.quick_param_items.empty()) {
@@ -276,19 +277,19 @@ namespace desktoper2D {
                         if (ImGui::Button("Group -> Default")) {
                             ApplyEditorPanelAction(runtime,
                                                    EditorPanelAction{.type = EditorPanelActionType::SetGroupTargetsToDefault});
-                            panel_state = BuildEditorPanelState(runtime);
+                            (void)BuildEditorPanelState(runtime);
                         }
                         ImGui::SameLine();
                         if (ImGui::Button("Group -> Min")) {
                             ApplyEditorPanelAction(runtime,
                                                    EditorPanelAction{.type = EditorPanelActionType::SetGroupTargetsToMin});
-                            panel_state = BuildEditorPanelState(runtime);
+                            (void)BuildEditorPanelState(runtime);
                         }
                         ImGui::SameLine();
                         if (ImGui::Button("Group -> Max")) {
                             ApplyEditorPanelAction(runtime,
                                                    EditorPanelAction{.type = EditorPanelActionType::SetGroupTargetsToMax});
-                            panel_state = BuildEditorPanelState(runtime);
+                            (void)BuildEditorPanelState(runtime);
                         }
 
                         if (ImGui::BeginTable("quick_param_table",
@@ -309,7 +310,7 @@ namespace desktoper2D {
                                     ApplyEditorPanelAction(runtime,
                                                            EditorPanelAction{.type = EditorPanelActionType::SelectParam,
                                                                              .int_value = item.param_index});
-                                    panel_state = BuildEditorPanelState(runtime);
+                                    (void)BuildEditorPanelState(runtime);
                                 }
                                 ImGui::TableSetColumnIndex(1);
                                 if (ImGui::SliderFloat("##quick_target",
@@ -321,7 +322,7 @@ namespace desktoper2D {
                                                            EditorPanelAction{.type = EditorPanelActionType::SetParamTargetValue,
                                                                              .int_value = item.param_index,
                                                                              .float_value = target_value});
-                                    panel_state = BuildEditorPanelState(runtime);
+                                    (void)BuildEditorPanelState(runtime);
                                                        }
                                 ImGui::PopID();
                             }
@@ -345,7 +346,7 @@ namespace desktoper2D {
                                 ApplyEditorPanelAction(runtime,
                                                        EditorPanelAction{.type = EditorPanelActionType::SelectParamGroup,
                                                                          .int_value = i});
-                                panel_state = BuildEditorPanelState(runtime);
+                                (void)BuildEditorPanelState(runtime);
                             }
                             if (option.search_hit && !panel_state.view.param_search.empty()) {
                                 ImGui::PopStyleColor();
@@ -373,7 +374,7 @@ namespace desktoper2D {
                         ApplyEditorPanelAction(runtime,
                                                EditorPanelAction{.type = EditorPanelActionType::ToggleParamGroupTableExpanded,
                                                                  .bool_value = group_table_open});
-                        panel_state = BuildEditorPanelState(runtime);
+                        (void)BuildEditorPanelState(runtime);
                     }
                     if (group_table_open) {
                         if (ImGui::BeginTable("selected_group_param_table",
@@ -399,7 +400,7 @@ namespace desktoper2D {
                                     ApplyEditorPanelAction(runtime,
                                                            EditorPanelAction{.type = EditorPanelActionType::SelectParam,
                                                                              .int_value = row.param_index});
-                                    panel_state = BuildEditorPanelState(runtime);
+                                    (void)BuildEditorPanelState(runtime);
                                 }
                                 ImGui::TableSetColumnIndex(1);
                                 ImGui::Text("%.3f", row.min_value);
@@ -415,7 +416,7 @@ namespace desktoper2D {
                                                            EditorPanelAction{.type = EditorPanelActionType::SetParamTargetValue,
                                                                              .int_value = row.param_index,
                                                                              .float_value = target_value});
-                                    panel_state = BuildEditorPanelState(runtime);
+                                    (void)BuildEditorPanelState(runtime);
                                 }
                                 ImGui::PopID();
                             }
@@ -430,7 +431,7 @@ namespace desktoper2D {
                         ApplyEditorPanelAction(runtime,
                                                EditorPanelAction{.type = EditorPanelActionType::ToggleParamBatchBindExpanded,
                                                                  .bool_value = batch_bind_open});
-                        panel_state = BuildEditorPanelState(runtime);
+                        (void)BuildEditorPanelState(runtime);
                     }
                     if (batch_bind_open) {
                         const auto &batch_bind = panel_state.view.batch_bind;
@@ -446,7 +447,7 @@ namespace desktoper2D {
                                 ApplyEditorPanelAction(runtime,
                                                        EditorPanelAction{.type = EditorPanelActionType::SetBatchBindTemplateIndex,
                                                                          .int_value = 0});
-                                panel_state = BuildEditorPanelState(runtime);
+                                (void)BuildEditorPanelState(runtime);
                             }
                             for (int i = 0; i < static_cast<int>(templates.size()); ++i) {
                                 const bool selected = bind_template_index == (i + 1);
@@ -454,7 +455,7 @@ namespace desktoper2D {
                                     ApplyEditorPanelAction(runtime,
                                                            EditorPanelAction{.type = EditorPanelActionType::SetBatchBindTemplateIndex,
                                                                              .int_value = i + 1});
-                                    panel_state = BuildEditorPanelState(runtime);
+                                    (void)BuildEditorPanelState(runtime);
                                 }
                                 if (selected) ImGui::SetItemDefaultFocus();
                             }
@@ -467,35 +468,35 @@ namespace desktoper2D {
                             ApplyEditorPanelAction(runtime,
                                                    EditorPanelAction{.type = EditorPanelActionType::SetBatchBindPropType,
                                                                      .int_value = bind_prop_type});
-                            panel_state = BuildEditorPanelState(runtime);
+                            (void)BuildEditorPanelState(runtime);
                         }
                         float bind_in_min = panel_state.view.batch_bind.bind_in_min;
                         if (ImGui::SliderFloat("Bind In Min", &bind_in_min, -2.0f, 2.0f, "%.2f")) {
                             ApplyEditorPanelAction(runtime,
                                                    EditorPanelAction{.type = EditorPanelActionType::SetBatchBindInMin,
                                                                      .float_value = bind_in_min});
-                            panel_state = BuildEditorPanelState(runtime);
+                            (void)BuildEditorPanelState(runtime);
                         }
                         float bind_in_max = panel_state.view.batch_bind.bind_in_max;
                         if (ImGui::SliderFloat("Bind In Max", &bind_in_max, -2.0f, 2.0f, "%.2f")) {
                             ApplyEditorPanelAction(runtime,
                                                    EditorPanelAction{.type = EditorPanelActionType::SetBatchBindInMax,
                                                                      .float_value = bind_in_max});
-                            panel_state = BuildEditorPanelState(runtime);
+                            (void)BuildEditorPanelState(runtime);
                         }
                         float bind_out_min = panel_state.view.batch_bind.bind_out_min;
                         if (ImGui::SliderFloat("Bind Out Min", &bind_out_min, -180.0f, 180.0f, "%.2f")) {
                             ApplyEditorPanelAction(runtime,
                                                    EditorPanelAction{.type = EditorPanelActionType::SetBatchBindOutMin,
                                                                      .float_value = bind_out_min});
-                            panel_state = BuildEditorPanelState(runtime);
+                            (void)BuildEditorPanelState(runtime);
                         }
                         float bind_out_max = panel_state.view.batch_bind.bind_out_max;
                         if (ImGui::SliderFloat("Bind Out Max", &bind_out_max, -180.0f, 180.0f, "%.2f")) {
                             ApplyEditorPanelAction(runtime,
                                                    EditorPanelAction{.type = EditorPanelActionType::SetBatchBindOutMax,
                                                                      .float_value = bind_out_max});
-                            panel_state = BuildEditorPanelState(runtime);
+                            (void)BuildEditorPanelState(runtime);
                         }
 
                         if (!panel_state.view.batch_bind.validation.valid) {
@@ -511,7 +512,7 @@ namespace desktoper2D {
                         if (ImGui::Button("Apply Batch Bind -> Selected Part")) {
                             ApplyEditorPanelAction(runtime,
                                                    EditorPanelAction{.type = EditorPanelActionType::ApplyBatchBindToSelectedPart});
-                            panel_state = BuildEditorPanelState(runtime);
+                            (void)BuildEditorPanelState(runtime);
                         }
                         ImGui::EndDisabled();
                         ImGui::SameLine();
@@ -520,14 +521,14 @@ namespace desktoper2D {
                         if (ImGui::Button("Apply Batch Bind -> All Parts")) {
                             ApplyEditorPanelAction(runtime,
                                                    EditorPanelAction{.type = EditorPanelActionType::ApplyBatchBindToAllParts});
-                            panel_state = BuildEditorPanelState(runtime);
+                            (void)BuildEditorPanelState(runtime);
                         }
                         ImGui::EndDisabled();
                     }
                 } else {
                     RenderUnifiedEmptyState("editor_filtered_no_params_empty_state",
-                                            "无参数",
-                                            "当前搜索或分组条件下没有匹配参数，请调整关键字或切换分组方式。",
+                                            "No matching params",
+                                            "No parameters match the current search or grouping filters.",
                                             ImVec4(0.70f, 0.78f, 1.0f, 1.0f));
                 }
             }
@@ -535,8 +536,8 @@ namespace desktoper2D {
             ImGui::SeparatorText("Command History");
             if (panel_state.view.history_entries.empty()) {
                 RenderUnifiedEmptyState("editor_history_empty_state",
-                                        "无历史",
-                                        "当前没有可用的编辑命令历史，执行一次变更后即可查看差异预览与跳转恢复。",
+                                        "No history yet",
+                                        "Make an edit to populate command history and diff preview.",
                                         ImVec4(0.70f, 0.78f, 1.0f, 1.0f));
                 return;
             }
@@ -564,14 +565,14 @@ namespace desktoper2D {
                                                EditorPanelAction{.type = EditorPanelActionType::SelectHistoryIndex,
                                                                  .int_value = entry.index,
                                                                  .int_value2 = max_index});
-                        panel_state = BuildEditorPanelState(runtime);
+                        (void)BuildEditorPanelState(runtime);
                     }
                     ImGui::TableSetColumnIndex(2);
                     if (ImGui::Button("Jump")) {
                         ApplyEditorPanelAction(runtime,
                                                EditorPanelAction{.type = EditorPanelActionType::JumpToHistoryIndex,
                                                                  .int_value = entry.target_undo_size});
-                        panel_state = BuildEditorPanelState(runtime);
+                        (void)BuildEditorPanelState(runtime);
                     }
                     ImGui::PopID();
                 }
@@ -582,7 +583,7 @@ namespace desktoper2D {
             ImGui::SeparatorText("Command Diff Preview");
             std::string history_detail = panel_state.view.history_detail;
             if (history_detail.empty()) {
-                history_detail = "请选择一条历史记录查看差异。";
+                history_detail = "Select a history entry to inspect its diff.";
             }
             RenderLongTextBlock("History Detail", "editor_history_detail", &history_detail, 10, 140.0f);
         }
@@ -590,3 +591,4 @@ namespace desktoper2D {
 
     }  // namespace desktoper2D
 }
+

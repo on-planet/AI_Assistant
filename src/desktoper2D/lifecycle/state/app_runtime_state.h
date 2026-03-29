@@ -303,7 +303,8 @@ struct WorkspacePanelState {
     bool manual_layout_reset_requested = false;
     bool manual_layout_pending_load = false;
     bool manual_layout_save_suppressed = false;
-    int manual_layout_stable_frames = 0;
+    bool manual_layout_save_pending = false;
+    float manual_layout_save_debounce_remaining_sec = 0.0f;
 };
 
 struct WorkspaceRuntimeState {
@@ -424,6 +425,8 @@ struct PluginRuntimeState {
     double latency_p50_ms = 0.0;
     double latency_p95_ms = 0.0;
     double success_rate = 0.0;
+    float stats_poll_accum_sec = 0.25f;
+    float stats_poll_interval_sec = 0.25f;
     int current_update_hz = 60;
     bool auto_disabled = false;
     std::string last_error;
@@ -433,6 +436,7 @@ struct PluginRuntimeState {
     double route_presence_score = 0.0;
     double route_total_score = 0.0;
     std::vector<std::string> route_rejected_summary;
+    std::uint64_t panel_state_version = 0;
 
     RuntimeErrorInfo error_info{};
 };
@@ -494,14 +498,16 @@ struct AsrAsyncRuntimeState {
     std::int64_t dropped_request_count = 0;
 };
 
-struct AppRuntime {
+struct RuntimeCoreState {
     RuntimeWindowState window_state{};
     RuntimeAudioState audio_state{};
 
     ModelRuntime model;
     bool model_loaded = false;
     float model_time = 0.0f;
+};
 
+struct RuntimeUiState {
     bool running = true;
     std::string runtime_ops_status;
 
@@ -515,7 +521,9 @@ struct AppRuntime {
     bool show_debug_stats = true;
     bool manual_param_mode = false;
     int selected_param_index = 0;
+};
 
+struct RuntimeEditorState {
     bool edit_mode = false;
     int selected_part_index = -1;
     bool dragging_part = false;
@@ -646,7 +654,9 @@ struct AppRuntime {
     bool gui_enabled = true;
 
     InteractionControllerState interaction_state{};
+};
 
+struct RuntimeServiceState {
     ReminderService reminder_service;
     bool reminder_ready = false;
     float reminder_poll_accum_sec = 0.0f;
@@ -658,7 +668,9 @@ struct AppRuntime {
     int reminder_page = 0;
     std::vector<ReminderItem> reminder_upcoming;
     std::string reminder_last_error;
+};
 
+struct RuntimePerceptionHostState {
     PerceptionPipeline perception_pipeline;
     PerceptionPipelineState perception_state;
 
@@ -687,7 +699,9 @@ struct AppRuntime {
     float face_map_out_head_yaw = 0.0f;
     float face_map_out_head_pitch = 0.0f;
     float face_map_out_eye_open = 0.0f;
+};
 
+struct RuntimeAsrChatState {
     std::unique_ptr<IAsrProvider> asr_provider;
     std::mutex asr_provider_mutex;
     std::uint64_t asr_provider_generation = 0;
@@ -726,9 +740,14 @@ struct AppRuntime {
     double asr_cloud_success_ratio = 0.0;
     double asr_wer_proxy = 0.0;
     std::string asr_last_switch_reason;
+    std::uint64_t panel_state_version = 0;
+};
 
+struct RuntimePluginHostState {
     PluginRuntimeState plugin{};
+};
 
+struct RuntimeObservabilityStateHost {
     RuntimeObservabilityState observability{};
 
     RuntimeErrorInfo asr_error_info{};
@@ -737,5 +756,14 @@ struct AppRuntime {
 
     TaskDecisionState task_decision{};
 };
+
+struct AppRuntime : RuntimeCoreState,
+                    RuntimeUiState,
+                    RuntimeEditorState,
+                    RuntimeServiceState,
+                    RuntimePerceptionHostState,
+                    RuntimeAsrChatState,
+                    RuntimePluginHostState,
+                    RuntimeObservabilityStateHost {};
 
 }  // namespace desktoper2D

@@ -87,6 +87,7 @@ void ApplyWorkerTuningFromJsonObject(const JsonValue &worker, PluginArtifactSpec
     read_int("recover_after_consecutive_successes", cfg.recover_after_consecutive_successes);
     read_double("avg_latency_budget_ms", cfg.avg_latency_budget_ms);
     read_size("latency_budget_window_size", cfg.latency_budget_window_size);
+    read_size("max_input_queue_size", cfg.max_input_queue_size);
     read_int("disable_after_consecutive_failures", cfg.disable_after_consecutive_failures);
     read_int("auto_recover_after_ms", cfg.auto_recover_after_ms);
 

@@ -1,8 +1,10 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -137,6 +139,53 @@ struct PerceptionInput {
 
 struct BehaviorOutput {
     int schema_version = 1;
+    struct RouteRejectedTrace {
+        std::string name;
+        float scene_score = 0.0f;
+        float task_score = 0.0f;
+        float structured_score = 0.0f;
+        float presence_score = 0.0f;
+        float total_score = 0.0f;
+    };
+
+    struct RouteTrace {
+        static constexpr std::size_t kMaxRejectedRoutes = 8;
+
+        bool valid = false;
+        std::string selected_route = "unknown";
+        bool selected_non_default = false;
+        float scene_score = 0.0f;
+        float task_score = 0.0f;
+        float structured_score = 0.0f;
+        float presence_score = 0.0f;
+        float total_score = 0.0f;
+        int active_expert_count = 0;
+        float gating_temperature = 0.0f;
+        int postprocess_argmax_index = -1;
+        float postprocess_argmax_value = 0.0f;
+        bool postprocess_has_threshold = false;
+        bool postprocess_threshold_pass = false;
+        std::size_t rejected_count = 0;
+        std::array<RouteRejectedTrace, kMaxRejectedRoutes> rejected{};
+
+        void Reset() {
+            valid = false;
+            selected_route = "unknown";
+            selected_non_default = false;
+            scene_score = 0.0f;
+            task_score = 0.0f;
+            structured_score = 0.0f;
+            presence_score = 0.0f;
+            total_score = 0.0f;
+            active_expert_count = 0;
+            gating_temperature = 0.0f;
+            postprocess_argmax_index = -1;
+            postprocess_argmax_value = 0.0f;
+            postprocess_has_threshold = false;
+            postprocess_threshold_pass = false;
+            rejected_count = 0;
+        }
+    };
 
     // 行为输出 schema：
     // - key: 参数/控制 id（如 "ParamAngleX"、"window.opacity"）
@@ -151,6 +200,16 @@ struct BehaviorOutput {
 
     // 扩展事件/标签输出（可选，供上层订阅）。
     std::unordered_map<std::string, float> event_scores;
+    RouteTrace route_trace{};
+
+    void ClearPreservingCapacity() {
+        param_targets.clear();
+        param_weights.clear();
+        event_scores.clear();
+        trigger_blink = false;
+        trigger_idle_shift = false;
+        route_trace.Reset();
+    }
 };
 
 enum class PluginStatus {
@@ -308,6 +367,7 @@ struct PluginArtifactSpec {
         int recover_after_consecutive_successes = 24;
         double avg_latency_budget_ms = 8.0;
         std::size_t latency_budget_window_size = 24;
+        std::size_t max_input_queue_size = 1;
         int disable_after_consecutive_failures = 24;
         int auto_recover_after_ms = 5000;
     } worker_tuning;
@@ -349,6 +409,7 @@ struct PluginWorkerConfig {
     int recover_after_consecutive_successes = 24;
     double avg_latency_budget_ms = 8.0;
     std::size_t latency_budget_window_size = 24;
+    std::size_t max_input_queue_size = 1;
 
     // 自动禁用与恢复策略
     int disable_after_consecutive_failures = 24;
@@ -377,6 +438,9 @@ struct PluginWorkerStats {
     double latency_p95_ms = 0.0;
     double success_rate = 0.0;
     double timeout_rate = 0.0;
+    std::uint64_t dropped_input_count = 0;
+    std::size_t pending_input_count = 0;
+    std::size_t max_input_queue_size = 1;
     std::string last_error_code = "OK";
     std::string last_error;
 
@@ -406,6 +470,7 @@ struct PluginWorkerImpl {
     std::uint64_t internal_error_count = 0;
     std::uint64_t disable_count = 0;
     std::uint64_t recover_count = 0;
+    std::uint64_t dropped_input_count = 0;
     int current_update_hz = 60;
     int consecutive_timeout_count = 0;
     int consecutive_success_count = 0;
@@ -419,7 +484,12 @@ struct PluginWorkerImpl {
     std::string backend = "onnxruntime.cpu";
     int batch = 1;
     double last_latency_ms = 0.0;
+    double latency_p50_ms = 0.0;
+    double latency_p95_ms = 0.0;
+    double success_rate = 0.0;
+    double timeout_rate = 0.0;
     std::vector<double> latency_ring_ms;
+    std::vector<double> latency_quantile_scratch_ms;
     std::size_t latency_ring_head = 0;
     std::size_t latency_ring_size = 0;
     double latency_ring_sum_ms = 0.0;
@@ -482,17 +552,38 @@ struct PluginWorkerImpl {
         return latency_ring_sum_ms / static_cast<double>(latency_ring_size);
     }
 
-    std::vector<double> SnapshotLatency() const {
-        std::vector<double> out;
-        out.reserve(latency_ring_size);
+    void RefreshLatencyQuantiles() {
+        latency_p50_ms = 0.0;
+        latency_p95_ms = 0.0;
+        latency_quantile_scratch_ms.clear();
+        latency_quantile_scratch_ms.reserve(latency_ring_size);
         if (latency_ring_size == 0 || latency_ring_ms.empty()) {
-            return out;
+            return;
         }
         const std::size_t cap = latency_ring_ms.size();
         for (std::size_t i = 0; i < latency_ring_size; ++i) {
-            out.push_back(latency_ring_ms[(latency_ring_head + i) % cap]);
+            latency_quantile_scratch_ms.push_back(latency_ring_ms[(latency_ring_head + i) % cap]);
         }
-        return out;
+        std::sort(latency_quantile_scratch_ms.begin(), latency_quantile_scratch_ms.end());
+        const std::size_t last = latency_quantile_scratch_ms.size() - 1;
+        const std::size_t p50_idx = static_cast<std::size_t>(std::floor(0.50 * static_cast<double>(last)));
+        const std::size_t p95_idx = static_cast<std::size_t>(std::floor(0.95 * static_cast<double>(last)));
+        latency_p50_ms = latency_quantile_scratch_ms[std::min(p50_idx, last)];
+        latency_p95_ms = latency_quantile_scratch_ms[std::min(p95_idx, last)];
+    }
+
+    void RefreshRates() {
+        success_rate = total_update_count > 0
+                           ? static_cast<double>(success_count) / static_cast<double>(total_update_count)
+                           : 0.0;
+        timeout_rate = total_update_count > 0
+                           ? static_cast<double>(timeout_count) / static_cast<double>(total_update_count)
+                           : 0.0;
+    }
+
+    void RefreshStatsSnapshot() {
+        RefreshLatencyQuantiles();
+        RefreshRates();
     }
 };
 

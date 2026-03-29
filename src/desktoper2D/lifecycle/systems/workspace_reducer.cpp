@@ -4,6 +4,15 @@
 
 namespace desktoper2D {
 
+namespace {
+
+void ClearManualLayoutSaveRequest(WorkspacePanelState &panels) {
+    panels.manual_layout_save_pending = false;
+    panels.manual_layout_save_debounce_remaining_sec = 0.0f;
+}
+
+}  // namespace
+
 void ReduceSwitchWorkspaceMode(AppRuntime &runtime, const UiCommand &cmd) {
     auto &workspace = runtime.workspace_ui;
     auto &panels = workspace.panels;
@@ -25,6 +34,7 @@ void ReduceSwitchWorkspaceMode(AppRuntime &runtime, const UiCommand &cmd) {
         panels.preset_apply_requested = false;
         workspace.dock_rebuild_requested = true;
         panels.last_applied_mode = static_cast<WorkspaceMode>(-1);
+        ClearManualLayoutSaveRequest(panels);
     }
 }
 
@@ -33,6 +43,7 @@ void ReduceApplyPresetLayout(AppRuntime &runtime, const UiCommand &) {
     runtime.workspace_ui.panels.preset_apply_requested = true;
     runtime.workspace_ui.dock_rebuild_requested = true;
     runtime.workspace_ui.panels.last_applied_mode = static_cast<WorkspaceMode>(-1);
+    ClearManualLayoutSaveRequest(runtime.workspace_ui.panels);
 }
 
 void ReduceResetManualLayout(AppRuntime &runtime, const UiCommand &) {
@@ -46,6 +57,7 @@ void ReduceResetManualLayout(AppRuntime &runtime, const UiCommand &) {
     panels.preset_apply_requested = true;
     workspace.dock_rebuild_requested = true;
     panels.last_applied_mode = static_cast<WorkspaceMode>(-1);
+    ClearManualLayoutSaveRequest(panels);
 }
 
 void ReduceToggleManualLayout(AppRuntime &runtime, const UiCommand &cmd) {
@@ -63,6 +75,7 @@ void ReduceToggleManualLayout(AppRuntime &runtime, const UiCommand &cmd) {
         panels.preset_apply_requested = true;
         workspace.dock_rebuild_requested = true;
     }
+    ClearManualLayoutSaveRequest(panels);
 }
 
 void ReduceForceDockRebuild(AppRuntime &runtime, const UiCommand &) {
@@ -70,6 +83,7 @@ void ReduceForceDockRebuild(AppRuntime &runtime, const UiCommand &) {
     runtime.workspace_ui.panels.preset_apply_requested =
         runtime.workspace_ui.panels.layout_mode == WorkspaceLayoutMode::Preset;
     runtime.workspace_ui.panels.last_applied_mode = static_cast<WorkspaceMode>(-1);
+    ClearManualLayoutSaveRequest(runtime.workspace_ui.panels);
 }
 
 }  // namespace desktoper2D

@@ -452,9 +452,9 @@ struct AsrChatPanelAction {
 };
 
 TimelinePanelState BuildTimelinePanelState(const AppRuntime &runtime);
-EditorPanelState BuildEditorPanelState(const AppRuntime &runtime);
-PerceptionPanelState BuildPerceptionPanelState(const AppRuntime &runtime);
-AsrChatPanelState BuildAsrChatPanelState(const AppRuntime &runtime);
+const EditorPanelState &BuildEditorPanelState(const AppRuntime &runtime);
+const PerceptionPanelState &BuildPerceptionPanelState(const AppRuntime &runtime);
+const AsrChatPanelState &BuildAsrChatPanelState(const AppRuntime &runtime);
 
 TimelineInteractionSnapshot GetTimelineInteractionSnapshot();
 void RestoreTimelineSelectionFromHistory(AppRuntime &runtime, const std::vector<std::uint64_t> &selected_ids);

@@ -75,6 +75,7 @@ struct TimelineKeyframe {
 struct ModelParameter {
     std::string id;
     FloatParam param;
+    float interp_speed = -1.0f;
 };
 
 struct AnimationChannel {
@@ -197,6 +198,16 @@ struct ModelRuntime {
     // 用于“参数和基础变换都未变化时跳过重算”。
     std::vector<float> cached_param_values;
     std::vector<float> cached_part_base_signature;  // 每个 part 7 个值：pos/rot/scale/pivot/opacity
+    std::vector<float> animation_channel_targets_scratch;
+    std::vector<float> part_base_signature_scratch;
+    std::vector<float> world_pos_x_scratch;
+    std::vector<float> world_pos_y_scratch;
+    std::vector<float> world_rot_scratch;
+    std::vector<float> world_scale_x_scratch;
+    std::vector<float> world_scale_y_scratch;
+    std::vector<float> world_opacity_scratch;
+    std::vector<std::uint8_t> world_visit_scratch;
+    std::vector<int> world_resolve_stack_scratch;
 
     // 脏区优化：仅更新发生变化的 part
     std::vector<std::uint8_t> part_dirty_flags;

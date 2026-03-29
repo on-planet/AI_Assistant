@@ -105,6 +105,7 @@ bool SwitchAsrProviderByName(AppRuntime &runtime, const std::string &name, std::
     runtime.asr_ready = true;
     runtime.asr_last_error.clear();
     ClearRuntimeError(runtime.asr_error_info);
+    runtime.RuntimeAsrChatState::panel_state_version += 1;
     AppendPluginLog(runtime, "asr:" + it->name, PluginLogLevel::Info, "asr switch ok");
     if (out_error) out_error->clear();
     return true;

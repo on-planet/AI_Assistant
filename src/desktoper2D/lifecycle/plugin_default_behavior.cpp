@@ -56,7 +56,9 @@ public:
 
         elapsed_time_sec_ += std::max(0.0f, 1.0f / 60.0f);
 
-        out = BehaviorOutput{};
+        out.ClearPreservingCapacity();
+        out.param_targets.reserve(4);
+        out.param_weights.reserve(4);
         const float pulse = 0.1f * SDL_sinf(static_cast<float>(elapsed_time_sec_) * 1.2f);
         out.param_targets["window.opacity"] = std::clamp(base_opacity_ + pulse, 0.05f, 1.0f);
         out.param_weights["window.opacity"] = 1.0f;

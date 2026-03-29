@@ -46,8 +46,7 @@ void ComputeInteractionBehaviorOutput(InteractionControllerState &state,
                                       const InteractionControllerContext &ctx,
                                       float dt_sec,
                                       BehaviorOutput &out) {
-    out.param_targets.clear();
-    out.param_weights.clear();
+    out.ClearPreservingCapacity();
 
     const float dt = std::max(0.0f, dt_sec);
     state.fsm_time_sec += dt;
@@ -237,7 +236,7 @@ void BuildInteractionBehaviorOutput(InteractionControllerState &state,
                                     float dt_sec,
                                     BehaviorOutput &out) {
     if (!ctx.model_loaded || !ctx.model || !ctx.has_model_params || !ctx.has_model_params()) {
-        out = BehaviorOutput{};
+        out.ClearPreservingCapacity();
         return;
     }
     ComputeInteractionBehaviorOutput(state, ctx, dt_sec, out);

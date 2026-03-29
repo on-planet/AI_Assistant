@@ -189,6 +189,14 @@ public:
         base_manual_param_mode_ = runtime_cfg.manual_param_mode;
         base_click_through_ = runtime_cfg.click_through;
         base_opacity_ = std::clamp(runtime_cfg.window_opacity, 0.05f, 1.0f);
+        input_tensor_shape_[0] = std::max<std::int64_t>(1, spec_.tensor_schema.batch);
+        input_tensor_shape_[1] = std::max<std::int64_t>(1, spec_.tensor_schema.feature_dim);
+        input_tensor_values_.assign(static_cast<std::size_t>(input_tensor_shape_[1]), 0.0f);
+        main_logits_scratch_.clear();
+        fused_logits_scratch_.clear();
+        blended_expert_logits_scratch_.clear();
+        active_expert_indices_scratch_.clear();
+        active_expert_indices_scratch_.reserve(spec_.expert_models.size());
 
         try {
             session_env_ = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "k2d_plugin_behavior");
@@ -269,45 +277,46 @@ public:
             return PluginStatus::InternalError;
         }
 
-        out = BehaviorOutput{};
+        out.ClearPreservingCapacity();
+        out.param_targets.reserve(4);
+        out.param_weights.reserve(4);
         const float presence = std::clamp(in.vision.user_presence, 0.0f, 1.0f);
 
         const RouteMatch route = route_decision_.Resolve(in);
         const float opacity_bias = route.opacity_bias;
 
-        std::vector<float> input_tensor_values = {
-            static_cast<float>(in.audio.level),
-            static_cast<float>(in.audio.pitch_hz),
-            static_cast<float>(in.audio.vad_prob),
-            static_cast<float>(in.vision.user_presence),
-            static_cast<float>(in.vision.head_yaw_deg),
-            static_cast<float>(in.vision.head_pitch_deg),
-            static_cast<float>(in.vision.head_roll_deg),
-            static_cast<float>(in.state.window_visible ? 1.0f : 0.0f),
-        };
+        const std::size_t expected_features = static_cast<std::size_t>(
+            std::max<std::int64_t>(1, spec_.tensor_schema.feature_dim));
+        if (input_tensor_values_.size() != expected_features) {
+            input_tensor_values_.assign(expected_features, 0.0f);
+        } else {
+            std::fill(input_tensor_values_.begin(), input_tensor_values_.end(), 0.0f);
+        }
+        if (expected_features > 0) input_tensor_values_[0] = static_cast<float>(in.audio.level);
+        if (expected_features > 1) input_tensor_values_[1] = static_cast<float>(in.audio.pitch_hz);
+        if (expected_features > 2) input_tensor_values_[2] = static_cast<float>(in.audio.vad_prob);
+        if (expected_features > 3) input_tensor_values_[3] = static_cast<float>(in.vision.user_presence);
+        if (expected_features > 4) input_tensor_values_[4] = static_cast<float>(in.vision.head_yaw_deg);
+        if (expected_features > 5) input_tensor_values_[5] = static_cast<float>(in.vision.head_pitch_deg);
+        if (expected_features > 6) input_tensor_values_[6] = static_cast<float>(in.vision.head_roll_deg);
+        if (expected_features > 7) input_tensor_values_[7] = static_cast<float>(in.state.window_visible ? 1.0f : 0.0f);
 
         auto run_session = [&](Ort::Session &sess, std::vector<float> &out_values, std::string *run_err) -> bool {
             try {
-                const std::size_t expected_features = static_cast<std::size_t>(
-                    std::max<std::int64_t>(1, spec_.tensor_schema.feature_dim));
-                if (input_tensor_values.size() != expected_features) {
+                if (input_tensor_values_.size() != expected_features) {
                     if (run_err) {
                         *run_err = "input feature mismatch: expected=" + std::to_string(expected_features) +
-                                   " actual=" + std::to_string(input_tensor_values.size());
+                                   " actual=" + std::to_string(input_tensor_values_.size());
                     }
                     return false;
                 }
 
-                const std::array<int64_t, 2> input_shape = {
-                    std::max<std::int64_t>(1, spec_.tensor_schema.batch),
-                    std::max<std::int64_t>(1, spec_.tensor_schema.feature_dim),
-                };
                 Ort::MemoryInfo mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
                 Ort::Value input_tensor = Ort::Value::CreateTensor<float>(mem_info,
-                                                                          input_tensor_values.data(),
-                                                                          input_tensor_values.size(),
-                                                                          input_shape.data(),
-                                                                          input_shape.size());
+                                                                          input_tensor_values_.data(),
+                                                                          input_tensor_values_.size(),
+                                                                          input_tensor_shape_.data(),
+                                                                          input_tensor_shape_.size());
                 const char *input_names[] = {spec_.tensor_schema.input_name.c_str()};
                 const char *output_names[] = {spec_.tensor_schema.output_name.c_str()};
                 auto outputs = sess.Run(Ort::RunOptions{nullptr}, input_names, &input_tensor, 1, output_names, 1);
@@ -318,7 +327,8 @@ public:
                 float *data = outputs[0].GetTensorMutableData<float>();
                 auto type_info = outputs[0].GetTensorTypeAndShapeInfo();
                 const std::size_t elem_count = type_info.GetElementCount();
-                out_values.assign(data, data + elem_count);
+                out_values.resize(elem_count);
+                std::copy(data, data + elem_count, out_values.begin());
                 return true;
             } catch (const std::exception &e) {
                 if (run_err) *run_err = e.what();
@@ -326,24 +336,15 @@ public:
             }
         };
 
-        std::vector<float> main_logits;
         std::string ort_err;
-        if (session_ && !run_session(*session_, main_logits, &ort_err)) {
+        if (session_ && !run_session(*session_, main_logits_scratch_, &ort_err)) {
             if (out_error) *out_error = std::string("ORT Run failed: ") + ort_err;
             return PluginStatus::InternalError;
         }
 
-        std::vector<float> fused_logits = main_logits;
+        fused_logits_scratch_ = main_logits_scratch_;
         int active_expert_count = 0;
-
-        struct ExpertForwardResult {
-            std::size_t expert_index = 0;
-            std::vector<float> logits;
-            float gating_score = 0.0f;
-            float softmax_weight = 0.0f;
-        };
-
-        std::vector<ExpertForwardResult> expert_results;
+        active_expert_indices_scratch_.clear();
         const float structured_confidence = std::clamp(
             0.5f * (in.routing.primary_structured_confidence + in.routing.secondary_structured_confidence),
             0.0f,
@@ -360,80 +361,84 @@ public:
             if (!expert.route_name.empty() && expert.route_name != route.name) {
                 continue;
             }
-            std::vector<float> expert_logits;
-            if (!run_session(*expert.session, expert_logits, nullptr)) {
+            if (!run_session(*expert.session, expert.logits_scratch, nullptr)) {
                 continue;
             }
-            if (expert_logits.size() != fused_logits.size()) {
+            if (expert.logits_scratch.size() != fused_logits_scratch_.size()) {
                 continue;
             }
 
             const float route_alignment = expert.route_name.empty() ? 0.0f : 1.0f;
             const float gating_score = route.total_score + structured_confidence + route_alignment;
             expert.last_gating_score = gating_score;
-            expert_results.push_back(ExpertForwardResult{
-                .expert_index = expert_idx,
-                .logits = std::move(expert_logits),
-                .gating_score = gating_score,
-                .softmax_weight = 0.0f,
-            });
+            active_expert_indices_scratch_.push_back(expert_idx);
         }
 
-        if (!expert_results.empty()) {
-            float max_logit = expert_results.front().gating_score / gating_temperature;
-            for (const auto &r : expert_results) {
-                max_logit = std::max(max_logit, r.gating_score / gating_temperature);
+        if (!active_expert_indices_scratch_.empty()) {
+            float max_logit =
+                expert_sessions_[active_expert_indices_scratch_.front()].last_gating_score / gating_temperature;
+            for (const std::size_t expert_idx : active_expert_indices_scratch_) {
+                max_logit = std::max(max_logit, expert_sessions_[expert_idx].last_gating_score / gating_temperature);
             }
 
             float sum_exp = 0.0f;
-            for (auto &r : expert_results) {
-                r.softmax_weight = std::exp((r.gating_score / gating_temperature) - max_logit);
-                sum_exp += r.softmax_weight;
+            for (const std::size_t expert_idx : active_expert_indices_scratch_) {
+                auto &expert = expert_sessions_[expert_idx];
+                expert.last_softmax_weight = std::exp((expert.last_gating_score / gating_temperature) - max_logit);
+                sum_exp += expert.last_softmax_weight;
             }
 
             if (sum_exp > 0.0f) {
-                for (auto &r : expert_results) {
-                    r.softmax_weight /= sum_exp;
-                    expert_sessions_[r.expert_index].last_softmax_weight = r.softmax_weight;
+                if (blended_expert_logits_scratch_.size() != fused_logits_scratch_.size()) {
+                    blended_expert_logits_scratch_.assign(fused_logits_scratch_.size(), 0.0f);
+                } else {
+                    std::fill(blended_expert_logits_scratch_.begin(), blended_expert_logits_scratch_.end(), 0.0f);
                 }
 
-                std::vector<float> blended_expert_logits(fused_logits.size(), 0.0f);
-                for (const auto &r : expert_results) {
-                    for (std::size_t j = 0; j < blended_expert_logits.size(); ++j) {
-                        blended_expert_logits[j] += r.logits[j] * r.softmax_weight;
+                for (const std::size_t expert_idx : active_expert_indices_scratch_) {
+                    auto &expert = expert_sessions_[expert_idx];
+                    expert.last_softmax_weight /= sum_exp;
+                    for (std::size_t j = 0; j < blended_expert_logits_scratch_.size(); ++j) {
+                        blended_expert_logits_scratch_[j] += expert.logits_scratch[j] * expert.last_softmax_weight;
                     }
                 }
 
                 float expert_mix_ratio = 0.0f;
-                for (const auto &r : expert_results) {
-                    expert_mix_ratio += r.softmax_weight *
-                                        std::clamp(expert_sessions_[r.expert_index].fusion_weight, 0.0f, 1.0f);
+                for (const std::size_t expert_idx : active_expert_indices_scratch_) {
+                    const auto &expert = expert_sessions_[expert_idx];
+                    expert_mix_ratio += expert.last_softmax_weight * std::clamp(expert.fusion_weight, 0.0f, 1.0f);
                 }
                 expert_mix_ratio = std::clamp(expert_mix_ratio, 0.0f, 1.0f);
 
-                for (std::size_t j = 0; j < fused_logits.size(); ++j) {
-                    fused_logits[j] = fused_logits[j] * (1.0f - expert_mix_ratio) +
-                                      blended_expert_logits[j] * expert_mix_ratio;
+                for (std::size_t j = 0; j < fused_logits_scratch_.size(); ++j) {
+                    fused_logits_scratch_[j] = fused_logits_scratch_[j] * (1.0f - expert_mix_ratio) +
+                                               blended_expert_logits_scratch_[j] * expert_mix_ratio;
                 }
-                active_expert_count = static_cast<int>(expert_results.size());
+                active_expert_count = static_cast<int>(active_expert_indices_scratch_.size());
             }
         }
-        out.event_scores["plugin.route." + route.name] = 1.0f;
-        out.event_scores["plugin.route.trace.scene_score"] = route.scene_score;
-        out.event_scores["plugin.route.trace.task_score"] = route.task_score;
-        out.event_scores["plugin.route.trace.structured_score"] = route.structured_score;
-        out.event_scores["plugin.route.trace.presence_score"] = route.presence_score;
-        out.event_scores["plugin.route.trace.total_score"] = route.total_score;
-        for (std::size_t i = 0; i < route.rejected.size(); ++i) {
+        out.route_trace.valid = true;
+        out.route_trace.selected_route = route.name;
+        out.route_trace.selected_non_default = (route.name != route_config_.default_route);
+        out.route_trace.scene_score = route.scene_score;
+        out.route_trace.task_score = route.task_score;
+        out.route_trace.structured_score = route.structured_score;
+        out.route_trace.presence_score = route.presence_score;
+        out.route_trace.total_score = route.total_score;
+        out.route_trace.active_expert_count = active_expert_count;
+        out.route_trace.gating_temperature = gating_temperature;
+        out.route_trace.rejected_count = std::min(route.rejected.size(), out.route_trace.rejected.size());
+        for (std::size_t i = 0; i < out.route_trace.rejected_count; ++i) {
             const auto &cand = route.rejected[i];
-            const std::string prefix = "plugin.route.trace.rejected." + std::to_string(i) + ".";
-            out.event_scores[prefix + cand.name] = cand.total_score;
-            out.event_scores[prefix + "scene_score"] = cand.scene_score;
-            out.event_scores[prefix + "task_score"] = cand.task_score;
-            out.event_scores[prefix + "structured_score"] = cand.structured_score;
-            out.event_scores[prefix + "presence_score"] = cand.presence_score;
+            auto &trace = out.route_trace.rejected[i];
+            trace.name = cand.name;
+            trace.scene_score = cand.scene_score;
+            trace.task_score = cand.task_score;
+            trace.structured_score = cand.structured_score;
+            trace.presence_score = cand.presence_score;
+            trace.total_score = cand.total_score;
         }
-        {
+        if (base_show_debug_stats_) {
             std::ostringstream oss;
             oss << "route_selected=" << route.name
                 << " scene_score=" << route.scene_score
@@ -459,22 +464,19 @@ public:
         out.param_weights["runtime.show_debug_stats"] = 1.0f;
         out.param_targets["runtime.manual_param_mode"] = base_manual_param_mode_ ? 1.0f : 0.0f;
         out.param_weights["runtime.manual_param_mode"] = 1.0f;
-        out.event_scores["plugin.models.count"] = static_cast<float>(1 + spec_.expert_models.size());
-        out.event_scores["plugin.experts.active_count"] = static_cast<float>(active_expert_count);
-        out.event_scores["plugin.expert.gating.temperature"] = gating_temperature;
-        out.event_scores["plugin.route.selected"] = (route.name == route_config_.default_route ? 0.0f : 1.0f);
 
-        if (fused_logits.empty()) {
-            fused_logits = {
+        if (fused_logits_scratch_.empty()) {
+            fused_logits_scratch_ = {
                 std::clamp(presence, 0.0f, 1.0f),
                 std::clamp(1.0f - presence, 0.0f, 1.0f),
                 std::clamp(0.25f + opacity_bias, 0.0f, 1.0f),
             };
         }
-        const PostprocessTrace trace = ExecutePostprocessPipeline(fused_logits, postprocess_);
-        out.event_scores["plugin.postprocess.argmax_index"] = static_cast<float>(trace.argmax_index);
-        out.event_scores["plugin.postprocess.argmax_value"] = trace.argmax_value;
-        out.event_scores["plugin.postprocess.threshold_pass"] = trace.threshold_pass ? 1.0f : 0.0f;
+        const PostprocessTrace trace = ExecutePostprocessPipeline(fused_logits_scratch_, postprocess_);
+        out.route_trace.postprocess_argmax_index = trace.argmax_index;
+        out.route_trace.postprocess_argmax_value = trace.argmax_value;
+        out.route_trace.postprocess_has_threshold = trace.has_threshold;
+        out.route_trace.postprocess_threshold_pass = trace.threshold_pass;
 
         out.trigger_blink = trace.has_threshold ? trace.threshold_pass : (presence > 0.8f);
         return PluginStatus::Ok;
@@ -493,6 +495,7 @@ private:
         float fusion_weight = 0.35f;
         float last_gating_score = 0.0f;
         float last_softmax_weight = 0.0f;
+        std::vector<float> logits_scratch;
         std::unique_ptr<Ort::Session> session;
     };
 
@@ -509,6 +512,12 @@ private:
     std::string resolved_backend_ = "cpu";
     std::unique_ptr<Ort::Env> session_env_;
     std::unique_ptr<Ort::Session> session_;
+    std::array<int64_t, 2> input_tensor_shape_ = {1, 8};
+    std::vector<float> input_tensor_values_;
+    std::vector<float> main_logits_scratch_;
+    std::vector<float> fused_logits_scratch_;
+    std::vector<float> blended_expert_logits_scratch_;
+    std::vector<std::size_t> active_expert_indices_scratch_;
     std::vector<ExpertRuntime> expert_sessions_;
 };
 

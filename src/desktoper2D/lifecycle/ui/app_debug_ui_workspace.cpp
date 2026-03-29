@@ -7,7 +7,8 @@
 
 namespace desktoper2D {
 
-void RenderWorkspaceToolbar(AppRuntime &runtime) {
+void RenderWorkspaceToolbar(RuntimeUiView view) {
+    AppRuntime &runtime = view.runtime;
     const UiCommandBridge bridge = BuildUiCommandBridge(runtime);
     const WorkspaceReadModel model = BuildWorkspaceReadModel(runtime);
     const char *workspace_label = model.workspace_label;

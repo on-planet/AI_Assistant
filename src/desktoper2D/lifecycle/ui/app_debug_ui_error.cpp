@@ -43,7 +43,8 @@ std::vector<std::string> SplitExtraOnnxLines(const char *text) {
 
 }
 
-void RenderRuntimePluginQuickControlPanel(AppRuntime &runtime) {
+void RenderRuntimePluginQuickControlPanel(RuntimeUiView view) {
+    AppRuntime &runtime = view.runtime;
     ImGui::SeparatorText("行为插件");
     ImGui::SameLine();
     if (ImGui::Button("刷新##behavior_plugins")) {
@@ -669,7 +670,8 @@ void RenderRuntimePluginQuickControlPanel(AppRuntime &runtime) {
 
 }
 
-void RenderRuntimeErrorPanel(AppRuntime &runtime) {
+void RenderRuntimeErrorPanel(RuntimeUiView view) {
+    AppRuntime &runtime = view.runtime;
     static int error_filter_idx = 1; // 默认 Non-OK
     const char *filters[] = {"All", "Non-OK", "Failed", "Degraded"};
     error_filter_idx = std::clamp(error_filter_idx, 0, 3);

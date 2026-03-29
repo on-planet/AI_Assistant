@@ -22,813 +22,129 @@ RuntimeErrorCode ClassifyInitErrorCode(const std::string &err) {
     return ClassifyRuntimeErrorCodeFromDetail(err, RuntimeErrorCode::InitFailed);
 }
 
-}  // namespace
-
-#if 0
-
-void PerceptionPipeline::ResetSceneAsyncState() noexcept {
-    {
-        std::lock_guard<std::mutex> lk(scene_mutex_);
-        scene_packet_ = AsyncScenePacket{};
-    }
-    {
-        std::lock_guard<std::mutex> lk(scene_task_mutex_);
-        scene_task_ = SceneTaskRequest{};
-    }
-    scene_running_.store(false, std::memory_order_release);
-    scene_applied_seq_ = scene_submit_seq_.load(std::memory_order_acquire);
-}
-
-void PerceptionPipeline::ResetOcrAsyncState() noexcept {
-    {
-        std::lock_guard<std::mutex> lk(ocr_mutex_);
-        ocr_packet_ = AsyncOcrPacket{};
-    }
-    {
-        std::lock_guard<std::mutex> lk(ocr_task_mutex_);
-        ocr_task_ = OcrTaskRequest{};
-    }
-    ocr_running_.store(false, std::memory_order_release);
-    ocr_applied_seq_ = ocr_submit_seq_.load(std::memory_order_acquire);
-}
-
-void PerceptionPipeline::ResetFaceAsyncState() noexcept {
-    {
-        std::lock_guard<std::mutex> lk(face_mutex_);
-        face_packet_ = AsyncFacePacket{};
-    }
-    {
-        std::lock_guard<std::mutex> lk(face_task_mutex_);
-        face_task_ = FaceTaskRequest{};
-    }
-    face_running_.store(false, std::memory_order_release);
-    face_applied_seq_ = face_submit_seq_.load(std::memory_order_acquire);
-}
-
-void PerceptionPipeline::StartSceneWorker() {
-    if (scene_worker_.joinable()) {
-        return;
-    }
-
-    scene_worker_stop_.store(false, std::memory_order_release);
-    scene_worker_ = std::thread([this]() {
-        while (true) {
-            SceneTaskRequest req;
-            {
-                std::unique_lock<std::mutex> lk(scene_task_mutex_);
-                scene_task_cv_.wait(lk, [this]() {
-                    return scene_worker_stop_.load(std::memory_order_acquire) || scene_task_.pending;
-                });
-                if (scene_worker_stop_.load(std::memory_order_acquire) && !scene_task_.pending) {
-                    break;
-                }
-                req = std::move(scene_task_);
-                scene_task_ = SceneTaskRequest{};
-            }
-
-            AsyncScenePacket local{};
-            local.ready = true;
-            local.seq = req.seq;
-            const auto t0 = std::chrono::steady_clock::now();
-            local.ok = scene_classifier_.Classify(req.frame, local.result, &local.error);
-            const auto t1 = std::chrono::steady_clock::now();
-            local.elapsed_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
-
-            {
-                std::lock_guard<std::mutex> lk(scene_mutex_);
-                if (!scene_packet_.ready || local.seq >= scene_packet_.seq) {
-                    scene_packet_ = std::move(local);
-                }
-            }
-            scene_running_.store(false, std::memory_order_release);
-        }
-        scene_running_.store(false, std::memory_order_release);
-    });
-}
-
-void PerceptionPipeline::StartOcrWorker() {
-    if (ocr_worker_.joinable()) {
-        return;
-    }
-
-    ocr_worker_stop_.store(false, std::memory_order_release);
-    ocr_worker_ = std::thread([this]() {
-        while (true) {
-            OcrTaskRequest req;
-            {
-                std::unique_lock<std::mutex> lk(ocr_task_mutex_);
-                ocr_task_cv_.wait(lk, [this]() {
-                    return ocr_worker_stop_.load(std::memory_order_acquire) || ocr_task_.pending;
-                });
-                if (ocr_worker_stop_.load(std::memory_order_acquire) && !ocr_task_.pending) {
-                    break;
-                }
-                req = std::move(ocr_task_);
-                ocr_task_ = OcrTaskRequest{};
-            }
-
-            AsyncOcrPacket local{};
-            local.ready = true;
-            local.seq = req.seq;
-            const auto t0 = std::chrono::steady_clock::now();
-            local.ok = ocr_service_.Recognize(req.frame, &req.context, local.result, &local.error, &local.perf);
-            const auto t1 = std::chrono::steady_clock::now();
-            local.elapsed_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
-
-            {
-                std::lock_guard<std::mutex> lk(ocr_mutex_);
-                if (!ocr_packet_.ready || local.seq >= ocr_packet_.seq) {
-                    ocr_packet_ = std::move(local);
-                }
-            }
-            ocr_running_.store(false, std::memory_order_release);
-        }
-        ocr_running_.store(false, std::memory_order_release);
-    });
-}
-
-void PerceptionPipeline::StartFaceWorker() {
-    if (face_worker_.joinable()) {
-        return;
-    }
-
-    face_worker_stop_.store(false, std::memory_order_release);
-    face_worker_ = std::thread([this]() {
-        while (true) {
-            FaceTaskRequest req;
-            {
-                std::unique_lock<std::mutex> lk(face_task_mutex_);
-                face_task_cv_.wait(lk, [this]() {
-                    return face_worker_stop_.load(std::memory_order_acquire) || face_task_.pending;
-                });
-                if (face_worker_stop_.load(std::memory_order_acquire) && !face_task_.pending) {
-                    break;
-                }
-                req = std::move(face_task_);
-                face_task_ = FaceTaskRequest{};
-            }
-
-            AsyncFacePacket local{};
-            local.ready = true;
-            local.seq = req.seq;
-            const auto t0 = std::chrono::steady_clock::now();
-            local.ok = camera_facemesh_service_.RecognizeFromCamera(local.result, &local.error);
-            const auto t1 = std::chrono::steady_clock::now();
-            local.elapsed_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
-
-            {
-                std::lock_guard<std::mutex> lk(face_mutex_);
-                if (!face_packet_.ready || local.seq >= face_packet_.seq) {
-                    face_packet_ = std::move(local);
-                }
-            }
-            face_running_.store(false, std::memory_order_release);
-        }
-        face_running_.store(false, std::memory_order_release);
-    });
-}
-
-void PerceptionPipeline::StopSceneWorker() noexcept {
-    scene_worker_stop_.store(true, std::memory_order_release);
-    scene_classifier_.CancelPending();
-    {
-        std::lock_guard<std::mutex> lk(scene_task_mutex_);
-        scene_task_ = SceneTaskRequest{};
-    }
-    scene_task_cv_.notify_all();
-    if (scene_worker_.joinable()) {
-        scene_worker_.join();
-    }
-    ResetSceneAsyncState();
-}
-
-void PerceptionPipeline::StopOcrWorker() noexcept {
-    ocr_worker_stop_.store(true, std::memory_order_release);
-    ocr_service_.CancelPending();
-    {
-        std::lock_guard<std::mutex> lk(ocr_task_mutex_);
-        ocr_task_ = OcrTaskRequest{};
-    }
-    ocr_task_cv_.notify_all();
-    if (ocr_worker_.joinable()) {
-        ocr_worker_.join();
-    }
-    ResetOcrAsyncState();
-}
-
-void PerceptionPipeline::StopFaceWorker() noexcept {
-    face_worker_stop_.store(true, std::memory_order_release);
-    camera_facemesh_service_.CancelPending();
-    {
-        std::lock_guard<std::mutex> lk(face_task_mutex_);
-        face_task_ = FaceTaskRequest{};
-    }
-    face_task_cv_.notify_all();
-    if (face_worker_.joinable()) {
-        face_worker_.join();
-    }
-    ResetFaceAsyncState();
-}
-
-void PerceptionPipeline::StartWorkers() {
-    StartSceneWorker();
-    StartOcrWorker();
-    StartFaceWorker();
-}
-
-void PerceptionPipeline::StopWorkers() noexcept {
-    StopSceneWorker();
-    StopOcrWorker();
-    StopFaceWorker();
-}
-
-bool PerceptionPipeline::InitScreenCapture(PerceptionPipelineState &state, std::string *out_error) {
-    std::string capture_err;
-    state.screen_capture_ready = screen_capture_.Init(&capture_err);
-    if (!state.screen_capture_ready) {
-        state.screen_capture_last_error = capture_err;
-        RecordRuntimeError(state.capture_error_info,
-                           RuntimeErrorDomain::PerceptionCapture,
-                           RuntimeErrorCode::InitFailed,
-                           capture_err);
-        LogObsError(RuntimeErrorDomainName(state.capture_error_info.domain),
-                    RuntimeErrorCodeName(state.capture_error_info.code),
-                    "perception_pipeline.init.capture",
-                    state.capture_error_info.detail,
-                    "perception-init");
-        if (out_error) {
-            *out_error = capture_err;
-        }
+bool ConsumeCadence(const float dt, const float interval_sec, float &accum_sec) {
+    accum_sec += std::max(0.0f, dt);
+    if (accum_sec < std::max(0.01f, interval_sec)) {
         return false;
     }
-
-    state.screen_capture_last_error.clear();
-    ClearRuntimeError(state.capture_error_info,
-                      "perception_pipeline.init.capture",
-                      "screen_capture_init_ok",
-                      "perception-init");
-    LogObsInfo("perception.capture",
-               "OK",
-               "perception_pipeline.init.capture",
-               "screen_capture_init_ok",
-               "perception-init");
-    if (out_error) {
-        out_error->clear();
-    }
+    accum_sec = 0.0f;
     return true;
 }
 
-bool PerceptionPipeline::InitSceneClassifierState(
-    PerceptionPipelineState &state,
-    const std::vector<std::pair<std::string, std::string>> &scene_model_candidates,
-    std::string *out_error) {
-    state.scene_classifier_ready = false;
-
-    std::string sc_err;
-    for (const auto &pair : scene_model_candidates) {
-        std::error_code ec1;
-        std::error_code ec2;
-        const bool model_exists = std::filesystem::exists(pair.first, ec1);
-        const bool labels_exists = std::filesystem::exists(pair.second, ec2);
-        if (!model_exists || !labels_exists) {
-            continue;
-        }
-
-        std::string try_err;
-        if (scene_classifier_.Init(pair.first, pair.second, &try_err)) {
-            state.scene_classifier_ready = true;
-            state.scene_classifier_last_error.clear();
-            ClearRuntimeError(state.scene_error_info,
-                              "perception_pipeline.init.scene",
-                              "scene_classifier_init_ok",
-                              "perception-init");
-            LogObsInfo("perception.scene",
-                       "OK",
-                       "perception_pipeline.init.scene",
-                       std::string("scene_init_ok model=") + pair.first + " labels=" + pair.second,
-                       "perception-init");
-            if (out_error) {
-                out_error->clear();
-            }
-            return true;
-        }
-        if (sc_err.empty() && !try_err.empty()) {
-            sc_err = try_err;
-        }
-    }
-
-    if (sc_err.empty()) {
-        sc_err = "mobileclip model/labels not found in candidate paths";
-    }
-    state.scene_classifier_last_error = sc_err;
-    RecordRuntimeError(state.scene_error_info,
-                       RuntimeErrorDomain::PerceptionScene,
-                       ClassifyInitErrorCode(sc_err),
-                       sc_err);
-    LogObsError(RuntimeErrorDomainName(state.scene_error_info.domain),
-                RuntimeErrorCodeName(state.scene_error_info.code),
-                "perception_pipeline.init.scene",
-                state.scene_error_info.detail,
-                "perception-init");
-    if (out_error) {
-        *out_error = sc_err;
-    }
-    return false;
+bool PerceptionUsesScreenCapture(const PerceptionPipelineState &state) {
+    return state.scene_classifier_enabled || state.ocr_enabled;
 }
 
-bool PerceptionPipeline::InitOcrState(
-    PerceptionPipelineState &state,
-    const std::vector<std::tuple<std::string, std::string, std::string>> &ocr_candidates,
-    std::string *out_error) {
-    state.ocr_ready = false;
-
-    std::string ocr_err;
-    for (const auto &cand : ocr_candidates) {
-        std::error_code ec1, ec2, ec3;
-        if (!std::filesystem::exists(std::get<0>(cand), ec1) ||
-            !std::filesystem::exists(std::get<1>(cand), ec2) ||
-            !std::filesystem::exists(std::get<2>(cand), ec3)) {
-            continue;
-        }
-
-        std::string try_err;
-        if (ocr_service_.Init(std::get<0>(cand), std::get<1>(cand), std::get<2>(cand), &try_err)) {
-            state.ocr_ready = true;
-            state.ocr_last_error.clear();
-            state.ocr_det_input_size = ocr_service_.GetDetInputSize();
-            ClearRuntimeError(state.ocr_error_info,
-                              "perception_pipeline.init.ocr",
-                              "ocr_service_init_ok",
-                              "perception-init");
-            LogObsInfo("perception.ocr",
-                       "OK",
-                       "perception_pipeline.init.ocr",
-                       std::string("ocr_init_ok det=") + std::get<0>(cand) + " rec=" + std::get<1>(cand) +
-                           " keys=" + std::get<2>(cand),
-                       "perception-init");
-            if (out_error) {
-                out_error->clear();
-            }
-            return true;
-        }
-        if (ocr_err.empty() && !try_err.empty()) {
-            ocr_err = try_err;
-        }
-    }
-
-    if (ocr_err.empty()) {
-        ocr_err = "ppocr det/rec/keys not found in candidate paths";
-    }
-    state.ocr_last_error = ocr_err;
-    RecordRuntimeError(state.ocr_error_info,
-                       RuntimeErrorDomain::PerceptionOcr,
-                       ClassifyInitErrorCode(ocr_err),
-                       ocr_err);
-    LogObsError(RuntimeErrorDomainName(state.ocr_error_info.domain),
-                RuntimeErrorCodeName(state.ocr_error_info.code),
-                "perception_pipeline.init.ocr",
-                state.ocr_error_info.detail,
-                "perception-init");
-    if (out_error) {
-        *out_error = ocr_err;
-    }
-    return false;
+void MarkPerceptionPanelDirty(PerceptionPipelineState &state) {
+    state.panel_state_version += 1;
 }
 
-bool PerceptionPipeline::InitFacemeshState(
-    PerceptionPipelineState &state,
-    const std::vector<std::pair<std::string, std::string>> &facemesh_candidates,
-    std::string *out_error) {
-    state.camera_facemesh_ready = false;
+template <typename TaskRequest, typename AsyncPacket>
+struct AsyncSupervisor {
+    std::thread worker;
+    std::atomic<bool> running{false};
+    std::atomic<bool> stop{false};
+    std::mutex packet_mutex;
+    AsyncPacket packet{};
+    std::mutex task_mutex;
+    std::condition_variable task_cv;
+    TaskRequest task{};
+    std::atomic<std::uint64_t> submit_seq{0};
+    std::uint64_t applied_seq = 0;
 
-    std::string fm_err;
-    for (const auto &cand : facemesh_candidates) {
-        std::error_code ec1, ec2;
-        if (!std::filesystem::exists(cand.first, ec1) || !std::filesystem::exists(cand.second, ec2)) {
-            continue;
-        }
-
-        std::string try_err;
-        if (camera_facemesh_service_.Init(cand.first, cand.second, &try_err, 0)) {
-            state.camera_facemesh_ready = true;
-            state.camera_facemesh_last_error.clear();
-            ClearRuntimeError(state.facemesh_error_info,
-                              "perception_pipeline.init.facemesh",
-                              "facemesh_service_init_ok",
-                              "perception-init");
-            LogObsInfo("perception.facemesh",
-                       "OK",
-                       "perception_pipeline.init.facemesh",
-                       std::string("facemesh_init_ok model=") + cand.first + " labels=" + cand.second,
-                       "perception-init");
-            if (out_error) {
-                out_error->clear();
-            }
-            return true;
-        }
-        if (fm_err.empty() && !try_err.empty()) {
-            fm_err = try_err;
-        }
-    }
-
-    if (fm_err.empty()) {
-        fm_err = "facemesh model/labels not found in candidate paths";
-    }
-    state.camera_facemesh_last_error = fm_err;
-    RecordRuntimeError(state.facemesh_error_info,
-                       RuntimeErrorDomain::PerceptionFacemesh,
-                       ClassifyInitErrorCode(fm_err),
-                       fm_err);
-    LogObsError(RuntimeErrorDomainName(state.facemesh_error_info.domain),
-                RuntimeErrorCodeName(state.facemesh_error_info.code),
-                "perception_pipeline.init.facemesh",
-                state.facemesh_error_info.detail,
-                "perception-init");
-    if (out_error) {
-        *out_error = fm_err;
-    }
-    return false;
-}
-
-bool PerceptionPipeline::ReloadSceneClassifier(
-    PerceptionPipelineState &state,
-    const std::vector<std::pair<std::string, std::string>> &scene_model_candidates,
-    std::string *out_error) {
-    StopSceneWorker();
-    scene_classifier_.Shutdown();
-    const bool ok = InitSceneClassifierState(state, scene_model_candidates, out_error);
-    if (ok) {
-        StartSceneWorker();
-    }
-    return ok;
-}
-
-bool PerceptionPipeline::ReloadOcrService(
-    PerceptionPipelineState &state,
-    const std::vector<std::tuple<std::string, std::string, std::string>> &ocr_candidates,
-    std::string *out_error) {
-    StopOcrWorker();
-    ocr_service_.Shutdown();
-    const bool ok = InitOcrState(state, ocr_candidates, out_error);
-    if (ok) {
-        StartOcrWorker();
-    }
-    return ok;
-}
-
-bool PerceptionPipeline::ReloadFacemeshService(
-    PerceptionPipelineState &state,
-    const std::vector<std::pair<std::string, std::string>> &facemesh_candidates,
-    std::string *out_error) {
-    StopFaceWorker();
-    camera_facemesh_service_.Shutdown();
-    const bool ok = InitFacemeshState(state, facemesh_candidates, out_error);
-    if (ok) {
-        StartFaceWorker();
-    }
-    return ok;
-}
-
-bool PerceptionPipeline::Init(PerceptionPipelineState &state,
-                              const std::vector<std::pair<std::string, std::string>> &scene_model_candidates,
-                              const std::vector<std::tuple<std::string, std::string, std::string>> &ocr_candidates,
-                              const std::vector<std::pair<std::string, std::string>> &facemesh_candidates,
-                              std::string *out_error) {
-    StopWorkers();
-    ocr_service_.Shutdown();
-    scene_classifier_.Shutdown();
-    screen_capture_.Shutdown();
-    camera_facemesh_service_.Shutdown();
-    capture_frame_cache_ = ScreenCaptureFrame{};
-    state = PerceptionPipelineState{};
-
-    std::string first_err;
-    std::string err;
-    if (!InitScreenCapture(state, &err) && first_err.empty()) {
-        first_err = err;
-    }
-    if (!InitSceneClassifierState(state, scene_model_candidates, &err) && first_err.empty()) {
-        first_err = err;
-    }
-    if (!InitOcrState(state, ocr_candidates, &err) && first_err.empty()) {
-        first_err = err;
-    }
-    if (!InitFacemeshState(state, facemesh_candidates, &err) && first_err.empty()) {
-        first_err = err;
-    }
-
-    StartWorkers();
-
-    if (out_error) {
-        *out_error = first_err;
-    }
-    return first_err.empty();
-}
-
-void PerceptionPipeline::Shutdown(PerceptionPipelineState &state) noexcept {
-    StopWorkers();
-
-    ocr_service_.Shutdown();
-    scene_classifier_.Shutdown();
-    screen_capture_.Shutdown();
-    camera_facemesh_service_.Shutdown();
-
-    state.screen_capture_ready = false;
-    state.scene_classifier_ready = false;
-    state.ocr_ready = false;
-    state.camera_facemesh_ready = false;
-    capture_frame_cache_ = ScreenCaptureFrame{};
-}
-
-void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
-    if (!state.enabled || !state.screen_capture_ready) {
-        return;
-    }
-
-    state.screen_capture_poll_accum_sec += std::max(0.0f, dt);
-    if (state.screen_capture_poll_accum_sec < std::max(0.1f, state.screen_capture_poll_interval_sec)) {
-        return;
-    }
-
-    state.screen_capture_poll_accum_sec = 0.0f;
-
-    ScreenCaptureFrame &frame = capture_frame_cache_;
-    std::string cap_err;
-    if (!screen_capture_.Capture(frame, &cap_err)) {
-        if (!cap_err.empty()) {
-            state.screen_capture_last_error = cap_err;
-            RecordRuntimeError(state.capture_error_info,
-                               RuntimeErrorDomain::PerceptionCapture,
-                               RuntimeErrorCode::CaptureFailed,
-                               cap_err);
-        }
-        state.screen_capture_fail_count += 1;
-        return;
-    }
-
-    state.screen_capture_last_error.clear();
-    state.screen_capture_success_count += 1;
-    ClearRuntimeError(state.capture_error_info,
-                      "perception_pipeline.tick.capture",
-                      "capture_frame_ok",
-                      "perception-tick");
-
-    if (state.scene_classifier_enabled && state.scene_classifier_ready) {
-
-        AsyncScenePacket scene_packet;
-        bool has_scene_packet = false;
+    void ResetAsyncState() noexcept {
         {
-            std::lock_guard<std::mutex> lk(scene_mutex_);
-            if (scene_packet_.ready) {
-                scene_packet = std::move(scene_packet_);
-                scene_packet_ = AsyncScenePacket{};
-                has_scene_packet = true;
-            }
+            std::lock_guard<std::mutex> lk(packet_mutex);
+            packet = AsyncPacket{};
         }
-
-        if (has_scene_packet && scene_packet.seq > scene_applied_seq_) {
-            scene_applied_seq_ = scene_packet.seq;
-            if (scene_packet.ok) {
-                state.scene_total_runs += 1;
-                state.scene_total_latency_ms += static_cast<std::int64_t>(std::max(0, scene_packet.elapsed_ms));
-                state.scene_avg_latency_ms = state.scene_total_runs > 0
-                                             ? static_cast<float>(static_cast<double>(state.scene_total_latency_ms) /
-                                                                  static_cast<double>(state.scene_total_runs))
-                                             : 0.0f;
-                state.scene_result = std::move(scene_packet.result);
-                state.scene_classifier_last_error.clear();
-                ClearRuntimeError(state.scene_error_info);
-            } else if (!scene_packet.error.empty()) {
-                state.scene_classifier_last_error = scene_packet.error;
-                RecordRuntimeError(state.scene_error_info,
-                                   RuntimeErrorDomain::PerceptionScene,
-                                   RuntimeErrorCode::InferenceFailed,
-                                   scene_packet.error);
-            }
-        }
-
-        if (!scene_running_.load(std::memory_order_acquire)) {
-            const std::uint64_t seq = scene_submit_seq_.fetch_add(1, std::memory_order_acq_rel) + 1;
-            scene_running_.store(true, std::memory_order_release);
-            {
-                std::lock_guard<std::mutex> lk(scene_task_mutex_);
-                scene_task_.pending = true;
-                scene_task_.seq = seq;
-                scene_task_.frame = frame;
-            }
-            scene_task_cv_.notify_one();
-        }
-    }
-
-    if (state.system_context_enabled) {
-        SystemContextSnapshot context_snapshot{};
-        std::string ctx_err;
-        if (system_context_service_.Capture(context_snapshot, &ctx_err)) {
-            state.system_context_snapshot = std::move(context_snapshot);
-            state.system_context_last_error.clear();
-            ClearRuntimeError(state.system_context_error_info,
-                              "perception_pipeline.tick.system_context",
-                              "system_context_capture_ok",
-                              "perception-tick");
-        } else if (!ctx_err.empty()) {
-            state.system_context_last_error = ctx_err;
-            RecordRuntimeError(state.system_context_error_info,
-                               RuntimeErrorDomain::PerceptionSystemContext,
-                               RuntimeErrorCode::CaptureFailed,
-                               ctx_err);
-        }
-    }
-
-    if (state.ocr_enabled && state.ocr_ready) {
-        state.ocr_det_input_size = std::clamp(state.ocr_det_input_size, 160, 1280);
-        state.ocr_low_conf_threshold = std::clamp(state.ocr_low_conf_threshold, 0.0f, 1.0f);
-        ocr_service_.SetDetInputSize(state.ocr_det_input_size);
-
-
-        AsyncOcrPacket packet;
-        bool has_packet = false;
         {
-            std::lock_guard<std::mutex> lk(ocr_mutex_);
-            if (ocr_packet_.ready) {
-                packet = std::move(ocr_packet_);
-                ocr_packet_ = AsyncOcrPacket{};
-                has_packet = true;
-            }
+            std::lock_guard<std::mutex> lk(task_mutex);
+            task = TaskRequest{};
+        }
+        running.store(false, std::memory_order_release);
+        applied_seq = submit_seq.load(std::memory_order_acquire);
+    }
+
+    template <typename RunTaskFn>
+    void StartWorker(RunTaskFn run_task) {
+        if (worker.joinable()) {
+            return;
         }
 
-        bool has_new_ocr_packet = false;
-        if (has_packet && packet.seq > ocr_applied_seq_) {
-            ocr_applied_seq_ = packet.seq;
-            has_new_ocr_packet = true;
-            state.ocr_skipped_due_timeout = false;
-            if (!packet.ok) {
-                if (!packet.error.empty()) {
-                    state.ocr_last_error = packet.error;
-                    RecordRuntimeError(state.ocr_error_info,
-                                       RuntimeErrorDomain::PerceptionOcr,
-                                       RuntimeErrorCode::InferenceFailed,
-                                       packet.error);
-                }
-            } else {
-                state.ocr_total_runs += 1;
-                state.ocr_total_latency_ms += static_cast<std::int64_t>(std::max(0, packet.elapsed_ms));
-                state.ocr_avg_latency_ms = state.ocr_total_runs > 0
-                                            ? static_cast<float>(static_cast<double>(state.ocr_total_latency_ms) /
-                                                                 static_cast<double>(state.ocr_total_runs))
-                                            : 0.0f;
-                state.ocr_preprocess_det_avg_ms = state.ocr_total_runs > 0
-                                                       ? static_cast<float>((state.ocr_preprocess_det_avg_ms * static_cast<float>(state.ocr_total_runs - 1) +
-                                                                            static_cast<float>(packet.perf.preprocess_det_ms)) /
-                                                                           static_cast<float>(state.ocr_total_runs))
-                                                       : 0.0f;
-                state.ocr_infer_det_avg_ms = state.ocr_total_runs > 0
-                                                  ? static_cast<float>((state.ocr_infer_det_avg_ms * static_cast<float>(state.ocr_total_runs - 1) +
-                                                                       static_cast<float>(packet.perf.infer_det_ms)) /
-                                                                      static_cast<float>(state.ocr_total_runs))
-                                                  : 0.0f;
-                state.ocr_preprocess_rec_avg_ms = state.ocr_total_runs > 0
-                                                       ? static_cast<float>((state.ocr_preprocess_rec_avg_ms * static_cast<float>(state.ocr_total_runs - 1) +
-                                                                            static_cast<float>(packet.perf.preprocess_rec_ms)) /
-                                                                           static_cast<float>(state.ocr_total_runs))
-                                                       : 0.0f;
-                state.ocr_infer_rec_avg_ms = state.ocr_total_runs > 0
-                                                  ? static_cast<float>((state.ocr_infer_rec_avg_ms * static_cast<float>(state.ocr_total_runs - 1) +
-                                                                       static_cast<float>(packet.perf.infer_rec_ms)) /
-                                                                      static_cast<float>(state.ocr_total_runs))
-                                                  : 0.0f;
-
-                OcrResult filtered_result = packet.result;
-                const auto raw_lines = packet.result.lines;
-                filtered_result.lines.clear();
-                filtered_result.lines.reserve(raw_lines.size());
-
-                std::int64_t dropped_low_conf_count = 0;
-                for (const auto &line : raw_lines) {
-                    const float score = std::clamp(line.score, 0.0f, 1.0f);
-                    if (score < 0.5f) {
-                        state.ocr_conf_low_count += 1;
-                    } else if (score < 0.8f) {
-                        state.ocr_conf_mid_count += 1;
-                    } else {
-                        state.ocr_conf_high_count += 1;
+        stop.store(false, std::memory_order_release);
+        worker = std::thread([this, run_task = std::move(run_task)]() mutable {
+            while (true) {
+                TaskRequest req;
+                {
+                    std::unique_lock<std::mutex> lk(task_mutex);
+                    task_cv.wait(lk, [this]() {
+                        return stop.load(std::memory_order_acquire) || task.pending;
+                    });
+                    if (stop.load(std::memory_order_acquire) && !task.pending) {
+                        break;
                     }
-
-                    if (score >= state.ocr_low_conf_threshold) {
-                        filtered_result.lines.push_back(line);
-                    } else {
-                        dropped_low_conf_count += 1;
-                    }
+                    req = std::move(task);
+                    task = TaskRequest{};
                 }
 
-                state.ocr_total_raw_lines += static_cast<std::int64_t>(raw_lines.size());
-                state.ocr_total_kept_lines += static_cast<std::int64_t>(filtered_result.lines.size());
-                state.ocr_total_dropped_low_conf_lines += dropped_low_conf_count;
-                state.ocr_discard_rate = state.ocr_total_raw_lines > 0
-                                             ? static_cast<float>(static_cast<double>(state.ocr_total_dropped_low_conf_lines) /
-                                                                  static_cast<double>(state.ocr_total_raw_lines))
-                                             : 0.0f;
+                AsyncPacket local{};
+                local.ready = true;
+                local.seq = req.seq;
+                run_task(req, local);
 
-                if (packet.elapsed_ms > state.ocr_timeout_ms) {
-                    state.ocr_skipped_due_timeout = true;
-                    state.ocr_last_error = "ocr timeout degrade, keep last stable result";
-                    RecordRuntimeDegrade(state.ocr_error_info,
-                                         RuntimeErrorDomain::PerceptionOcr,
-                                         RuntimeErrorCode::TimeoutDegraded,
-                                         state.ocr_last_error);
-                    if (!state.ocr_last_stable_result.summary.empty() || !state.ocr_last_stable_result.lines.empty()) {
-                        state.ocr_result = state.ocr_last_stable_result;
+                {
+                    std::lock_guard<std::mutex> lk(packet_mutex);
+                    if (!packet.ready || local.seq >= packet.seq) {
+                        packet = std::move(local);
                     }
-                } else {
-                    state.ocr_result = std::move(filtered_result);
-                    state.ocr_last_stable_result = state.ocr_result;
-                    state.ocr_last_error.clear();
-                    ClearRuntimeError(state.ocr_error_info,
-                                      "perception_pipeline.tick.ocr",
-                                      "ocr_inference_ok",
-                                      "perception-tick");
                 }
+                running.store(false, std::memory_order_release);
             }
-        }
-
-        if (!ocr_running_.load(std::memory_order_acquire)) {
-            const std::uint64_t seq = ocr_submit_seq_.fetch_add(1, std::memory_order_acq_rel) + 1;
-            // 避免在主线程深拷贝整帧 BGRA（可能数 MB~十几 MB），减少 OCR 触发瞬间卡顿。
-            OcrSystemContext ocr_context{};
-            ocr_context.process_name = state.system_context_snapshot.process_name;
-            ocr_context.window_title = state.system_context_snapshot.window_title;
-            ocr_context.url = state.system_context_snapshot.url_hint;
-
-            ocr_running_.store(true, std::memory_order_release);
-            {
-                std::lock_guard<std::mutex> lk(ocr_task_mutex_);
-                ocr_task_.pending = true;
-                ocr_task_.seq = seq;
-                ocr_task_.frame = frame;
-                ocr_task_.context = std::move(ocr_context);
-            }
-            ocr_task_cv_.notify_one();
-        }
-
-        ocr_postprocess_service_.Apply(state.ocr_result,
-                                       state.system_context_snapshot,
-                                       state,
-                                       has_new_ocr_packet);
+            running.store(false, std::memory_order_release);
+        });
     }
 
-    if (state.camera_facemesh_enabled && state.camera_facemesh_ready) {
-
-        AsyncFacePacket face_packet;
-        bool has_face_packet = false;
+    template <typename CancelPendingFn>
+    void StopWorker(CancelPendingFn cancel_pending) noexcept {
+        stop.store(true, std::memory_order_release);
+        cancel_pending();
         {
-            std::lock_guard<std::mutex> lk(face_mutex_);
-            if (face_packet_.ready) {
-                face_packet = std::move(face_packet_);
-                face_packet_ = AsyncFacePacket{};
-                has_face_packet = true;
-            }
+            std::lock_guard<std::mutex> lk(task_mutex);
+            task = TaskRequest{};
         }
-
-        if (has_face_packet && face_packet.seq > face_applied_seq_) {
-            face_applied_seq_ = face_packet.seq;
-            if (face_packet.ok) {
-                state.face_total_runs += 1;
-                state.face_total_latency_ms += static_cast<std::int64_t>(std::max(0, face_packet.elapsed_ms));
-                state.face_avg_latency_ms = state.face_total_runs > 0
-                                            ? static_cast<float>(static_cast<double>(state.face_total_latency_ms) /
-                                                                 static_cast<double>(state.face_total_runs))
-                                            : 0.0f;
-                state.face_emotion_result = std::move(face_packet.result);
-                state.camera_facemesh_last_error.clear();
-                ClearRuntimeError(state.facemesh_error_info,
-                                  "perception_pipeline.tick.facemesh",
-                                  "facemesh_inference_ok",
-                                  "perception-tick");
-            } else if (!face_packet.error.empty()) {
-                state.camera_facemesh_last_error = face_packet.error;
-                RecordRuntimeError(state.facemesh_error_info,
-                                   RuntimeErrorDomain::PerceptionFacemesh,
-                                   RuntimeErrorCode::InferenceFailed,
-                                   face_packet.error);
-            }
+        task_cv.notify_all();
+        if (worker.joinable()) {
+            worker.join();
         }
-
-        if (!face_running_.load(std::memory_order_acquire)) {
-            const std::uint64_t seq = face_submit_seq_.fetch_add(1, std::memory_order_acq_rel) + 1;
-            face_running_.store(true, std::memory_order_release);
-            {
-                std::lock_guard<std::mutex> lk(face_task_mutex_);
-                face_task_.pending = true;
-                face_task_.seq = seq;
-            }
-            face_task_cv_.notify_one();
-        }
-
-        state.blackboard.face_emotion.face_detected = state.face_emotion_result.face_detected;
-        state.blackboard.face_emotion.emotion_label = state.face_emotion_result.emotion_label;
-        state.blackboard.face_emotion.emotion_score = state.face_emotion_result.emotion_score;
+        ResetAsyncState();
     }
-}
-#endif
+
+    bool TakeLatestPacket(AsyncPacket &out_packet) {
+        std::lock_guard<std::mutex> lk(packet_mutex);
+        if (!packet.ready) {
+            return false;
+        }
+        out_packet = std::move(packet);
+        packet = AsyncPacket{};
+        return true;
+    }
+
+    template <typename FillTaskFn>
+    void Submit(FillTaskFn fill_task) {
+        const std::uint64_t seq = submit_seq.fetch_add(1, std::memory_order_acq_rel) + 1;
+        running.store(true, std::memory_order_release);
+        {
+            std::lock_guard<std::mutex> lk(task_mutex);
+            task = TaskRequest{};
+            task.pending = true;
+            task.seq = seq;
+            fill_task(task);
+        }
+        task_cv.notify_one();
+    }
+};
+
+}  // namespace
 
 struct PerceptionPipeline::CaptureSupervisor {
     ScreenCapture screen_capture;
@@ -853,6 +169,7 @@ struct PerceptionPipeline::CaptureSupervisor {
             if (out_error) {
                 *out_error = capture_err;
             }
+            MarkPerceptionPanelDirty(state);
             return false;
         }
 
@@ -869,6 +186,7 @@ struct PerceptionPipeline::CaptureSupervisor {
         if (out_error) {
             out_error->clear();
         }
+        MarkPerceptionPanelDirty(state);
         return true;
     }
 
@@ -876,18 +194,17 @@ struct PerceptionPipeline::CaptureSupervisor {
         screen_capture.Shutdown();
         state.screen_capture_ready = false;
         frame_cache = ScreenCaptureFrame{};
+        MarkPerceptionPanelDirty(state);
     }
 
     ScreenCaptureFrame *CaptureFrame(float dt, PerceptionPipelineState &state) {
-        if (!state.enabled || !state.screen_capture_ready) {
+        if (!state.screen_capture_ready || !PerceptionUsesScreenCapture(state)) {
             return nullptr;
         }
 
-        state.screen_capture_poll_accum_sec += std::max(0.0f, dt);
-        if (state.screen_capture_poll_accum_sec < std::max(0.1f, state.screen_capture_poll_interval_sec)) {
+        if (!ConsumeCadence(dt, state.screen_capture_poll_interval_sec, state.screen_capture_poll_accum_sec)) {
             return nullptr;
         }
-        state.screen_capture_poll_accum_sec = 0.0f;
 
         std::string cap_err;
         if (!screen_capture.Capture(frame_cache, &cap_err)) {
@@ -899,6 +216,7 @@ struct PerceptionPipeline::CaptureSupervisor {
                                    cap_err);
             }
             state.screen_capture_fail_count += 1;
+            MarkPerceptionPanelDirty(state);
             return nullptr;
         }
 
@@ -908,6 +226,7 @@ struct PerceptionPipeline::CaptureSupervisor {
                           "perception_pipeline.tick.capture",
                           "capture_frame_ok",
                           "perception-tick");
+        MarkPerceptionPanelDirty(state);
         return &frame_cache;
     }
 };
@@ -929,89 +248,25 @@ struct PerceptionPipeline::SceneSupervisor {
     };
 
     SceneClassifier service;
-    std::thread worker;
-    std::atomic<bool> running{false};
-    std::atomic<bool> stop{false};
-    std::mutex packet_mutex;
-    AsyncPacket packet;
-    std::mutex task_mutex;
-    std::condition_variable task_cv;
-    TaskRequest task;
-    std::atomic<std::uint64_t> submit_seq{0};
-    std::uint64_t applied_seq = 0;
+    AsyncSupervisor<TaskRequest, AsyncPacket> async;
 
     ~SceneSupervisor() {
         StopWorker();
         service.Shutdown();
     }
 
-    void ResetAsyncState() noexcept {
-        {
-            std::lock_guard<std::mutex> lk(packet_mutex);
-            packet = AsyncPacket{};
-        }
-        {
-            std::lock_guard<std::mutex> lk(task_mutex);
-            task = TaskRequest{};
-        }
-        running.store(false, std::memory_order_release);
-        applied_seq = submit_seq.load(std::memory_order_acquire);
-    }
-
     void StartWorker() {
-        if (worker.joinable()) {
-            return;
-        }
-
-        stop.store(false, std::memory_order_release);
-        worker = std::thread([this]() {
-            while (true) {
-                TaskRequest req;
-                {
-                    std::unique_lock<std::mutex> lk(task_mutex);
-                    task_cv.wait(lk, [this]() {
-                        return stop.load(std::memory_order_acquire) || task.pending;
-                    });
-                    if (stop.load(std::memory_order_acquire) && !task.pending) {
-                        break;
-                    }
-                    req = std::move(task);
-                    task = TaskRequest{};
-                }
-
-                AsyncPacket local{};
-                local.ready = true;
-                local.seq = req.seq;
-                const auto t0 = std::chrono::steady_clock::now();
-                local.ok = service.Classify(req.frame, local.result, &local.error);
-                const auto t1 = std::chrono::steady_clock::now();
-                local.elapsed_ms = static_cast<int>(
-                    std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
-
-                {
-                    std::lock_guard<std::mutex> lk(packet_mutex);
-                    if (!packet.ready || local.seq >= packet.seq) {
-                        packet = std::move(local);
-                    }
-                }
-                running.store(false, std::memory_order_release);
-            }
-            running.store(false, std::memory_order_release);
+        async.StartWorker([this](const TaskRequest &req, AsyncPacket &local) {
+            const auto t0 = std::chrono::steady_clock::now();
+            local.ok = service.Classify(req.frame, local.result, &local.error);
+            const auto t1 = std::chrono::steady_clock::now();
+            local.elapsed_ms = static_cast<int>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
         });
     }
 
     void StopWorker() noexcept {
-        stop.store(true, std::memory_order_release);
-        service.CancelPending();
-        {
-            std::lock_guard<std::mutex> lk(task_mutex);
-            task = TaskRequest{};
-        }
-        task_cv.notify_all();
-        if (worker.joinable()) {
-            worker.join();
-        }
-        ResetAsyncState();
+        async.StopWorker([this]() { service.CancelPending(); });
     }
 
     bool Init(PerceptionPipelineState &state,
@@ -1042,6 +297,7 @@ struct PerceptionPipeline::SceneSupervisor {
                            std::string("scene_init_ok model=") + pair.first + " labels=" + pair.second,
                            "perception-init");
                 StartWorker();
+                MarkPerceptionPanelDirty(state);
                 if (out_error) {
                     out_error->clear();
                 }
@@ -1065,6 +321,7 @@ struct PerceptionPipeline::SceneSupervisor {
                     "perception_pipeline.init.scene",
                     state.scene_error_info.detail,
                     "perception-init");
+        MarkPerceptionPanelDirty(state);
         if (out_error) {
             *out_error = init_err;
         }
@@ -1083,6 +340,7 @@ struct PerceptionPipeline::SceneSupervisor {
         StopWorker();
         service.Shutdown();
         state.scene_classifier_ready = false;
+        MarkPerceptionPanelDirty(state);
     }
 
     void Tick(const ScreenCaptureFrame &frame, PerceptionPipelineState &state) {
@@ -1091,18 +349,10 @@ struct PerceptionPipeline::SceneSupervisor {
         }
 
         AsyncPacket latest_packet;
-        bool has_packet = false;
-        {
-            std::lock_guard<std::mutex> lk(packet_mutex);
-            if (packet.ready) {
-                latest_packet = std::move(packet);
-                packet = AsyncPacket{};
-                has_packet = true;
-            }
-        }
+        const bool has_packet = async.TakeLatestPacket(latest_packet);
 
-        if (has_packet && latest_packet.seq > applied_seq) {
-            applied_seq = latest_packet.seq;
+        if (has_packet && latest_packet.seq > async.applied_seq) {
+            async.applied_seq = latest_packet.seq;
             if (latest_packet.ok) {
                 state.scene_total_runs += 1;
                 state.scene_total_latency_ms += static_cast<std::int64_t>(std::max(0, latest_packet.elapsed_ms));
@@ -1114,25 +364,21 @@ struct PerceptionPipeline::SceneSupervisor {
                 PublishTaskDecisionSceneResult(state);
                 state.scene_classifier_last_error.clear();
                 ClearRuntimeError(state.scene_error_info);
+                MarkPerceptionPanelDirty(state);
             } else if (!latest_packet.error.empty()) {
                 state.scene_classifier_last_error = latest_packet.error;
                 RecordRuntimeError(state.scene_error_info,
                                    RuntimeErrorDomain::PerceptionScene,
                                    RuntimeErrorCode::InferenceFailed,
                                    latest_packet.error);
+                MarkPerceptionPanelDirty(state);
             }
         }
 
-        if (!running.load(std::memory_order_acquire)) {
-            const std::uint64_t seq = submit_seq.fetch_add(1, std::memory_order_acq_rel) + 1;
-            running.store(true, std::memory_order_release);
-            {
-                std::lock_guard<std::mutex> lk(task_mutex);
-                task.pending = true;
-                task.seq = seq;
+        if (!async.running.load(std::memory_order_acquire)) {
+            async.Submit([&frame](TaskRequest &task) {
                 task.frame = frame;
-            }
-            task_cv.notify_one();
+            });
         }
     }
 };
@@ -1140,8 +386,12 @@ struct PerceptionPipeline::SceneSupervisor {
 struct PerceptionPipeline::ContextSupervisor {
     SystemContextService service;
 
-    void Tick(PerceptionPipelineState &state) {
+    void Tick(float dt, PerceptionPipelineState &state) {
         if (!state.system_context_enabled) {
+            return;
+        }
+
+        if (!ConsumeCadence(dt, state.system_context_poll_interval_sec, state.system_context_poll_accum_sec)) {
             return;
         }
 
@@ -1155,12 +405,14 @@ struct PerceptionPipeline::ContextSupervisor {
                               "perception_pipeline.tick.system_context",
                               "system_context_capture_ok",
                               "perception-tick");
+            MarkPerceptionPanelDirty(state);
         } else if (!capture_err.empty()) {
             state.system_context_last_error = capture_err;
             RecordRuntimeError(state.system_context_error_info,
                                RuntimeErrorDomain::PerceptionSystemContext,
                                RuntimeErrorCode::CaptureFailed,
                                capture_err);
+            MarkPerceptionPanelDirty(state);
         }
     }
 };
@@ -1185,89 +437,25 @@ struct PerceptionPipeline::OcrSupervisor {
 
     OcrService service;
     OcrPostprocessService postprocess_service;
-    std::thread worker;
-    std::atomic<bool> running{false};
-    std::atomic<bool> stop{false};
-    std::mutex packet_mutex;
-    AsyncPacket packet;
-    std::mutex task_mutex;
-    std::condition_variable task_cv;
-    TaskRequest task;
-    std::atomic<std::uint64_t> submit_seq{0};
-    std::uint64_t applied_seq = 0;
+    AsyncSupervisor<TaskRequest, AsyncPacket> async;
 
     ~OcrSupervisor() {
         StopWorker();
         service.Shutdown();
     }
 
-    void ResetAsyncState() noexcept {
-        {
-            std::lock_guard<std::mutex> lk(packet_mutex);
-            packet = AsyncPacket{};
-        }
-        {
-            std::lock_guard<std::mutex> lk(task_mutex);
-            task = TaskRequest{};
-        }
-        running.store(false, std::memory_order_release);
-        applied_seq = submit_seq.load(std::memory_order_acquire);
-    }
-
     void StartWorker() {
-        if (worker.joinable()) {
-            return;
-        }
-
-        stop.store(false, std::memory_order_release);
-        worker = std::thread([this]() {
-            while (true) {
-                TaskRequest req;
-                {
-                    std::unique_lock<std::mutex> lk(task_mutex);
-                    task_cv.wait(lk, [this]() {
-                        return stop.load(std::memory_order_acquire) || task.pending;
-                    });
-                    if (stop.load(std::memory_order_acquire) && !task.pending) {
-                        break;
-                    }
-                    req = std::move(task);
-                    task = TaskRequest{};
-                }
-
-                AsyncPacket local{};
-                local.ready = true;
-                local.seq = req.seq;
-                const auto t0 = std::chrono::steady_clock::now();
-                local.ok = service.Recognize(req.frame, &req.context, local.result, &local.error, &local.perf);
-                const auto t1 = std::chrono::steady_clock::now();
-                local.elapsed_ms = static_cast<int>(
-                    std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
-
-                {
-                    std::lock_guard<std::mutex> lk(packet_mutex);
-                    if (!packet.ready || local.seq >= packet.seq) {
-                        packet = std::move(local);
-                    }
-                }
-                running.store(false, std::memory_order_release);
-            }
-            running.store(false, std::memory_order_release);
+        async.StartWorker([this](const TaskRequest &req, AsyncPacket &local) {
+            const auto t0 = std::chrono::steady_clock::now();
+            local.ok = service.Recognize(req.frame, &req.context, local.result, &local.error, &local.perf);
+            const auto t1 = std::chrono::steady_clock::now();
+            local.elapsed_ms = static_cast<int>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
         });
     }
 
     void StopWorker() noexcept {
-        stop.store(true, std::memory_order_release);
-        service.CancelPending();
-        {
-            std::lock_guard<std::mutex> lk(task_mutex);
-            task = TaskRequest{};
-        }
-        task_cv.notify_all();
-        if (worker.joinable()) {
-            worker.join();
-        }
-        ResetAsyncState();
+        async.StopWorker([this]() { service.CancelPending(); });
     }
 
     bool Init(PerceptionPipelineState &state,
@@ -1300,6 +488,7 @@ struct PerceptionPipeline::OcrSupervisor {
                                " keys=" + std::get<2>(cand),
                            "perception-init");
                 StartWorker();
+                MarkPerceptionPanelDirty(state);
                 if (out_error) {
                     out_error->clear();
                 }
@@ -1323,6 +512,7 @@ struct PerceptionPipeline::OcrSupervisor {
                     "perception_pipeline.init.ocr",
                     state.ocr_error_info.detail,
                     "perception-init");
+        MarkPerceptionPanelDirty(state);
         if (out_error) {
             *out_error = init_err;
         }
@@ -1341,6 +531,7 @@ struct PerceptionPipeline::OcrSupervisor {
         StopWorker();
         service.Shutdown();
         state.ocr_ready = false;
+        MarkPerceptionPanelDirty(state);
     }
 
     void Tick(const ScreenCaptureFrame &frame, PerceptionPipelineState &state) {
@@ -1353,19 +544,11 @@ struct PerceptionPipeline::OcrSupervisor {
         service.SetDetInputSize(state.ocr_det_input_size);
 
         AsyncPacket latest_packet;
-        bool has_packet = false;
-        {
-            std::lock_guard<std::mutex> lk(packet_mutex);
-            if (packet.ready) {
-                latest_packet = std::move(packet);
-                packet = AsyncPacket{};
-                has_packet = true;
-            }
-        }
+        const bool has_packet = async.TakeLatestPacket(latest_packet);
 
         bool has_new_packet = false;
-        if (has_packet && latest_packet.seq > applied_seq) {
-            applied_seq = latest_packet.seq;
+        if (has_packet && latest_packet.seq > async.applied_seq) {
+            async.applied_seq = latest_packet.seq;
             has_new_packet = true;
             state.ocr_skipped_due_timeout = false;
             if (!latest_packet.ok) {
@@ -1375,6 +558,7 @@ struct PerceptionPipeline::OcrSupervisor {
                                        RuntimeErrorDomain::PerceptionOcr,
                                        RuntimeErrorCode::InferenceFailed,
                                        latest_packet.error);
+                    MarkPerceptionPanelDirty(state);
                 }
             } else {
                 state.ocr_total_runs += 1;
@@ -1462,25 +646,20 @@ struct PerceptionPipeline::OcrSupervisor {
                                       "ocr_inference_ok",
                                       "perception-tick");
                 }
+                MarkPerceptionPanelDirty(state);
             }
         }
 
-        if (!running.load(std::memory_order_acquire)) {
-            const std::uint64_t seq = submit_seq.fetch_add(1, std::memory_order_acq_rel) + 1;
+        if (!async.running.load(std::memory_order_acquire)) {
             OcrSystemContext context{};
             context.process_name = state.system_context_snapshot.process_name;
             context.window_title = state.system_context_snapshot.window_title;
             context.url = state.system_context_snapshot.url_hint;
 
-            running.store(true, std::memory_order_release);
-            {
-                std::lock_guard<std::mutex> lk(task_mutex);
-                task.pending = true;
-                task.seq = seq;
+            async.Submit([&frame, &context](TaskRequest &task) {
                 task.frame = frame;
                 task.context = std::move(context);
-            }
-            task_cv.notify_one();
+            });
         }
 
         postprocess_service.Apply(state.ocr_result,
@@ -1506,89 +685,25 @@ struct PerceptionPipeline::FacemeshSupervisor {
     };
 
     CameraFacemeshService service;
-    std::thread worker;
-    std::atomic<bool> running{false};
-    std::atomic<bool> stop{false};
-    std::mutex packet_mutex;
-    AsyncPacket packet;
-    std::mutex task_mutex;
-    std::condition_variable task_cv;
-    TaskRequest task;
-    std::atomic<std::uint64_t> submit_seq{0};
-    std::uint64_t applied_seq = 0;
+    AsyncSupervisor<TaskRequest, AsyncPacket> async;
 
     ~FacemeshSupervisor() {
         StopWorker();
         service.Shutdown();
     }
 
-    void ResetAsyncState() noexcept {
-        {
-            std::lock_guard<std::mutex> lk(packet_mutex);
-            packet = AsyncPacket{};
-        }
-        {
-            std::lock_guard<std::mutex> lk(task_mutex);
-            task = TaskRequest{};
-        }
-        running.store(false, std::memory_order_release);
-        applied_seq = submit_seq.load(std::memory_order_acquire);
-    }
-
     void StartWorker() {
-        if (worker.joinable()) {
-            return;
-        }
-
-        stop.store(false, std::memory_order_release);
-        worker = std::thread([this]() {
-            while (true) {
-                TaskRequest req;
-                {
-                    std::unique_lock<std::mutex> lk(task_mutex);
-                    task_cv.wait(lk, [this]() {
-                        return stop.load(std::memory_order_acquire) || task.pending;
-                    });
-                    if (stop.load(std::memory_order_acquire) && !task.pending) {
-                        break;
-                    }
-                    req = std::move(task);
-                    task = TaskRequest{};
-                }
-
-                AsyncPacket local{};
-                local.ready = true;
-                local.seq = req.seq;
-                const auto t0 = std::chrono::steady_clock::now();
-                local.ok = service.RecognizeFromCamera(local.result, &local.error);
-                const auto t1 = std::chrono::steady_clock::now();
-                local.elapsed_ms = static_cast<int>(
-                    std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
-
-                {
-                    std::lock_guard<std::mutex> lk(packet_mutex);
-                    if (!packet.ready || local.seq >= packet.seq) {
-                        packet = std::move(local);
-                    }
-                }
-                running.store(false, std::memory_order_release);
-            }
-            running.store(false, std::memory_order_release);
+        async.StartWorker([this](const TaskRequest &, AsyncPacket &local) {
+            const auto t0 = std::chrono::steady_clock::now();
+            local.ok = service.RecognizeFromCamera(local.result, &local.error);
+            const auto t1 = std::chrono::steady_clock::now();
+            local.elapsed_ms = static_cast<int>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
         });
     }
 
     void StopWorker() noexcept {
-        stop.store(true, std::memory_order_release);
-        service.CancelPending();
-        {
-            std::lock_guard<std::mutex> lk(task_mutex);
-            task = TaskRequest{};
-        }
-        task_cv.notify_all();
-        if (worker.joinable()) {
-            worker.join();
-        }
-        ResetAsyncState();
+        async.StopWorker([this]() { service.CancelPending(); });
     }
 
     bool Init(PerceptionPipelineState &state,
@@ -1619,6 +734,7 @@ struct PerceptionPipeline::FacemeshSupervisor {
                            std::string("facemesh_init_ok model=") + cand.first + " labels=" + cand.second,
                            "perception-init");
                 StartWorker();
+                MarkPerceptionPanelDirty(state);
                 if (out_error) {
                     out_error->clear();
                 }
@@ -1642,6 +758,7 @@ struct PerceptionPipeline::FacemeshSupervisor {
                     "perception_pipeline.init.facemesh",
                     state.facemesh_error_info.detail,
                     "perception-init");
+        MarkPerceptionPanelDirty(state);
         if (out_error) {
             *out_error = init_err;
         }
@@ -1660,26 +777,19 @@ struct PerceptionPipeline::FacemeshSupervisor {
         StopWorker();
         service.Shutdown();
         state.camera_facemesh_ready = false;
+        MarkPerceptionPanelDirty(state);
     }
 
-    void Tick(PerceptionPipelineState &state) {
+    void Tick(float dt, PerceptionPipelineState &state) {
         if (!state.camera_facemesh_enabled || !state.camera_facemesh_ready) {
             return;
         }
 
         AsyncPacket latest_packet;
-        bool has_packet = false;
-        {
-            std::lock_guard<std::mutex> lk(packet_mutex);
-            if (packet.ready) {
-                latest_packet = std::move(packet);
-                packet = AsyncPacket{};
-                has_packet = true;
-            }
-        }
+        const bool has_packet = async.TakeLatestPacket(latest_packet);
 
-        if (has_packet && latest_packet.seq > applied_seq) {
-            applied_seq = latest_packet.seq;
+        if (has_packet && latest_packet.seq > async.applied_seq) {
+            async.applied_seq = latest_packet.seq;
             if (latest_packet.ok) {
                 state.face_total_runs += 1;
                 state.face_total_latency_ms += static_cast<std::int64_t>(std::max(0, latest_packet.elapsed_ms));
@@ -1693,24 +803,21 @@ struct PerceptionPipeline::FacemeshSupervisor {
                                   "perception_pipeline.tick.facemesh",
                                   "facemesh_inference_ok",
                                   "perception-tick");
+                MarkPerceptionPanelDirty(state);
             } else if (!latest_packet.error.empty()) {
                 state.camera_facemesh_last_error = latest_packet.error;
                 RecordRuntimeError(state.facemesh_error_info,
                                    RuntimeErrorDomain::PerceptionFacemesh,
                                    RuntimeErrorCode::InferenceFailed,
                                    latest_packet.error);
+                MarkPerceptionPanelDirty(state);
             }
         }
 
-        if (!running.load(std::memory_order_acquire)) {
-            const std::uint64_t seq = submit_seq.fetch_add(1, std::memory_order_acq_rel) + 1;
-            running.store(true, std::memory_order_release);
-            {
-                std::lock_guard<std::mutex> lk(task_mutex);
-                task.pending = true;
-                task.seq = seq;
-            }
-            task_cv.notify_one();
+        const bool cadence_ready =
+            ConsumeCadence(dt, state.camera_facemesh_poll_interval_sec, state.camera_facemesh_poll_accum_sec);
+        if (cadence_ready && !async.running.load(std::memory_order_acquire)) {
+            async.Submit([](TaskRequest &) {});
         }
 
         state.blackboard.face_emotion.face_detected = state.face_emotion_result.face_detected;
@@ -1786,15 +893,17 @@ bool PerceptionPipeline::ReloadFacemeshService(
 }
 
 void PerceptionPipeline::Tick(float dt, PerceptionPipelineState &state) {
+    context_supervisor_->Tick(dt, state);
+    facemesh_supervisor_->Tick(dt, state);
+
     ScreenCaptureFrame *frame = capture_supervisor_->CaptureFrame(dt, state);
     if (frame == nullptr) {
         return;
     }
 
     scene_supervisor_->Tick(*frame, state);
-    context_supervisor_->Tick(state);
     ocr_supervisor_->Tick(*frame, state);
-    facemesh_supervisor_->Tick(state);
 }
 
 }  // namespace desktoper2D
+

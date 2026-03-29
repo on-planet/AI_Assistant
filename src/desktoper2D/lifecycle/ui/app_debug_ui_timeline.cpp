@@ -5,7 +5,8 @@
 
 namespace desktoper2D {
 
-void RenderRuntimeTimelinePanel(AppRuntime &runtime) {
+void RenderRuntimeTimelinePanel(RuntimeUiView view) {
+    AppRuntime &runtime = view.runtime;
     TimelinePanelState panel_state = BuildTimelinePanelState(runtime);
 
     bool timeline_enabled = panel_state.form.timeline_enabled;

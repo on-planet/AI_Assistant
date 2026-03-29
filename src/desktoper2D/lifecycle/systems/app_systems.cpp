@@ -19,6 +19,57 @@ namespace desktoper2D {
 
 namespace {
 
+bool ApplyPluginStatsSnapshot(PluginRuntimeState &plugin, const PluginWorkerStats &stats) {
+    bool changed = false;
+    auto assign = [&changed](auto &dst, const auto &src) {
+        if (dst != src) {
+            dst = src;
+            changed = true;
+        }
+    };
+
+    assign(plugin.total_update_count, stats.total_update_count);
+    assign(plugin.timeout_count, stats.timeout_count);
+    assign(plugin.exception_count, stats.exception_count);
+    assign(plugin.internal_error_count, stats.internal_error_count);
+    assign(plugin.disable_count, stats.disable_count);
+    assign(plugin.recover_count, stats.recover_count);
+    assign(plugin.timeout_rate, stats.timeout_rate);
+    assign(plugin.last_latency_ms, stats.last_latency_ms);
+    assign(plugin.avg_latency_ms, stats.avg_latency_ms);
+    assign(plugin.latency_p50_ms, stats.latency_p50_ms);
+    assign(plugin.latency_p95_ms, stats.latency_p95_ms);
+    assign(plugin.success_rate, stats.success_rate);
+    assign(plugin.current_update_hz, stats.current_update_hz);
+    assign(plugin.auto_disabled, stats.auto_disabled);
+    assign(plugin.last_error, stats.last_error);
+
+    if (stats.auto_disabled) {
+        SetPluginError(plugin.error_info,
+                       RuntimeErrorCode::AutoDisabled,
+                       stats.last_error.empty() ? std::string("plugin auto disabled") : stats.last_error);
+    } else if (stats.internal_error_count > 0 || stats.exception_count > 0 || stats.timeout_count > 0) {
+        if (stats.internal_error_count == 0 && stats.exception_count == 0 && stats.timeout_count > 0) {
+            SetPluginDegrade(plugin.error_info,
+                             RuntimeErrorCode::TimeoutDegraded,
+                             stats.last_error.empty() ? std::string("plugin timeout degraded") : stats.last_error);
+        } else {
+            SetPluginError(plugin.error_info,
+                           RuntimeErrorCode::InternalError,
+                           stats.last_error);
+        }
+    } else {
+        ClearRuntimeError(plugin.error_info,
+                          "app_systems.plugin.update",
+                          "plugin_worker_healthy",
+                          "runtime-main");
+    }
+    if (changed) {
+        plugin.panel_state_version += 1;
+    }
+    return changed;
+}
+
 double ComputeP95InPlace(std::vector<double> &samples) {
     if (samples.empty()) {
         return 0.0;
@@ -69,13 +120,15 @@ void SnapshotRingInto(const std::vector<double> &ring,
 }
 
 void PushMetricsSample(PerceptionStateSlice perception, PluginStateSlice plugin_state, OpsStateSlice ops) {
-    auto &obs = ops.observability;
+    auto &obs = ops.observability.observability;
+    auto &perception_state = perception.perception.perception_state;
+    auto &plugin_runtime = plugin_state.plugin.plugin;
     RuntimeMetricsSample sample{};
     sample.ts_ms = ObsNowTsMs();
     sample.seq = ++obs.runtime_metrics_seq;
 
-    const double cap_ok = static_cast<double>(perception.pipeline_state.screen_capture_success_count);
-    const double cap_fail = static_cast<double>(perception.pipeline_state.screen_capture_fail_count);
+    const double cap_ok = static_cast<double>(perception_state.screen_capture_success_count);
+    const double cap_fail = static_cast<double>(perception_state.screen_capture_fail_count);
     const double cap_total = cap_ok + cap_fail;
     sample.capture_success_rate = cap_total > 0.0 ? (cap_ok / cap_total) : 1.0;
 
@@ -83,10 +136,10 @@ void PushMetricsSample(PerceptionStateSlice perception, PluginStateSlice plugin_
     sample.ocr_p95_latency_ms = obs.ocr_p95_latency_ms;
     sample.face_p95_latency_ms = obs.face_p95_latency_ms;
 
-    const double ocr_runs = static_cast<double>(std::max<std::int64_t>(1, perception.pipeline_state.ocr_total_runs));
-    sample.ocr_timeout_rate = static_cast<double>(perception.pipeline_state.ocr_error_info.degraded_count) / ocr_runs;
-    sample.asr_timeout_rate = ops.asr_timeout_rate;
-    sample.plugin_timeout_rate = plugin_state.plugin_runtime.timeout_rate;
+    const double ocr_runs = static_cast<double>(std::max<std::int64_t>(1, perception_state.ocr_total_runs));
+    sample.ocr_timeout_rate = static_cast<double>(perception_state.ocr_error_info.degraded_count) / ocr_runs;
+    sample.asr_timeout_rate = ops.asr_chat.asr_timeout_rate;
+    sample.plugin_timeout_rate = plugin_runtime.timeout_rate;
 
     if (obs.runtime_metrics_series_capacity == 0) {
         obs.runtime_metrics_series.clear();
@@ -123,7 +176,7 @@ void PushMetricsSample(PerceptionStateSlice perception, PluginStateSlice plugin_
 }
 
 void EnsureAsrWorkerStarted(OpsStateSlice ops) {
-    auto &async_state = ops.asr_async_state;
+    auto &async_state = ops.asr_chat.asr_async_state;
     std::lock_guard<std::mutex> lk(async_state.mutex);
     if (async_state.worker.joinable()) {
         return;
@@ -132,9 +185,9 @@ void EnsureAsrWorkerStarted(OpsStateSlice ops) {
     async_state.stop_requested = false;
     async_state.worker_busy = false;
 
-    auto *provider = &ops.asr_provider;
-    auto *provider_mutex = &ops.asr_provider_mutex;
-    auto *provider_generation = &ops.asr_provider_generation;
+    auto *provider = &ops.asr_chat.asr_provider;
+    auto *provider_mutex = &ops.asr_chat.asr_provider_mutex;
+    auto *provider_generation = &ops.asr_chat.asr_provider_generation;
     auto *worker_state = &async_state;
     async_state.worker = std::thread([provider, provider_mutex, provider_generation, worker_state]() {
         while (true) {
@@ -194,85 +247,89 @@ void EnsureAsrWorkerStarted(OpsStateSlice ops) {
 }
 
 void ApplyAsrPacket(PerceptionStateSlice perception, OpsStateSlice ops, AsrAsyncResultPacket packet) {
-    ops.asr_total_segments += 1;
+    ops.asr_chat.asr_total_segments += 1;
     const double infer_sec = static_cast<double>(std::max<std::int64_t>(0, packet.result.latency_ms)) / 1000.0;
-    ops.asr_audio_total_sec += packet.audio_sec;
-    ops.asr_infer_total_sec += infer_sec;
-    ops.asr_rtf = ops.asr_audio_total_sec > 1e-9 ? (ops.asr_infer_total_sec / ops.asr_audio_total_sec) : 0.0;
+    ops.asr_chat.asr_audio_total_sec += packet.audio_sec;
+    ops.asr_chat.asr_infer_total_sec += infer_sec;
+    ops.asr_chat.asr_rtf = ops.asr_chat.asr_audio_total_sec > 1e-9
+                               ? (ops.asr_chat.asr_infer_total_sec / ops.asr_chat.asr_audio_total_sec)
+                               : 0.0;
 
     if (packet.result.timeout_detected) {
-        ops.asr_timeout_segments += 1;
+        ops.asr_chat.asr_timeout_segments += 1;
     }
     if (packet.result.cloud_attempted) {
-        ops.asr_cloud_attempts += 1;
+        ops.asr_chat.asr_cloud_attempts += 1;
     }
     if (packet.result.cloud_succeeded) {
-        ops.asr_cloud_success += 1;
+        ops.asr_chat.asr_cloud_success += 1;
     }
     if (packet.result.fallback_to_offline) {
-        ops.asr_cloud_fallbacks += 1;
+        ops.asr_chat.asr_cloud_fallbacks += 1;
     }
 
-    ops.asr_timeout_rate = ops.asr_total_segments > 0
-                               ? static_cast<double>(ops.asr_timeout_segments) /
-                                     static_cast<double>(ops.asr_total_segments)
-                               : 0.0;
-    ops.asr_cloud_call_ratio = ops.asr_total_segments > 0
-                                   ? static_cast<double>(ops.asr_cloud_attempts) /
-                                         static_cast<double>(ops.asr_total_segments)
-                                   : 0.0;
-    ops.asr_cloud_success_ratio = ops.asr_cloud_attempts > 0
-                                      ? static_cast<double>(ops.asr_cloud_success) /
-                                            static_cast<double>(ops.asr_cloud_attempts)
-                                      : 0.0;
-    ops.asr_wer_proxy = std::clamp(1.0 - static_cast<double>(packet.result.confidence), 0.0, 1.0);
-    ops.asr_last_switch_reason = packet.result.switch_reason;
+    ops.asr_chat.asr_timeout_rate = ops.asr_chat.asr_total_segments > 0
+                                        ? static_cast<double>(ops.asr_chat.asr_timeout_segments) /
+                                              static_cast<double>(ops.asr_chat.asr_total_segments)
+                                        : 0.0;
+    ops.asr_chat.asr_cloud_call_ratio = ops.asr_chat.asr_total_segments > 0
+                                            ? static_cast<double>(ops.asr_chat.asr_cloud_attempts) /
+                                                  static_cast<double>(ops.asr_chat.asr_total_segments)
+                                            : 0.0;
+    ops.asr_chat.asr_cloud_success_ratio = ops.asr_chat.asr_cloud_attempts > 0
+                                               ? static_cast<double>(ops.asr_chat.asr_cloud_success) /
+                                                     static_cast<double>(ops.asr_chat.asr_cloud_attempts)
+                                               : 0.0;
+    ops.asr_chat.asr_wer_proxy = std::clamp(1.0 - static_cast<double>(packet.result.confidence), 0.0, 1.0);
+    ops.asr_chat.asr_last_switch_reason = packet.result.switch_reason;
 
     if (packet.ok) {
-        ops.asr_last_result = std::move(packet.result);
-        ops.asr_last_error.clear();
-        UpdateAsrSessionState(ops.asr_last_result, ops.asr_session_state);
-        PublishAsrSessionToPerception(ops.asr_session_state, perception.pipeline_state);
+        ops.asr_chat.asr_last_result = std::move(packet.result);
+        ops.asr_chat.asr_last_error.clear();
+        UpdateAsrSessionState(ops.asr_chat.asr_last_result, ops.asr_chat.asr_session_state);
+        PublishAsrSessionToPerception(ops.asr_chat.asr_session_state, perception.perception.perception_state);
+        ops.asr_chat.panel_state_version += 1;
         return;
     }
 
     const std::string detail = !packet.error.empty()
                                    ? packet.error
                                    : (!packet.result.error.empty() ? packet.result.error : std::string("asr recognize failed"));
-    ops.asr_last_error = detail;
+    ops.asr_chat.asr_last_error = detail;
     RuntimeErrorCode asr_code = packet.result.timeout_detected
                                     ? RuntimeErrorCode::TimeoutDegraded
                                     : ClassifyRuntimeErrorCodeFromDetail(detail, RuntimeErrorCode::InferenceFailed);
     if (asr_code == RuntimeErrorCode::TimeoutDegraded ||
         asr_code == RuntimeErrorCode::DataQualityDegraded) {
-        UpdateRuntimeDegrade(ops.asr_error_info,
+        UpdateRuntimeDegrade(ops.observability.asr_error_info,
                              RuntimeErrorDomain::Asr,
                              asr_code,
                              detail);
     } else {
-        UpdateRuntimeError(ops.asr_error_info,
+        UpdateRuntimeError(ops.observability.asr_error_info,
                            RuntimeErrorDomain::Asr,
                            asr_code,
                            detail);
     }
-    LogObsError(RuntimeErrorDomainName(ops.asr_error_info.domain),
-                RuntimeErrorCodeName(ops.asr_error_info.code),
+    LogObsError(RuntimeErrorDomainName(ops.observability.asr_error_info.domain),
+                RuntimeErrorCodeName(ops.observability.asr_error_info.code),
                 "app_systems.asr.recognize",
-                ops.asr_error_info.detail,
+                ops.observability.asr_error_info.detail,
                 "runtime-main");
+    ops.asr_chat.panel_state_version += 1;
 }
 
 void DrainCompletedAsrPackets(PerceptionStateSlice perception, OpsStateSlice ops) {
     std::deque<AsrAsyncResultPacket> completed;
     {
-        std::lock_guard<std::mutex> lk(ops.asr_async_state.mutex);
-        completed.swap(ops.asr_async_state.completed_queue);
+        std::lock_guard<std::mutex> lk(ops.asr_chat.asr_async_state.mutex);
+        completed.swap(ops.asr_chat.asr_async_state.completed_queue);
     }
 
     std::uint64_t current_generation = 0;
     {
-        std::lock_guard<std::mutex> provider_lock(ops.asr_provider_mutex);
-        current_generation = ops.asr_provider_generation;
+        std::lock_guard<std::mutex> provider_lock(ops.asr_chat.asr_provider_mutex);
+        current_generation = ops.asr_chat.asr_provider_generation;
     }
     while (!completed.empty()) {
         AsrAsyncResultPacket packet = std::move(completed.front());
@@ -285,14 +342,14 @@ void DrainCompletedAsrPackets(PerceptionStateSlice perception, OpsStateSlice ops
 }
 
 void EnqueueAsrRecognition(OpsStateSlice ops, AsrAudioChunk chunk, AsrRecognitionOptions options) {
-    auto &async_state = ops.asr_async_state;
+    auto &async_state = ops.asr_chat.asr_async_state;
 
     AsrAsyncRequest request{};
     request.chunk = std::move(chunk);
     request.options = std::move(options);
     {
-        std::lock_guard<std::mutex> provider_lock(ops.asr_provider_mutex);
-        request.provider_generation = ops.asr_provider_generation;
+        std::lock_guard<std::mutex> provider_lock(ops.asr_chat.asr_provider_mutex);
+        request.provider_generation = ops.asr_chat.asr_provider_generation;
     }
 
     {
@@ -309,37 +366,37 @@ void EnqueueAsrRecognition(OpsStateSlice ops, AsrAudioChunk chunk, AsrRecognitio
 }
 
 void TickAsrCapture(OpsStateSlice ops, float dt) {
-    if (!(ops.feature_flags.asr_enabled && ops.asr_ready && ops.asr_provider)) {
+    if (!(ops.perception.feature_flags.asr_enabled && ops.asr_chat.asr_ready && ops.asr_chat.asr_provider)) {
         return;
     }
 
     EnsureAsrWorkerStarted(ops);
 
-    ops.asr_poll_accum_sec += std::max(0.0f, dt);
-    if (ops.asr_poll_accum_sec < 0.02f) {
+    ops.asr_chat.asr_poll_accum_sec += std::max(0.0f, dt);
+    if (ops.asr_chat.asr_poll_accum_sec < 0.02f) {
         return;
     }
-    ops.asr_poll_accum_sec = 0.0f;
+    ops.asr_chat.asr_poll_accum_sec = 0.0f;
 
-    const std::size_t frame_samples = static_cast<std::size_t>(std::max(0, ops.asr_frame_samples));
-    if (ops.asr_audio_buffer_capacity != frame_samples) {
-        ops.asr_audio_buffer_capacity = frame_samples;
-        ops.asr_audio_buffer.clear();
-        ops.asr_audio_buffer.reserve(ops.asr_audio_buffer_capacity);
+    const std::size_t frame_samples = static_cast<std::size_t>(std::max(0, ops.asr_chat.asr_frame_samples));
+    if (ops.asr_chat.asr_audio_buffer_capacity != frame_samples) {
+        ops.asr_chat.asr_audio_buffer_capacity = frame_samples;
+        ops.asr_chat.asr_audio_buffer.clear();
+        ops.asr_chat.asr_audio_buffer.reserve(ops.asr_chat.asr_audio_buffer_capacity);
     }
-    ConsumeMicPcmSamples(ops.audio_state,
+    ConsumeMicPcmSamples(ops.core.audio_state,
                          frame_samples,
-                         &ops.asr_audio_buffer);
-    if (ops.asr_audio_buffer.size() < frame_samples) {
-        ops.asr_audio_buffer.resize(frame_samples, 0.0f);
+                         &ops.asr_chat.asr_audio_buffer);
+    if (ops.asr_chat.asr_audio_buffer.size() < frame_samples) {
+        ops.asr_chat.asr_audio_buffer.resize(frame_samples, 0.0f);
     }
 
     VadFrame frame{};
     frame.sample_rate_hz = 16000;
-    frame.samples = ops.asr_audio_buffer;
+    frame.samples = ops.asr_chat.asr_audio_buffer;
 
     VadSegment seg{};
-    if (!ops.asr_vad.Accept(frame, seg)) {
+    if (!ops.asr_chat.asr_vad.Accept(frame, seg)) {
         return;
     }
 
@@ -357,29 +414,29 @@ void TickAsrCapture(OpsStateSlice ops, float dt) {
 }  // namespace
 
 void TickAppSystems(PerceptionStateSlice perception, PluginStateSlice plugin_state, OpsStateSlice ops, float dt) {
-    auto &perception_state = perception.pipeline_state;
-    auto &plugin = plugin_state.plugin_runtime;
-    auto &obs = ops.observability;
+    auto &perception_state = perception.perception.perception_state;
+    auto &plugin = plugin_state.plugin.plugin;
+    auto &obs = ops.observability.observability;
 
-    perception_state.scene_classifier_enabled = perception.feature_flags.scene_classifier_enabled;
-    perception_state.ocr_enabled = perception.feature_flags.ocr_enabled;
-    perception_state.camera_facemesh_enabled = perception.feature_flags.face_emotion_enabled;
+    perception_state.scene_classifier_enabled = perception.perception.feature_flags.scene_classifier_enabled;
+    perception_state.ocr_enabled = perception.perception.feature_flags.ocr_enabled;
+    perception_state.camera_facemesh_enabled = perception.perception.feature_flags.face_emotion_enabled;
     perception_state.system_context_enabled =
-        perception.feature_flags.scene_classifier_enabled || perception.feature_flags.ocr_enabled ||
-        perception.feature_flags.face_emotion_enabled;
+        perception.perception.feature_flags.scene_classifier_enabled || perception.perception.feature_flags.ocr_enabled ||
+        perception.perception.feature_flags.face_emotion_enabled;
     perception_state.enabled = perception_state.system_context_enabled;
 
-    if (ops.reminder_ready) {
-        ops.reminder_poll_accum_sec += std::max(0.0f, dt);
-        if (ops.reminder_poll_accum_sec >= 1.0f) {
-            ops.reminder_poll_accum_sec = 0.0f;
+    if (ops.service.reminder_ready) {
+        ops.service.reminder_poll_accum_sec += std::max(0.0f, dt);
+        if (ops.service.reminder_poll_accum_sec >= 1.0f) {
+            ops.service.reminder_poll_accum_sec = 0.0f;
             const std::int64_t now_sec = static_cast<std::int64_t>(std::time(nullptr));
 
             std::string due_err;
-            auto due_items = ops.reminder_service.PollDueAndMarkNotified(now_sec, 8, &due_err);
+            auto due_items = ops.service.reminder_service.PollDueAndMarkNotified(now_sec, 8, &due_err);
             if (!due_err.empty()) {
-                ops.reminder_last_error = due_err;
-                UpdateRuntimeError(ops.reminder_error_info,
+                ops.service.reminder_last_error = due_err;
+                UpdateRuntimeError(ops.observability.reminder_error_info,
                                    RuntimeErrorDomain::Reminder,
                                    RuntimeErrorCode::InternalError,
                                    due_err);
@@ -394,15 +451,15 @@ void TickAppSystems(PerceptionStateSlice perception, PluginStateSlice plugin_sta
             }
 
             std::string list_err;
-            ops.reminder_upcoming = ops.reminder_service.ListUpcoming(now_sec, 8, &list_err);
+            ops.service.reminder_upcoming = ops.service.reminder_service.ListUpcoming(now_sec, 8, &list_err);
             if (!list_err.empty()) {
-                ops.reminder_last_error = list_err;
-                UpdateRuntimeError(ops.reminder_error_info,
+                ops.service.reminder_last_error = list_err;
+                UpdateRuntimeError(ops.observability.reminder_error_info,
                                    RuntimeErrorDomain::Reminder,
                                    RuntimeErrorCode::InternalError,
                                    list_err);
             } else if (due_err.empty()) {
-                ClearRuntimeError(ops.reminder_error_info,
+                ClearRuntimeError(ops.observability.reminder_error_info,
                                   "app_systems.reminder.poll",
                                   "poll_success",
                                   "runtime-main");
@@ -410,7 +467,7 @@ void TickAppSystems(PerceptionStateSlice perception, PluginStateSlice plugin_sta
         }
     }
 
-    perception.pipeline.Tick(dt, perception_state);
+    perception.perception.perception_pipeline.Tick(dt, perception_state);
     DrainCompletedAsrPackets(perception, ops);
     TickAsrCapture(ops, dt);
 
@@ -419,61 +476,39 @@ void TickAppSystems(PerceptionStateSlice perception, PluginStateSlice plugin_sta
     }
 
     if (plugin.ready && plugin.inference_adapter) {
-        const PluginWorkerStats stats = plugin.inference_adapter->GetStats();
-        plugin.total_update_count = stats.total_update_count;
-        plugin.timeout_count = stats.timeout_count;
-        plugin.exception_count = stats.exception_count;
-        plugin.internal_error_count = stats.internal_error_count;
-        plugin.disable_count = stats.disable_count;
-        plugin.recover_count = stats.recover_count;
-        plugin.timeout_rate = stats.total_update_count > 0
-                                  ? static_cast<double>(stats.timeout_count) /
-                                        static_cast<double>(stats.total_update_count)
-                                  : 0.0;
-        plugin.last_latency_ms = stats.last_latency_ms;
-        plugin.avg_latency_ms = stats.avg_latency_ms;
-        plugin.latency_p50_ms = stats.latency_p50_ms;
-        plugin.latency_p95_ms = stats.latency_p95_ms;
-        plugin.success_rate = stats.success_rate;
-        plugin.current_update_hz = stats.current_update_hz;
-        plugin.auto_disabled = stats.auto_disabled;
-        plugin.last_error = stats.last_error;
-
-        if (stats.auto_disabled) {
-            SetPluginError(plugin.error_info,
-                           RuntimeErrorCode::AutoDisabled,
-                           stats.last_error.empty() ? std::string("plugin auto disabled") : stats.last_error);
-        } else if (stats.internal_error_count > 0 || stats.exception_count > 0 || stats.timeout_count > 0) {
-            if (stats.internal_error_count == 0 && stats.exception_count == 0 && stats.timeout_count > 0) {
-                SetPluginDegrade(plugin.error_info,
-                                 RuntimeErrorCode::TimeoutDegraded,
-                                 stats.last_error.empty() ? std::string("plugin timeout degraded") : stats.last_error);
-            } else {
-                SetPluginError(plugin.error_info,
-                               RuntimeErrorCode::InternalError,
-                               stats.last_error);
-            }
-        } else {
-            ClearRuntimeError(plugin.error_info,
-                              "app_systems.plugin.update",
-                              "plugin_worker_healthy",
-                              "runtime-main");
+        plugin.stats_poll_accum_sec += std::max(0.0f, dt);
+        const float stats_poll_interval_sec = std::clamp(plugin.stats_poll_interval_sec, 0.2f, 0.5f);
+        if (plugin.stats_poll_accum_sec >= stats_poll_interval_sec) {
+            plugin.stats_poll_accum_sec = 0.0f;
+            const PluginWorkerStats stats = plugin.inference_adapter->GetStats();
+            ApplyPluginStatsSnapshot(plugin, stats);
         }
     } else {
-        plugin.total_update_count = 0;
-        plugin.timeout_count = 0;
-        plugin.exception_count = 0;
-        plugin.internal_error_count = 0;
-        plugin.disable_count = 0;
-        plugin.recover_count = 0;
-        plugin.timeout_rate = 0.0;
-        plugin.last_latency_ms = 0.0;
-        plugin.avg_latency_ms = 0.0;
-        plugin.latency_p50_ms = 0.0;
-        plugin.latency_p95_ms = 0.0;
-        plugin.success_rate = 0.0;
-        plugin.current_update_hz = 0;
-        plugin.auto_disabled = false;
+        bool plugin_stats_changed = false;
+        auto reset = [&plugin_stats_changed](auto &field, const auto &value) {
+            if (field != value) {
+                field = value;
+                plugin_stats_changed = true;
+            }
+        };
+        plugin.stats_poll_accum_sec = plugin.stats_poll_interval_sec;
+        reset(plugin.total_update_count, 0ull);
+        reset(plugin.timeout_count, 0ull);
+        reset(plugin.exception_count, 0ull);
+        reset(plugin.internal_error_count, 0ull);
+        reset(plugin.disable_count, 0ull);
+        reset(plugin.recover_count, 0ull);
+        reset(plugin.timeout_rate, 0.0);
+        reset(plugin.last_latency_ms, 0.0);
+        reset(plugin.avg_latency_ms, 0.0);
+        reset(plugin.latency_p50_ms, 0.0);
+        reset(plugin.latency_p95_ms, 0.0);
+        reset(plugin.success_rate, 0.0);
+        reset(plugin.current_update_hz, 0);
+        reset(plugin.auto_disabled, false);
+        if (plugin_stats_changed) {
+            plugin.panel_state_version += 1;
+        }
     }
 
     obs.log_accum_sec += std::max(0.0f, dt);
@@ -534,14 +569,14 @@ void TickAppSystems(PerceptionStateSlice perception, PluginStateSlice plugin_sta
         log_err(perception_state.system_context_error_info);
         log_err(perception_state.facemesh_error_info);
         log_err(plugin.error_info);
-        log_err(ops.asr_error_info);
-        log_err(ops.chat_error_info);
-        log_err(ops.reminder_error_info);
+        log_err(ops.observability.asr_error_info);
+        log_err(ops.observability.chat_error_info);
+        log_err(ops.observability.reminder_error_info);
     }
 }
 
 void ShutdownAppSystems(OpsStateSlice ops) noexcept {
-    auto &async_state = ops.asr_async_state;
+    auto &async_state = ops.asr_chat.asr_async_state;
     {
         std::lock_guard<std::mutex> lk(async_state.mutex);
         async_state.stop_requested = true;

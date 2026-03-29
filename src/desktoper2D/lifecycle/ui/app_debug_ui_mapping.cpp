@@ -4,7 +4,8 @@
 
 namespace desktoper2D {
 
-void RenderRuntimeMappingPanel(AppRuntime &runtime) {
+void RenderRuntimeMappingPanel(RuntimeUiView view) {
+    AppRuntime &runtime = view.runtime;
     ImGui::BeginChild("mapping_status_child", ImVec2(-1.0f, 140.0f), ImGuiChildFlags_Borders);
     ImGui::SeparatorText("Status Card");
     ImGui::Text("Gate: %s", runtime.face_map_gate_reason.empty() ? "(none)" : runtime.face_map_gate_reason.c_str());

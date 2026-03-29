@@ -5,7 +5,8 @@
 
 namespace desktoper2D {
 
-void RenderRuntimeOverviewPanel(AppRuntime &runtime) {
+void RenderRuntimeOverviewPanel(RuntimeUiView view) {
+    AppRuntime &runtime = view.runtime;
     const OverviewReadModel model = BuildOverviewReadModel(runtime);
     ImGui::SeparatorText("Status Card");
     if (ImGui::BeginTable("overview_status_table", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV)) {

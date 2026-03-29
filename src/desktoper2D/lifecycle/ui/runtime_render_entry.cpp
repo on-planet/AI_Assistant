@@ -28,6 +28,7 @@ constexpr const char *kInspectorWindowName = "Model Hierarchy + Inspector";
 constexpr const char *kReminderWindowName = "Reminder";
 constexpr const char *kPluginQuickControlWindowName = "Plugin Quick Control";
 constexpr const char *kWorkspaceDockspaceName = "Runtime Workspace DockSpace";
+constexpr float kManualLayoutSaveDebounceSeconds = 0.25f;
 
 const char *WorkspaceModeName(WorkspaceMode mode) {
     switch (mode) {
@@ -89,6 +90,16 @@ void LoadWorkspaceDockingIni(const std::string &workspace_docking_ini) {
 std::string SaveWorkspaceDockingIni() {
     const std::string full_ini = ImGui::SaveIniSettingsToMemory();
     return ExtractWorkspaceDockingIniSections(full_ini);
+}
+
+void ClearManualLayoutSaveRequest(WorkspacePanelState &panels) {
+    panels.manual_layout_save_pending = false;
+    panels.manual_layout_save_debounce_remaining_sec = 0.0f;
+}
+
+void QueueManualLayoutSave(WorkspacePanelState &panels) {
+    panels.manual_layout_save_pending = true;
+    panels.manual_layout_save_debounce_remaining_sec = kManualLayoutSaveDebounceSeconds;
 }
 
 bool IsWorkspaceDockTransactionActive() {
@@ -230,6 +241,7 @@ void ApplyWorkspaceDockLayout(AppRuntime &runtime, const ImGuiID dockspace_id) {
 void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridge) {
     BeginRuntimeImGuiFrame();
     ImGui::NewFrame();
+    const RuntimeUiView ui_view = BuildRuntimeUiView(runtime);
 
     RenderAppFrame(AppRenderContext{
         .window_state = &runtime.window_state,
@@ -254,6 +266,7 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
     });
 
     const ImGuiIO &io = ImGui::GetIO();
+    const float frame_dt_sec = std::max(io.DeltaTime, 0.0f);
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !io.WantCaptureKeyboard) {
         runtime.running = false;
     }
@@ -283,6 +296,7 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
             const ImGuiID dockspace_id = ImGui::GetID("RuntimeWorkspaceDockspaceId");
 
             const bool docking_dragging_active = IsWorkspaceDockTransactionActive();
+            auto &panels = runtime.workspace_ui.panels;
 
             enum class DockingTransition {
                 None,
@@ -291,19 +305,19 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
             };
 
             const bool manual_restore_requested =
-                runtime.workspace_ui.panels.layout_mode == WorkspaceLayoutMode::Manual &&
-                runtime.workspace_ui.panels.manual_layout_pending_load &&
-                !runtime.workspace_ui.panels.manual_docking_ini.empty();
+                panels.layout_mode == WorkspaceLayoutMode::Manual &&
+                panels.manual_layout_pending_load &&
+                !panels.manual_docking_ini.empty();
             const bool manual_restore_fallback_requested =
-                runtime.workspace_ui.panels.layout_mode == WorkspaceLayoutMode::Manual &&
-                runtime.workspace_ui.panels.manual_layout_pending_load &&
-                runtime.workspace_ui.panels.manual_docking_ini.empty();
+                panels.layout_mode == WorkspaceLayoutMode::Manual &&
+                panels.manual_layout_pending_load &&
+                panels.manual_docking_ini.empty();
 
             const bool preset_rebuild_requested =
                 runtime.workspace_ui.dock_rebuild_requested ||
-                (runtime.workspace_ui.panels.layout_mode == WorkspaceLayoutMode::Preset &&
-                 (runtime.workspace_ui.panels.preset_apply_requested ||
-                  runtime.workspace_ui.panels.last_applied_mode != runtime.workspace_ui.mode));
+                (panels.layout_mode == WorkspaceLayoutMode::Preset &&
+                 (panels.preset_apply_requested ||
+                  panels.last_applied_mode != runtime.workspace_ui.mode));
 
             // 单向状态机：同帧最多发生一种转移，优先 ManualRestore，再 PresetRebuild。
             DockingTransition transition = DockingTransition::None;
@@ -316,38 +330,51 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
             }
 
             if (transition == DockingTransition::ManualRestore) {
-                LoadWorkspaceDockingIni(runtime.workspace_ui.panels.manual_docking_ini);
-                runtime.workspace_ui.panels.manual_layout_pending_load = false;
-                runtime.workspace_ui.panels.preset_apply_requested = false;
+                LoadWorkspaceDockingIni(panels.manual_docking_ini);
+                panels.manual_layout_pending_load = false;
+                panels.preset_apply_requested = false;
                 runtime.workspace_ui.dock_rebuild_requested = false;
-                runtime.workspace_ui.panels.last_applied_mode = runtime.workspace_ui.mode;
+                panels.last_applied_mode = runtime.workspace_ui.mode;
+                ClearManualLayoutSaveRequest(panels);
             }
 
             ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
 
             if (transition == DockingTransition::PresetRebuild) {
-                if (runtime.workspace_ui.panels.layout_mode == WorkspaceLayoutMode::Preset || manual_restore_fallback_requested) {
+                if (panels.layout_mode == WorkspaceLayoutMode::Preset || manual_restore_fallback_requested) {
                     // 兜底窗口集合复用按 workspace_mode 的默认可见性策略。
                     ApplyWorkspacePresetVisibility(runtime);
                 }
                 // 仅重建当前 Workspace DockSpace 节点，保留其他窗口/工作区 ini 状态。
                 ApplyWorkspaceDockLayout(runtime, dockspace_id);
                 if (manual_restore_fallback_requested) {
-                    runtime.workspace_ui.panels.manual_layout_pending_load = false;
-                    runtime.workspace_ui.panels.preset_apply_requested = false;
+                    panels.manual_layout_pending_load = false;
+                    panels.preset_apply_requested = false;
                     runtime.workspace_ui.dock_rebuild_requested = false;
-                    runtime.workspace_ui.panels.last_applied_mode = runtime.workspace_ui.mode;
+                    panels.last_applied_mode = runtime.workspace_ui.mode;
+                }
+                if (panels.layout_mode == WorkspaceLayoutMode::Manual &&
+                    !panels.manual_layout_save_suppressed) {
+                    QueueManualLayoutSave(panels);
+                } else {
+                    ClearManualLayoutSaveRequest(panels);
                 }
             }
 
-            if (runtime.workspace_ui.panels.layout_mode == WorkspaceLayoutMode::Manual && docking_dragging_active) {
-                runtime.workspace_ui.panels.manual_layout_save_suppressed = false;
+            if (panels.layout_mode == WorkspaceLayoutMode::Manual && docking_dragging_active) {
+                panels.manual_layout_save_suppressed = false;
             }
 
-            if (docking_dragging_active || transition != DockingTransition::None) {
-                runtime.workspace_ui.panels.manual_layout_stable_frames = 0;
-            } else {
-                ++runtime.workspace_ui.panels.manual_layout_stable_frames;
+            if (panels.layout_mode != WorkspaceLayoutMode::Manual ||
+                panels.manual_layout_reset_requested ||
+                panels.manual_layout_pending_load ||
+                panels.manual_layout_save_suppressed) {
+                ClearManualLayoutSaveRequest(panels);
+            } else if (docking_dragging_active) {
+                QueueManualLayoutSave(panels);
+            } else if (panels.manual_layout_save_pending) {
+                panels.manual_layout_save_debounce_remaining_sec =
+                    std::max(0.0f, panels.manual_layout_save_debounce_remaining_sec - frame_dt_sec);
             }
         } else {
             ImGui::PopStyleVar(3);
@@ -357,83 +384,83 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
         ImGuiWindowFlags panel_flags = ImGuiWindowFlags_NoCollapse;
 
         if (ImGui::BeginMainMenuBar()) {
-            RenderWorkspaceToolbar(runtime);
+            RenderWorkspaceToolbar(ui_view);
             ImGui::EndMainMenuBar();
         }
 
         if (runtime.workspace_ui.panels.show_overview_window) {
             if (ImGui::Begin(kOverviewWindowName, &runtime.workspace_ui.panels.show_overview_window, panel_flags)) {
-                RenderRuntimeOverviewPanel(runtime);
+                RenderRuntimeOverviewPanel(ui_view);
             }
             ImGui::End();
         }
 
         if (runtime.workspace_ui.panels.show_editor_window) {
             if (ImGui::Begin(kEditorWindowName, &runtime.workspace_ui.panels.show_editor_window, panel_flags)) {
-                RenderRuntimeEditorPanel(runtime);
+                RenderRuntimeEditorPanel(ui_view);
             }
             ImGui::End();
         }
 
         if (runtime.workspace_ui.panels.show_timeline_window) {
             if (ImGui::Begin(kTimelineWindowName, &runtime.workspace_ui.panels.show_timeline_window, panel_flags)) {
-                RenderRuntimeTimelinePanel(runtime);
+                RenderRuntimeTimelinePanel(ui_view);
             }
             ImGui::End();
         }
 
         if (runtime.workspace_ui.panels.show_perception_window) {
             if (ImGui::Begin(kPerceptionWindowName, &runtime.workspace_ui.panels.show_perception_window, panel_flags)) {
-                RenderRuntimePerceptionPanel(runtime);
+                RenderRuntimePerceptionPanel(ui_view);
             }
             ImGui::End();
         }
 
         if (runtime.workspace_ui.panels.show_ocr_window) {
             if (ImGui::Begin(kOcrWindowName, &runtime.workspace_ui.panels.show_ocr_window, panel_flags)) {
-                RenderRuntimeOcrPanel(runtime);
+                RenderRuntimeOcrPanel(ui_view);
             }
             ImGui::End();
         }
 
         if (runtime.workspace_ui.panels.show_mapping_window) {
             if (ImGui::Begin(kMappingWindowName, &runtime.workspace_ui.panels.show_mapping_window, panel_flags)) {
-                RenderRuntimeMappingPanel(runtime);
+                RenderRuntimeMappingPanel(ui_view);
             }
             ImGui::End();
         }
 
         if (runtime.workspace_ui.panels.show_asr_chat_window) {
             if (ImGui::Begin(kAsrWindowName, &runtime.workspace_ui.panels.show_asr_chat_window, panel_flags)) {
-                RenderRuntimeAsrPanel(runtime);
+                RenderRuntimeAsrPanel(ui_view);
             }
             ImGui::End();
         }
 
         if (runtime.workspace_ui.panels.show_plugin_worker_window) {
             if (ImGui::Begin(kPluginWorkerWindowName, &runtime.workspace_ui.panels.show_plugin_worker_window, panel_flags)) {
-                RenderRuntimePluginWorkerPanel(runtime);
+                RenderRuntimePluginWorkerPanel(ui_view);
             }
             ImGui::End();
         }
 
         if (runtime.workspace_ui.panels.show_chat_window) {
             if (ImGui::Begin(kChatWindowName, &runtime.workspace_ui.panels.show_chat_window, panel_flags)) {
-                RenderRuntimeChatPanel(runtime);
+                RenderRuntimeChatPanel(ui_view);
             }
             ImGui::End();
         }
 
         if (runtime.workspace_ui.panels.show_error_window) {
             if (ImGui::Begin(kErrorWindowName, &runtime.workspace_ui.panels.show_error_window, panel_flags)) {
-                RenderRuntimeErrorPanel(runtime);
+                RenderRuntimeErrorPanel(ui_view);
             }
             ImGui::End();
         }
   
         if (runtime.workspace_ui.panels.show_plugin_quick_control_window) {
             if (ImGui::Begin(kPluginQuickControlWindowName, &runtime.workspace_ui.panels.show_plugin_quick_control_window, panel_flags)) {
-                RenderRuntimePluginQuickControlPanel(runtime);
+                RenderRuntimePluginQuickControlPanel(ui_view);
             }
             ImGui::End();
         }
@@ -447,25 +474,26 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
                                             ImGuiWindowFlags_NoResize |
                                             ImGuiWindowFlags_NoMove;
             if (ImGui::Begin("Plugin Detail", &runtime.workspace_ui.panels.show_plugin_detail_window, detail_flags)) {
-                RenderRuntimePluginDetailPanel(runtime);
+                RenderRuntimePluginDetailPanel(ui_view);
             }
             ImGui::End();
         }
  
-        const bool docking_window_drag_active =
-            ImGui::IsDragDropActive() &&
-            GImGui != nullptr &&
-            GImGui->DragDropPayload.IsDataType(IMGUI_PAYLOAD_TYPE_WINDOW);
-        const bool docking_dragging_active = docking_window_drag_active;
-        constexpr int kManualLayoutSaveStableFrames = 12;
-        if (!docking_dragging_active &&
-            runtime.workspace_ui.panels.layout_mode == WorkspaceLayoutMode::Manual &&
+        if (runtime.workspace_ui.panels.layout_mode == WorkspaceLayoutMode::Manual &&
+            runtime.workspace_ui.panels.manual_layout_save_pending &&
             !runtime.workspace_ui.panels.manual_layout_reset_requested &&
+            !runtime.workspace_ui.panels.manual_layout_pending_load &&
             !runtime.workspace_ui.panels.manual_layout_save_suppressed &&
-            runtime.workspace_ui.panels.manual_layout_stable_frames >= kManualLayoutSaveStableFrames) {
+            runtime.workspace_ui.panels.manual_layout_save_debounce_remaining_sec <= 0.0f) {
             const std::string latest_docking_ini = SaveWorkspaceDockingIni();
-            if (!latest_docking_ini.empty() && latest_docking_ini != runtime.workspace_ui.panels.manual_docking_ini) {
-                runtime.workspace_ui.panels.manual_docking_ini = latest_docking_ini;
+            if (!latest_docking_ini.empty()) {
+                runtime.workspace_ui.panels.manual_layout_save_pending = false;
+                if (latest_docking_ini != runtime.workspace_ui.panels.manual_docking_ini) {
+                    runtime.workspace_ui.panels.manual_docking_ini = latest_docking_ini;
+                }
+            } else {
+                runtime.workspace_ui.panels.manual_layout_save_debounce_remaining_sec =
+                    kManualLayoutSaveDebounceSeconds;
             }
         }
 
@@ -512,7 +540,7 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
         const float reminder_h = std::max(120.0f, right_h - inspector_h - gap);
 
         if (ImGui::BeginMainMenuBar()) {
-            RenderWorkspaceToolbar(runtime);
+            RenderWorkspaceToolbar(ui_view);
             ImGui::EndMainMenuBar();
         }
 
@@ -520,7 +548,7 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
             ImGui::SetNextWindowPos(ImVec2(base_x + margin, base_y + top_offset), ImGuiCond_FirstUseEver);
             ImGui::SetNextWindowSize(ImVec2(debug_w, std::max(220.0f, debug_h - 104.0f)), ImGuiCond_FirstUseEver);
             if (ImGui::Begin(kOverviewWindowName, &runtime.workspace_ui.panels.show_overview_window)) {
-                RenderRuntimeOverviewPanel(runtime);
+                RenderRuntimeOverviewPanel(ui_view);
             }
             ImGui::End();
         }
@@ -529,7 +557,7 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
             ImGui::SetNextWindowPos(ImVec2(right_x, right_y), ImGuiCond_FirstUseEver);
             ImGui::SetNextWindowSize(ImVec2(right_w, inspector_h), ImGuiCond_FirstUseEver);
             if (ImGui::Begin(kErrorWindowName, &runtime.workspace_ui.panels.show_error_window)) {
-                RenderRuntimeErrorPanel(runtime);
+                RenderRuntimeErrorPanel(ui_view);
             }
             ImGui::End();
         }
@@ -538,7 +566,7 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
             ImGui::SetNextWindowPos(ImVec2(right_x, right_y + inspector_h + gap), ImGuiCond_FirstUseEver);
             ImGui::SetNextWindowSize(ImVec2(right_w, reminder_h), ImGuiCond_FirstUseEver);
             if (ImGui::Begin(kPluginQuickControlWindowName, &runtime.workspace_ui.panels.show_plugin_quick_control_window)) {
-                RenderRuntimePluginQuickControlPanel(runtime);
+                RenderRuntimePluginQuickControlPanel(ui_view);
             }
             ImGui::End();
         }
@@ -548,7 +576,7 @@ void RunRuntimeRenderEntry(AppRuntime &runtime, const RuntimeRenderBridge &bridg
             ImGui::SetNextWindowSize(ImVec2(usable_w, usable_h), ImGuiCond_FirstUseEver);
             ImGuiWindowFlags detail_flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
             if (ImGui::Begin("Plugin Detail", &runtime.workspace_ui.panels.show_plugin_detail_window, detail_flags)) {
-                RenderRuntimePluginDetailPanel(runtime);
+                RenderRuntimePluginDetailPanel(ui_view);
             }
             ImGui::End();
         }

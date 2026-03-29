@@ -204,6 +204,44 @@ private:
     bool inited_ = false;
 };
 
+class SlowEchoInputPlugin final : public IBehaviorPlugin {
+public:
+    PluginStatus Init(const PluginRuntimeConfig &,
+                      const PluginHostCallbacks &,
+                      PluginDescriptor *out_desc,
+                      std::string *out_error) override {
+        if (!out_desc) {
+            if (out_error) *out_error = "out_desc null";
+            return PluginStatus::InvalidArg;
+        }
+        *out_desc = PluginDescriptor{"slow_echo_input", "1.0.0", "queue_bounding"};
+        inited_ = true;
+        return PluginStatus::Ok;
+    }
+
+    PluginStatus Update(const PerceptionInput &in,
+                        BehaviorOutput &out,
+                        std::string *out_error) override {
+        if (!inited_) {
+            if (out_error) *out_error = "not initialized";
+            return PluginStatus::InternalError;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        out = BehaviorOutput{};
+        out.param_targets["p.test"] = static_cast<float>(in.time_sec);
+        out.param_weights["p.test"] = 1.0f;
+        return PluginStatus::Ok;
+    }
+
+    void Destroy() noexcept override {
+        inited_ = false;
+    }
+
+private:
+    bool inited_ = false;
+};
+
 bool TestInitUpdateDestroySuccess() {
     PluginManager mgr;
     mgr.SetPlugin(std::make_unique<StubPlugin>(StubPlugin::Mode::Success));
@@ -387,9 +425,9 @@ bool TestWorkerWaitsForInputBeforeFirstUpdate() {
     return Assert::True(saw_update, "wait-for-input: worker should wake after input submit");
 }
 
-bool TestWorkerQueuesInputsWithoutOverwrite() {
+bool TestWorkerDropsOldInputsWhenQueueIsBounded() {
     PluginManager mgr;
-    mgr.SetPlugin(std::make_unique<EchoInputPlugin>());
+    mgr.SetPlugin(std::make_unique<SlowEchoInputPlugin>());
 
     std::string err;
     if (!Assert::Eq(mgr.Init(PluginRuntimeConfig{}, PluginHostCallbacks{}, &err), PluginStatus::Ok,
@@ -399,8 +437,9 @@ bool TestWorkerQueuesInputsWithoutOverwrite() {
 
     desktoper2D::PluginWorker worker;
     desktoper2D::PluginWorkerConfig cfg{};
-    cfg.update_hz = 1000;
+    cfg.update_hz = 120;
     cfg.frame_budget_ms = 1;
+    cfg.max_input_queue_size = 1;
     if (!Assert::True(worker.Start(&mgr, cfg, &err), "queue: worker start")) {
         return false;
     }
@@ -413,41 +452,40 @@ bool TestWorkerQueuesInputsWithoutOverwrite() {
         worker.SubmitInput(in);
     }
 
-    bool drained = false;
-    for (int i = 0; i < 200; ++i) {
+    bool saw_drops = false;
+    bool saw_latest_output = false;
+    for (int i = 0; i < 300; ++i) {
         const desktoper2D::PluginWorkerStats stats = worker.GetStats();
-        if (stats.total_update_count == kInputCount) {
-            drained = true;
-            break;
+        saw_drops = saw_drops || stats.dropped_input_count > 0;
+
+        BehaviorOutput out{};
+        if (worker.TryConsumeLatestOutput(out, nullptr)) {
+            const auto it = out.param_targets.find("p.test");
+            if (it != out.param_targets.end() &&
+                std::fabs(it->second - static_cast<float>(kInputCount)) < 0.001f) {
+                saw_latest_output = true;
+                break;
+            }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
-    if (!Assert::True(drained, "queue: worker should process every queued input exactly once")) {
+    if (!Assert::True(saw_drops, "queue: bounded queue should drop stale inputs under backlog")) {
+        worker.Stop();
+        return false;
+    }
+    if (!Assert::True(saw_latest_output, "queue: worker should eventually surface the latest input")) {
         worker.Stop();
         return false;
     }
 
-    const desktoper2D::PluginWorkerStats drained_stats = worker.GetStats();
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    const desktoper2D::PluginWorkerStats idle_stats = worker.GetStats();
-    if (!Assert::True(idle_stats.total_update_count == drained_stats.total_update_count,
-                      "queue: worker should idle after queue drains")) {
+    const desktoper2D::PluginWorkerStats bounded_stats = worker.GetStats();
+    if (!Assert::True(bounded_stats.pending_input_count <= cfg.max_input_queue_size,
+                      "queue: pending inputs should stay within queue bound")) {
         worker.Stop();
         return false;
     }
-
-    BehaviorOutput out{};
-    if (!Assert::True(worker.TryConsumeLatestOutput(out, nullptr), "queue: latest output should be available")) {
-        worker.Stop();
-        return false;
-    }
-    const auto it = out.param_targets.find("p.test");
-    if (!Assert::True(it != out.param_targets.end(), "queue: output target missing")) {
-        worker.Stop();
-        return false;
-    }
-    if (!Assert::True(std::fabs(it->second - static_cast<float>(kInputCount)) < 0.001f,
-                      "queue: latest output should match final queued input")) {
+    if (!Assert::True(bounded_stats.total_update_count < kInputCount,
+                      "queue: worker should avoid processing every stale input when bounded")) {
         worker.Stop();
         return false;
     }
@@ -469,7 +507,7 @@ int main() {
     if (!TestUpdateException()) ++failed;
     if (!TestMainLoopIsolationOnPluginCrash()) ++failed;
     if (!TestWorkerWaitsForInputBeforeFirstUpdate()) ++failed;
-    if (!TestWorkerQueuesInputsWithoutOverwrite()) ++failed;
+    if (!TestWorkerDropsOldInputsWhenQueueIsBounded()) ++failed;
 
     if (failed == 0) {
         std::cout << "[PASS] plugin lifecycle tests all passed\n";

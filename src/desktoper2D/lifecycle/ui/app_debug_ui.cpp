@@ -1,4 +1,4 @@
-#include "desktoper2D/lifecycle/ui/app_debug_ui.h"
+﻿#include "desktoper2D/lifecycle/ui/app_debug_ui.h"
 
 #include <algorithm>
 #include <array>
@@ -275,7 +275,7 @@ bool TimelineKeyframeListEqual(const std::vector<TimelineKeyframe> &lhs,
 }
 
 void RenderRuntimeEditorFeatureToggles(AppRuntime &runtime) {
-    EditorPanelState panel_state = BuildEditorPanelState(runtime);
+    const EditorPanelState &panel_state = BuildEditorPanelState(runtime);
 
     ImGui::SeparatorText("Feature Toggles");
     bool feature_scene_classifier_enabled = panel_state.view.feature_scene_classifier_enabled;
@@ -283,32 +283,33 @@ void RenderRuntimeEditorFeatureToggles(AppRuntime &runtime) {
         ApplyEditorPanelAction(runtime,
                                EditorPanelAction{.type = EditorPanelActionType::SetFeatureSceneClassifierEnabled,
                                                  .bool_value = feature_scene_classifier_enabled});
-        panel_state = BuildEditorPanelState(runtime);
+        (void)BuildEditorPanelState(runtime);
     }
     bool feature_ocr_enabled = panel_state.view.feature_ocr_enabled;
     if (ImGui::Checkbox("Enable OCR", &feature_ocr_enabled)) {
         ApplyEditorPanelAction(runtime,
                                EditorPanelAction{.type = EditorPanelActionType::SetFeatureOcrEnabled,
                                                  .bool_value = feature_ocr_enabled});
-        panel_state = BuildEditorPanelState(runtime);
+        (void)BuildEditorPanelState(runtime);
     }
     bool feature_face_emotion_enabled = panel_state.view.feature_face_emotion_enabled;
     if (ImGui::Checkbox("Enable Face Emotion", &feature_face_emotion_enabled)) {
         ApplyEditorPanelAction(runtime,
                                EditorPanelAction{.type = EditorPanelActionType::SetFeatureFaceEmotionEnabled,
                                                  .bool_value = feature_face_emotion_enabled});
-        panel_state = BuildEditorPanelState(runtime);
+        (void)BuildEditorPanelState(runtime);
     }
     bool feature_asr_enabled = panel_state.view.feature_asr_enabled;
     if (ImGui::Checkbox("Enable ASR", &feature_asr_enabled)) {
         ApplyEditorPanelAction(runtime,
                                EditorPanelAction{.type = EditorPanelActionType::SetFeatureAsrEnabled,
                                                  .bool_value = feature_asr_enabled});
-        panel_state = BuildEditorPanelState(runtime);
+        (void)BuildEditorPanelState(runtime);
     }
 }
 
-void RenderRuntimeEditorParamGroups(AppRuntime &runtime, const std::vector<int> &param_indices) {
+void RenderRuntimeEditorParamGroups(RuntimeUiView view, const std::vector<int> &param_indices) {
+    AppRuntime &runtime = view.runtime;
     ImGui::SeparatorText("Selected Group Parameters");
     if (ImGui::BeginTable("selected_group_param_table",
                           6,
@@ -364,7 +365,10 @@ void RenderRuntimeEditorParamGroups(AppRuntime &runtime, const std::vector<int> 
     }
 }
 
-void RenderRuntimeEditorBatchBind(AppRuntime &runtime, const std::string &group_label, const std::vector<int> &param_indices) {
+void RenderRuntimeEditorBatchBind(RuntimeUiView view,
+                                  const std::string &group_label,
+                                  const std::vector<int> &param_indices) {
+    AppRuntime &runtime = view.runtime;
     const char *binding_props[] = {"PosX", "PosY", "RotDeg", "ScaleX", "ScaleY", "Opacity"};
     ImGui::Combo("Bind Property", &runtime.batch_bind_prop_type, binding_props, 6);
     runtime.batch_bind_prop_type = std::clamp(runtime.batch_bind_prop_type, 0, 5);
@@ -428,7 +432,8 @@ TimelineInteractionStorage &GetTimelineInteractionStorage() {
 
 
 
-void RenderRuntimePluginDetailPanel(AppRuntime &runtime) {
+void RenderRuntimePluginDetailPanel(RuntimeUiView view) {
+    AppRuntime &runtime = view.runtime;
     ImGui::SeparatorText("Plugin Detail");
     if (ImGui::Button("Back to Cards")) {
         runtime.plugin.detail_kind = PluginDetailKind::None;
@@ -458,7 +463,7 @@ void RenderRuntimePluginDetailPanel(AppRuntime &runtime) {
         ImGui::TextDisabled("(no assets)");
     }
 
-    ImGui::SeparatorText("编辑配置");
+    ImGui::SeparatorText("缂栬緫閰嶇疆");
     if (runtime.plugin.detail_source.empty()) {
         ImGui::TextDisabled("(no editable config)");
         return;
@@ -537,7 +542,7 @@ void RenderRuntimePluginDetailPanel(AppRuntime &runtime) {
                                  sizeof(runtime.plugin.detail_edit_onnx_input));
         ImGui::InputTextMultiline("Extra ONNX (one per line)", runtime.plugin.detail_edit_extra_onnx_input,
                                   sizeof(runtime.plugin.detail_edit_extra_onnx_input), ImVec2(-1.0f, 80.0f));
-        if (ImGui::Button("保存并重载")) {
+        if (ImGui::Button("Save and Reload")) {
             std::string err;
             std::vector<std::string> extra = SplitExtraOnnxLines(runtime.plugin.detail_edit_extra_onnx_input);
             const bool ok = SavePluginConfigFields(runtime.plugin.detail_source,
@@ -577,7 +582,7 @@ void RenderRuntimePluginDetailPanel(AppRuntime &runtime) {
                                      sizeof(runtime.plugin.detail_edit_model_input));
         }
 
-        if (ImGui::Button("保存并应用")) {
+        if (ImGui::Button("Save and Apply")) {
             std::ifstream ifs(runtime.plugin.detail_source, std::ios::binary);
             std::ostringstream oss;
             if (ifs) {
@@ -712,8 +717,8 @@ void RenderUnifiedPluginStatusCard(const AppRuntime &runtime, const char *empty_
         }
     } else {
         RenderUnifiedEmptyState("overview_unified_plugin_empty_state",
-                                "无插件数据",
-                                (empty_hint && empty_hint[0] != '\0') ? empty_hint : "尚未发现 Unified Plugin 条目。",
+                                "No unified plugin data",
+                                (empty_hint && empty_hint[0] != '\0') ? empty_hint : "No unified plugin entries were discovered.",
                                 ImVec4(0.72f, 0.82f, 1.0f, 1.0f));
     }
 }
@@ -725,3 +730,4 @@ std::string &RuntimeOpsStatusStorage() {
 
 
 }  // namespace desktoper2D
+

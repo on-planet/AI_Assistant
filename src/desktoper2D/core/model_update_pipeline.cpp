@@ -2,8 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cctype>
 #include <cstdint>
-#include <functional>
 #include <utility>
 #include <vector>
 
@@ -150,12 +150,25 @@ float ResolveParamInterpSpeed(const std::string &param_id) {
     return 3.2f;
 }
 
+constexpr std::size_t kPartBaseSignatureWidth = 7;
+
+void WritePartBaseSignature(float *dst, const ModelPart &part) {
+    dst[0] = part.base_pos_x;
+    dst[1] = part.base_pos_y;
+    dst[2] = part.base_rot_deg;
+    dst[3] = part.base_scale_x;
+    dst[4] = part.base_scale_y;
+    dst[5] = part.pivot_x;
+    dst[6] = part.base_opacity;
+}
+
 }  // namespace
 
 void ApplyAnimationChannelTargets(ModelRuntime *model, float time_sec) {
     if (!model || !model->animation_channels_enabled) return;
 
-    std::vector<float> channel_targets(model->parameters.size(), 0.0f);
+    std::vector<float> &channel_targets = model->animation_channel_targets_scratch;
+    channel_targets.resize(model->parameters.size());
     for (std::size_t i = 0; i < model->parameters.size(); ++i) {
         channel_targets[i] = model->parameters[i].param.spec().default_value;
     }
@@ -187,37 +200,31 @@ void ApplyAnimationChannelTargets(ModelRuntime *model, float time_sec) {
 void UpdateParameterValues(ModelRuntime *model, float dt_sec) {
     if (!model) return;
     for (ModelParameter &parameter : model->parameters) {
-        const float interp_speed = ResolveParamInterpSpeed(parameter.id);
-        parameter.param.Update(dt_sec, interp_speed);
+        if (parameter.interp_speed <= 0.0f) {
+            parameter.interp_speed = ResolveParamInterpSpeed(parameter.id);
+        }
+        parameter.param.Update(dt_sec, parameter.interp_speed);
     }
 }
 
 bool UpdateDirtyCachesAndCheckChanged(ModelRuntime *model) {
     if (!model) return false;
 
-    bool params_changed = false;
-    if (model->cached_param_values.size() != model->parameters.size()) {
-        params_changed = true;
-    } else {
-        for (std::size_t i = 0; i < model->parameters.size(); ++i) {
-            const float v = model->parameters[i].param.value();
-            if (std::abs(v - model->cached_param_values[i]) > 1e-6f) {
-                params_changed = true;
-                break;
-            }
+    bool params_changed = model->cached_param_values.size() != model->parameters.size();
+    if (params_changed) {
+        model->cached_param_values.resize(model->parameters.size());
+    }
+    for (std::size_t i = 0; i < model->parameters.size(); ++i) {
+        const float value = model->parameters[i].param.value();
+        if (!params_changed && std::abs(value - model->cached_param_values[i]) > 1e-6f) {
+            params_changed = true;
         }
     }
 
-    std::vector<float> new_part_base_signature;
-    new_part_base_signature.reserve(model->parts.size() * 7);
-    for (const ModelPart &part : model->parts) {
-        new_part_base_signature.push_back(part.base_pos_x);
-        new_part_base_signature.push_back(part.base_pos_y);
-        new_part_base_signature.push_back(part.base_rot_deg);
-        new_part_base_signature.push_back(part.base_scale_x);
-        new_part_base_signature.push_back(part.base_scale_y);
-        new_part_base_signature.push_back(part.pivot_x);
-        new_part_base_signature.push_back(part.base_opacity);
+    std::vector<float> &new_part_base_signature = model->part_base_signature_scratch;
+    new_part_base_signature.resize(model->parts.size() * kPartBaseSignatureWidth);
+    for (std::size_t i = 0; i < model->parts.size(); ++i) {
+        WritePartBaseSignature(new_part_base_signature.data() + i * kPartBaseSignatureWidth, model->parts[i]);
     }
 
     if (model->part_dirty_flags.size() != model->parts.size()) {
@@ -231,8 +238,8 @@ bool UpdateDirtyCachesAndCheckChanged(ModelRuntime *model) {
     } else {
         for (std::size_t i = 0; i < model->parts.size(); ++i) {
             bool part_changed = false;
-            for (std::size_t k = 0; k < 7; ++k) {
-                const std::size_t idx = i * 7 + k;
+            for (std::size_t k = 0; k < kPartBaseSignatureWidth; ++k) {
+                const std::size_t idx = i * kPartBaseSignatureWidth + k;
                 if (std::abs(new_part_base_signature[idx] - model->cached_part_base_signature[idx]) > 1e-6f) {
                     part_changed = true;
                     break;
@@ -253,11 +260,14 @@ bool UpdateDirtyCachesAndCheckChanged(ModelRuntime *model) {
         std::fill(model->part_dirty_flags.begin(), model->part_dirty_flags.end(), static_cast<std::uint8_t>(1));
     }
 
-    model->cached_param_values.resize(model->parameters.size());
-    for (std::size_t i = 0; i < model->parameters.size(); ++i) {
-        model->cached_param_values[i] = model->parameters[i].param.value();
+    if (params_changed) {
+        for (std::size_t i = 0; i < model->parameters.size(); ++i) {
+            model->cached_param_values[i] = model->parameters[i].param.value();
+        }
     }
-    model->cached_part_base_signature = std::move(new_part_base_signature);
+    if (base_changed) {
+        model->cached_part_base_signature.assign(new_part_base_signature.begin(), new_part_base_signature.end());
+    }
     return true;
 }
 
@@ -400,70 +410,103 @@ void ResolveWorldTransforms(ModelRuntime *model) {
     if (!model) return;
 
     const std::size_t n = model->parts.size();
-    std::vector<float> world_x(n, 0.0f);
-    std::vector<float> world_y(n, 0.0f);
-    std::vector<float> world_rot(n, 0.0f);
-    std::vector<float> world_sx(n, 1.0f);
-    std::vector<float> world_sy(n, 1.0f);
-    std::vector<float> world_opacity(n, 1.0f);
-    std::vector<uint8_t> visit(n, 0);
+    std::vector<float> &world_x = model->world_pos_x_scratch;
+    std::vector<float> &world_y = model->world_pos_y_scratch;
+    std::vector<float> &world_rot = model->world_rot_scratch;
+    std::vector<float> &world_sx = model->world_scale_x_scratch;
+    std::vector<float> &world_sy = model->world_scale_y_scratch;
+    std::vector<float> &world_opacity = model->world_opacity_scratch;
+    std::vector<std::uint8_t> &visit = model->world_visit_scratch;
+    std::vector<int> &resolve_stack = model->world_resolve_stack_scratch;
+
+    world_x.resize(n);
+    world_y.resize(n);
+    world_rot.resize(n);
+    world_sx.resize(n);
+    world_sy.resize(n);
+    world_opacity.resize(n);
+    visit.assign(n, 0);
+    resolve_stack.clear();
+    resolve_stack.reserve(n);
 
     auto deg_to_rad = [](float deg) {
         return deg * 3.14159265358979323846f / 180.0f;
     };
 
-    std::function<void(int)> resolve_world = [&](int idx) {
-        if (idx < 0 || idx >= static_cast<int>(n)) return;
-        if (visit[static_cast<std::size_t>(idx)] == 2) return;
-        if (visit[static_cast<std::size_t>(idx)] == 1) {
-            model->parts[static_cast<std::size_t>(idx)].parent_index = -1;
-            visit[static_cast<std::size_t>(idx)] = 2;
-            world_x[static_cast<std::size_t>(idx)] = model->parts[static_cast<std::size_t>(idx)].runtime_pos_x;
-            world_y[static_cast<std::size_t>(idx)] = model->parts[static_cast<std::size_t>(idx)].runtime_pos_y;
-            world_rot[static_cast<std::size_t>(idx)] = model->parts[static_cast<std::size_t>(idx)].runtime_rot_deg;
-            world_sx[static_cast<std::size_t>(idx)] = model->parts[static_cast<std::size_t>(idx)].runtime_scale_x;
-            world_sy[static_cast<std::size_t>(idx)] = model->parts[static_cast<std::size_t>(idx)].runtime_scale_y;
-            world_opacity[static_cast<std::size_t>(idx)] = model->parts[static_cast<std::size_t>(idx)].runtime_opacity;
-            return;
-        }
-
-        visit[static_cast<std::size_t>(idx)] = 1;
-        ModelPart &part = model->parts[static_cast<std::size_t>(idx)];
-
-        const int pidx = part.parent_index;
-        if (pidx >= 0 && pidx < static_cast<int>(n)) {
-            resolve_world(pidx);
-
-            const float pr = deg_to_rad(world_rot[static_cast<std::size_t>(pidx)]);
-            const float c = std::cos(pr);
-            const float s = std::sin(pr);
-
-            const float lx = part.runtime_pos_x * world_sx[static_cast<std::size_t>(pidx)];
-            const float ly = part.runtime_pos_y * world_sy[static_cast<std::size_t>(pidx)];
-
-            const float rx = lx * c - ly * s;
-            const float ry = lx * s + ly * c;
-
-            world_x[static_cast<std::size_t>(idx)] = world_x[static_cast<std::size_t>(pidx)] + rx;
-            world_y[static_cast<std::size_t>(idx)] = world_y[static_cast<std::size_t>(pidx)] + ry;
-            world_rot[static_cast<std::size_t>(idx)] = world_rot[static_cast<std::size_t>(pidx)] + part.runtime_rot_deg;
-            world_sx[static_cast<std::size_t>(idx)] = world_sx[static_cast<std::size_t>(pidx)] * part.runtime_scale_x;
-            world_sy[static_cast<std::size_t>(idx)] = world_sy[static_cast<std::size_t>(pidx)] * part.runtime_scale_y;
-            world_opacity[static_cast<std::size_t>(idx)] = world_opacity[static_cast<std::size_t>(pidx)] * part.runtime_opacity;
-        } else {
-            world_x[static_cast<std::size_t>(idx)] = part.runtime_pos_x;
-            world_y[static_cast<std::size_t>(idx)] = part.runtime_pos_y;
-            world_rot[static_cast<std::size_t>(idx)] = part.runtime_rot_deg;
-            world_sx[static_cast<std::size_t>(idx)] = part.runtime_scale_x;
-            world_sy[static_cast<std::size_t>(idx)] = part.runtime_scale_y;
-            world_opacity[static_cast<std::size_t>(idx)] = part.runtime_opacity;
-        }
-
-        visit[static_cast<std::size_t>(idx)] = 2;
-    };
-
     for (int i = 0; i < static_cast<int>(n); ++i) {
-        resolve_world(i);
+        if (visit[static_cast<std::size_t>(i)] == 2) {
+            continue;
+        }
+
+        resolve_stack.clear();
+        int idx = i;
+        while (idx >= 0 && idx < static_cast<int>(n)) {
+            const std::size_t current = static_cast<std::size_t>(idx);
+            if (visit[current] == 2) {
+                break;
+            }
+            if (visit[current] == 1) {
+                ModelPart &cycle_root = model->parts[current];
+                cycle_root.parent_index = -1;
+                world_x[current] = cycle_root.runtime_pos_x;
+                world_y[current] = cycle_root.runtime_pos_y;
+                world_rot[current] = cycle_root.runtime_rot_deg;
+                world_sx[current] = cycle_root.runtime_scale_x;
+                world_sy[current] = cycle_root.runtime_scale_y;
+                world_opacity[current] = cycle_root.runtime_opacity;
+                visit[current] = 2;
+                break;
+            }
+
+            visit[current] = 1;
+            resolve_stack.push_back(idx);
+
+            const int parent_index = model->parts[current].parent_index;
+            if (parent_index < 0 || parent_index >= static_cast<int>(n)) {
+                break;
+            }
+            idx = parent_index;
+        }
+
+        while (!resolve_stack.empty()) {
+            const int current_index = resolve_stack.back();
+            resolve_stack.pop_back();
+            const std::size_t current = static_cast<std::size_t>(current_index);
+            if (visit[current] == 2) {
+                continue;
+            }
+
+            ModelPart &part = model->parts[current];
+            const int parent_index = part.parent_index;
+            if (parent_index >= 0 &&
+                parent_index < static_cast<int>(n) &&
+                visit[static_cast<std::size_t>(parent_index)] == 2) {
+                const std::size_t parent = static_cast<std::size_t>(parent_index);
+                const float parent_rot_rad = deg_to_rad(world_rot[parent]);
+                const float c = std::cos(parent_rot_rad);
+                const float s = std::sin(parent_rot_rad);
+                const float local_x = part.runtime_pos_x * world_sx[parent];
+                const float local_y = part.runtime_pos_y * world_sy[parent];
+                const float rotated_x = local_x * c - local_y * s;
+                const float rotated_y = local_x * s + local_y * c;
+
+                world_x[current] = world_x[parent] + rotated_x;
+                world_y[current] = world_y[parent] + rotated_y;
+                world_rot[current] = world_rot[parent] + part.runtime_rot_deg;
+                world_sx[current] = world_sx[parent] * part.runtime_scale_x;
+                world_sy[current] = world_sy[parent] * part.runtime_scale_y;
+                world_opacity[current] = world_opacity[parent] * part.runtime_opacity;
+            } else {
+                world_x[current] = part.runtime_pos_x;
+                world_y[current] = part.runtime_pos_y;
+                world_rot[current] = part.runtime_rot_deg;
+                world_sx[current] = part.runtime_scale_x;
+                world_sy[current] = part.runtime_scale_y;
+                world_opacity[current] = part.runtime_opacity;
+            }
+
+            visit[current] = 2;
+        }
     }
 
     for (std::size_t i = 0; i < n; ++i) {

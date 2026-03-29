@@ -173,8 +173,13 @@ endif()
 
 add_executable(plugin_lifecycle_tests
     tests/plugin_lifecycle_tests.cpp
+    src/desktoper2D/core/json.cpp
     src/desktoper2D/core/async_logger.cpp
     src/desktoper2D/lifecycle/plugin_lifecycle.cpp
+    src/desktoper2D/lifecycle/plugin_default_behavior.cpp
+    src/desktoper2D/lifecycle/plugin_config_validator.cpp
+    src/desktoper2D/lifecycle/plugin_postprocess.cpp
+    src/desktoper2D/lifecycle/plugin_route_decision.cpp
     src/desktoper2D/lifecycle/plugins/onnx_behavior_plugin.cpp
     src/desktoper2D/lifecycle/inference_adapter.cpp
     src/desktoper2D/lifecycle/resource_locator.cpp
